@@ -1,0 +1,24 @@
+{
+  "doc_id": "doc_t20_charging_fault_tree_demo",
+  "title": "T20 无法充电故障排查树",
+  "content": "# T20 无法充电\n\n## 节点 CHARGE-01：充电座是否通电\n检查电源插头、插座和充电座指示灯。若充电座无电，先更换插座并重新插紧电源线。\n\n## 节点 CHARGE-02：充电触点是否脏污\n若充电座有电，关闭主机电源后，用干燥软布清洁主机与充电座金属触点，再将主机手动对准充电座。\n\n## 节点 CHARGE-03：清洁触点后仍无法充电\n记录主机指示灯和错误码，不要自行拆机。若订单仍在保修期，可创建售后工单；创建前必须取得用户明确确认。",
+  "category": "robot_vacuum",
+  "brand": "CleanCare",
+  "doc_type": "troubleshooting",
+  "version": "demo-1",
+  "source": "mock://clean-care/t20-charging-fault-tree",
+  "intent_tags": [
+    "troubleshooting",
+    "create_after_sales_ticket"
+  ],
+  "metadata": {
+    "model": "T20",
+    "fault_code": "cannot_charge",
+    "fault_node_ids": [
+      "CHARGE-01",
+      "CHARGE-02",
+      "CHARGE-03"
+    ],
+    "data_scope": "mock"
+  }
+}

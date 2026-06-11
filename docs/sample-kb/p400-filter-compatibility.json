@@ -1,0 +1,19 @@
+{
+  "doc_id": "doc_p400_filter_compatibility_demo",
+  "title": "P400 空气净化器滤芯兼容表",
+  "content": "# P400 滤芯兼容关系\n\n| 主机型号 | 兼容滤芯 | 建议更换周期 |\n|---|---|---|\n| P400 | F400 复合滤芯 | 6-12 个月 |\n\nF400 仅用于 P400 系列空气净化器。购买前应核对主机铭牌型号；实时价格和优惠以 price_query 工具结果为准。",
+  "category": "air_purifier",
+  "brand": "CleanCare",
+  "doc_type": "accessory_compatibility",
+  "version": "demo-1",
+  "source": "mock://clean-care/p400-filter-compatibility",
+  "intent_tags": [
+    "accessory_compatibility",
+    "price_query"
+  ],
+  "metadata": {
+    "model": "P400",
+    "accessory_model": "F400",
+    "data_scope": "mock"
+  }
+}

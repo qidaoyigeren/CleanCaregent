@@ -1,0 +1,19 @@
+{
+  "doc_id": "doc_return_policy_demo",
+  "title": "清洁电器七天无理由退货规则",
+  "content": "# 七天无理由退货\n\n## 适用条件\n自签收次日起 7 天内提出申请；商品、附件、赠品和包装应保持完好，不影响二次销售。\n\n## 不适用情形\n超过 7 天，或因用户使用造成明显污损、缺件、序列号损坏时，不适用七天无理由退货。\n\n## 质量问题\n超过七天不等于不能售后。若存在产品质量故障，应结合订单状态、保修期限和检测结果判断维修或换货方案。客服不得仅凭用户描述承诺退款，证据不足时应转人工复核。",
+  "category": "cleaning_appliance",
+  "brand": "CleanCare",
+  "doc_type": "after_sales_policy",
+  "version": "demo-1",
+  "source": "mock://clean-care/return-policy",
+  "intent_tags": [
+    "return_eligibility",
+    "warranty_query"
+  ],
+  "metadata": {
+    "policy_code": "RETURN-7D",
+    "effective_region": "CN",
+    "data_scope": "mock"
+  }
+}

@@ -1,0 +1,1963 @@
+[
+  {
+    "case_id": "EVAL-001",
+    "query": "T20 的核心参数是什么？",
+    "intent": "product_parameter",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_params_t20"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "6000Pa",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-002",
+    "query": "T20 适合多大面积？",
+    "intent": "product_parameter",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_params_t20"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "6000Pa",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-003",
+    "query": "请说明 T20 的规格和适用家庭",
+    "intent": "product_parameter",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_params_t20"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "6000Pa",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-004",
+    "query": "X20 Pro 的核心参数是什么？",
+    "intent": "product_parameter",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_params_x20_pro"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "8000Pa",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-005",
+    "query": "X20 Pro 适合多大面积？",
+    "intent": "product_parameter",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_params_x20_pro"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "8000Pa",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-006",
+    "query": "请说明 X20 Pro 的规格和适用家庭",
+    "intent": "product_parameter",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_params_x20_pro"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "8000Pa",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-007",
+    "query": "P400 的核心参数是什么？",
+    "intent": "product_parameter",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_params_p400"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "CADR 450m³/h",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-008",
+    "query": "P400 适合多大面积？",
+    "intent": "product_parameter",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_params_p400"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "CADR 450m³/h",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-009",
+    "query": "请说明 P400 的规格和适用家庭",
+    "intent": "product_parameter",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_params_p400"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "CADR 450m³/h",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-010",
+    "query": "W300 的核心参数是什么？",
+    "intent": "product_parameter",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_params_w300"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "400G",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-011",
+    "query": "W300 适合多大面积？",
+    "intent": "product_parameter",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_params_w300"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "400G",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-012",
+    "query": "请说明 W300 的规格和适用家庭",
+    "intent": "product_parameter",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_params_w300"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "400G",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-013",
+    "query": "H100 的核心参数是什么？",
+    "intent": "product_parameter",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_params_h100"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "4L",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-014",
+    "query": "H100 适合多大面积？",
+    "intent": "product_parameter",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_params_h100"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "4L",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-015",
+    "query": "请说明 H100 的规格和适用家庭",
+    "intent": "product_parameter",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_params_h100"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "4L",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "parameter"
+    ]
+  },
+  {
+    "case_id": "EVAL-016",
+    "query": "T20 首次使用要注意什么？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_manual_t20"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "安装并完成首次清洁",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "manual"
+    ]
+  },
+  {
+    "case_id": "EVAL-017",
+    "query": "X20 Pro 首次使用要注意什么？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_manual_x20_pro"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "安装并完成首次清洁",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "manual"
+    ]
+  },
+  {
+    "case_id": "EVAL-018",
+    "query": "R10 首次使用要注意什么？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_manual_r10"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "安装并完成首次清洁",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "manual"
+    ]
+  },
+  {
+    "case_id": "EVAL-019",
+    "query": "P400 首次使用要注意什么？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_manual_p400"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "安装并完成首次清洁",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "manual"
+    ]
+  },
+  {
+    "case_id": "EVAL-020",
+    "query": "P500 首次使用要注意什么？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_manual_p500"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "安装并完成首次清洁",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "manual"
+    ]
+  },
+  {
+    "case_id": "EVAL-021",
+    "query": "W300 首次使用要注意什么？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_manual_w300"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "安装并完成首次清洁",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "manual"
+    ]
+  },
+  {
+    "case_id": "EVAL-022",
+    "query": "H100 首次使用要注意什么？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_manual_h100"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "安装并完成首次清洁",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "manual"
+    ]
+  },
+  {
+    "case_id": "EVAL-023",
+    "query": "H200 首次使用要注意什么？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_manual_h200"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "安装并完成首次清洁",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "manual"
+    ]
+  },
+  {
+    "case_id": "EVAL-024",
+    "query": "T20 怎么重新安装后使用？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_manual_t20"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "断电并按说明安装",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "manual"
+    ]
+  },
+  {
+    "case_id": "EVAL-025",
+    "query": "P400 使用前要拆什么包装？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_manual_p400"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "移除包装",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "manual"
+    ]
+  },
+  {
+    "case_id": "EVAL-026",
+    "query": "P400 兼容什么配件？",
+    "intent": "accessory_compatibility",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_compat_p400_f400"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "F400",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "compatibility"
+    ]
+  },
+  {
+    "case_id": "EVAL-027",
+    "query": "F400 能装到 P400 上吗？",
+    "intent": "accessory_compatibility",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_compat_p400_f400"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "兼容关系以兼容表为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "compatibility"
+    ]
+  },
+  {
+    "case_id": "EVAL-028",
+    "query": "P500 兼容什么配件？",
+    "intent": "accessory_compatibility",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_compat_p500_f500"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "F500",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "compatibility"
+    ]
+  },
+  {
+    "case_id": "EVAL-029",
+    "query": "F500 能装到 P500 上吗？",
+    "intent": "accessory_compatibility",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_compat_p500_f500"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "兼容关系以兼容表为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "compatibility"
+    ]
+  },
+  {
+    "case_id": "EVAL-030",
+    "query": "T20 兼容什么配件？",
+    "intent": "accessory_compatibility",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_compat_t20_db20"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "DB20",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "compatibility"
+    ]
+  },
+  {
+    "case_id": "EVAL-031",
+    "query": "DB20 能装到 T20 上吗？",
+    "intent": "accessory_compatibility",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_compat_t20_db20"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "兼容关系以兼容表为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "compatibility"
+    ]
+  },
+  {
+    "case_id": "EVAL-032",
+    "query": "X20 Pro 兼容什么配件？",
+    "intent": "accessory_compatibility",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_compat_x20_pro_rb20"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "RB20",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "compatibility"
+    ]
+  },
+  {
+    "case_id": "EVAL-033",
+    "query": "RB20 能装到 X20 Pro 上吗？",
+    "intent": "accessory_compatibility",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_compat_x20_pro_rb20"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "兼容关系以兼容表为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "compatibility"
+    ]
+  },
+  {
+    "case_id": "EVAL-034",
+    "query": "W300 兼容什么配件？",
+    "intent": "accessory_compatibility",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_compat_w300_c300"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "C300",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "compatibility"
+    ]
+  },
+  {
+    "case_id": "EVAL-035",
+    "query": "C300 能装到 W300 上吗？",
+    "intent": "accessory_compatibility",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_compat_w300_c300"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "兼容关系以兼容表为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "compatibility"
+    ]
+  },
+  {
+    "case_id": "EVAL-036",
+    "query": "T20 如何重新联网？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_faq_t20_wifi"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "2.4GHz Wi-Fi",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "faq"
+    ]
+  },
+  {
+    "case_id": "EVAL-037",
+    "query": "X20 Pro 能清洁地毯吗？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_faq_x20_carpet"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "地毯识别和自动增压",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "faq"
+    ]
+  },
+  {
+    "case_id": "EVAL-038",
+    "query": "P400 多久换滤芯？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_faq_p400_filter"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "6-12 个月",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "faq"
+    ]
+  },
+  {
+    "case_id": "EVAL-039",
+    "query": "P500 睡眠模式有什么用？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_faq_p500_sleep"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "降低风量和灯光",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "faq"
+    ]
+  },
+  {
+    "case_id": "EVAL-040",
+    "query": "W300 首次使用怎么冲洗？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_faq_w300_flush"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "完成首次冲洗",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "faq"
+    ]
+  },
+  {
+    "case_id": "EVAL-041",
+    "query": "W500 出水变小怎么办？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_faq_w500_flow"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "检查水压和滤芯",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "faq"
+    ]
+  },
+  {
+    "case_id": "EVAL-042",
+    "query": "H100 水箱怎么清洁？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_faq_h100_clean"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "断电后清洁",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "faq"
+    ]
+  },
+  {
+    "case_id": "EVAL-043",
+    "query": "H200 应该加什么水？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_faq_h200_water"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "洁净软水",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "faq"
+    ]
+  },
+  {
+    "case_id": "EVAL-044",
+    "query": "P400 滤芯寿命受什么影响？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_faq_p400_filter"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "污染程度",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "faq"
+    ]
+  },
+  {
+    "case_id": "EVAL-045",
+    "query": "T20 配网需要什么 Wi-Fi？",
+    "intent": "usage_instruction",
+    "difficulty": "simple",
+    "expected_docs": [
+      "kb_faq_t20_wifi"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "2.4GHz",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_single",
+      "faq"
+    ]
+  },
+  {
+    "case_id": "EVAL-046",
+    "query": "T20 和 X20 Pro 有什么区别？",
+    "intent": "product_comparison",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_compare_t20_x20pro"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "养猫和地毯多优先 X20 Pro",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "comparison"
+    ]
+  },
+  {
+    "case_id": "EVAL-047",
+    "query": "T20 和 X20 Pro 哪个更适合我？请说明取舍",
+    "intent": "product_comparison",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_compare_t20_x20pro"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "养猫和地毯多优先 X20 Pro",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "comparison"
+    ]
+  },
+  {
+    "case_id": "EVAL-048",
+    "query": "R10 和 R20 有什么区别？",
+    "intent": "product_comparison",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_compare_r10_r20"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "R20 更适合地毯",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "comparison"
+    ]
+  },
+  {
+    "case_id": "EVAL-049",
+    "query": "R10 和 R20 哪个更适合我？请说明取舍",
+    "intent": "product_comparison",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_compare_r10_r20"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "R20 更适合地毯",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "comparison"
+    ]
+  },
+  {
+    "case_id": "EVAL-050",
+    "query": "P400 和 P500 有什么区别？",
+    "intent": "product_comparison",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_compare_p400_p500"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "P500 适合更大面积",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "comparison"
+    ]
+  },
+  {
+    "case_id": "EVAL-051",
+    "query": "P400 和 P500 哪个更适合我？请说明取舍",
+    "intent": "product_comparison",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_compare_p400_p500"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "P500 适合更大面积",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "comparison"
+    ]
+  },
+  {
+    "case_id": "EVAL-052",
+    "query": "W300 和 W500 有什么区别？",
+    "intent": "product_comparison",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_compare_w300_w500"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "W500 通量更高",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "comparison"
+    ]
+  },
+  {
+    "case_id": "EVAL-053",
+    "query": "W300 和 W500 哪个更适合我？请说明取舍",
+    "intent": "product_comparison",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_compare_w300_w500"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "W500 通量更高",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "comparison"
+    ]
+  },
+  {
+    "case_id": "EVAL-054",
+    "query": "H100 和 H200 有什么区别？",
+    "intent": "product_comparison",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_compare_h100_h200"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "H200 适合客厅",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "comparison"
+    ]
+  },
+  {
+    "case_id": "EVAL-055",
+    "query": "H100 和 H200 哪个更适合我？请说明取舍",
+    "intent": "product_comparison",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_compare_h100_h200"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "H200 适合客厅",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "comparison"
+    ]
+  },
+  {
+    "case_id": "EVAL-056",
+    "query": "家里有两只猫和地毯，推荐扫地机器人",
+    "intent": "purchase_recommendation",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_guide_pet_home"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "关注防缠绕和地毯增压",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "recommendation"
+    ]
+  },
+  {
+    "case_id": "EVAL-057",
+    "query": "养猫家庭预算 5000 怎么选扫地机器人",
+    "intent": "purchase_recommendation",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_guide_pet_home"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "X20 Pro 或合适候选",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "recommendation"
+    ]
+  },
+  {
+    "case_id": "EVAL-058",
+    "query": "120 平米有地毯，推荐清洁方案",
+    "intent": "purchase_recommendation",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_guide_large_home"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "续航和自动回洗",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "recommendation"
+    ]
+  },
+  {
+    "case_id": "EVAL-059",
+    "query": "120 平米预算有限怎么选",
+    "intent": "purchase_recommendation",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_guide_large_home"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "结合预算筛选",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "recommendation"
+    ]
+  },
+  {
+    "case_id": "EVAL-060",
+    "query": "50 平米客厅选什么净化器",
+    "intent": "purchase_recommendation",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_guide_air_area"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "按 CADR 和面积选择",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "recommendation"
+    ]
+  },
+  {
+    "case_id": "EVAL-061",
+    "query": "卧室净化器怎么选",
+    "intent": "purchase_recommendation",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_guide_air_area"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "P400",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "recommendation"
+    ]
+  },
+  {
+    "case_id": "EVAL-062",
+    "query": "四口之家净水器怎么选",
+    "intent": "purchase_recommendation",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_guide_water_family"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "400G 或 600G",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "recommendation"
+    ]
+  },
+  {
+    "case_id": "EVAL-063",
+    "query": "用水高峰多选多大通量",
+    "intent": "purchase_recommendation",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_guide_water_family"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "600G",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "recommendation"
+    ]
+  },
+  {
+    "case_id": "EVAL-064",
+    "query": "卧室加湿器怎么选",
+    "intent": "purchase_recommendation",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_guide_humidifier_room"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "关注噪音",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "recommendation"
+    ]
+  },
+  {
+    "case_id": "EVAL-065",
+    "query": "大客厅加湿器怎么选",
+    "intent": "purchase_recommendation",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_guide_humidifier_room"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "关注水箱和加湿量",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_multi",
+      "recommendation"
+    ]
+  },
+  {
+    "case_id": "EVAL-066",
+    "query": "T20 现在多少钱，有券吗？",
+    "intent": "price_query",
+    "difficulty": "medium",
+    "expected_docs": null,
+    "expected_tools": [
+      "price_query"
+    ],
+    "expected_tool_params": {
+      "product_refs": [
+        "T20"
+      ]
+    },
+    "standard_answer": "以实时价格工具为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-067",
+    "query": "X20 Pro 现在多少钱，有券吗？",
+    "intent": "price_query",
+    "difficulty": "medium",
+    "expected_docs": null,
+    "expected_tools": [
+      "price_query"
+    ],
+    "expected_tool_params": {
+      "product_refs": [
+        "X20 Pro"
+      ]
+    },
+    "standard_answer": "以实时价格工具为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-068",
+    "query": "P400 现在多少钱，有券吗？",
+    "intent": "price_query",
+    "difficulty": "medium",
+    "expected_docs": null,
+    "expected_tools": [
+      "price_query"
+    ],
+    "expected_tool_params": {
+      "product_refs": [
+        "P400"
+      ]
+    },
+    "standard_answer": "以实时价格工具为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-069",
+    "query": "P500 现在多少钱，有券吗？",
+    "intent": "price_query",
+    "difficulty": "medium",
+    "expected_docs": null,
+    "expected_tools": [
+      "price_query"
+    ],
+    "expected_tool_params": {
+      "product_refs": [
+        "P500"
+      ]
+    },
+    "standard_answer": "以实时价格工具为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-070",
+    "query": "我上周买的净化器滤芯多少钱，有券吗？",
+    "intent": "accessory_compatibility",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_compat_p400_f400"
+    ],
+    "expected_tools": [
+      "user_purchase_history",
+      "price_query"
+    ],
+    "expected_tool_params": null,
+    "standard_answer": "先查购买记录、兼容关系和实时价格",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic",
+      "multi_step"
+    ]
+  },
+  {
+    "case_id": "EVAL-071",
+    "query": "T20 现在有货吗？",
+    "intent": "inventory_query",
+    "difficulty": "medium",
+    "expected_docs": null,
+    "expected_tools": [
+      "inventory_check"
+    ],
+    "expected_tool_params": {
+      "product_refs": [
+        "T20"
+      ]
+    },
+    "standard_answer": "以库存工具为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-072",
+    "query": "X20 Pro 现在有货吗？",
+    "intent": "inventory_query",
+    "difficulty": "medium",
+    "expected_docs": null,
+    "expected_tools": [
+      "inventory_check"
+    ],
+    "expected_tool_params": {
+      "product_refs": [
+        "X20 Pro"
+      ]
+    },
+    "standard_answer": "以库存工具为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-073",
+    "query": "P400 现在有货吗？",
+    "intent": "inventory_query",
+    "difficulty": "medium",
+    "expected_docs": null,
+    "expected_tools": [
+      "inventory_check"
+    ],
+    "expected_tool_params": {
+      "product_refs": [
+        "P400"
+      ]
+    },
+    "standard_answer": "以库存工具为准",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-074",
+    "query": "查一下订单CC20260603001",
+    "intent": "order_query",
+    "difficulty": "medium",
+    "expected_docs": null,
+    "expected_tools": [
+      "order_lookup"
+    ],
+    "expected_tool_params": null,
+    "standard_answer": "返回当前用户订单或购买记录",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-075",
+    "query": "我上周买了什么净化器？",
+    "intent": "order_query",
+    "difficulty": "medium",
+    "expected_docs": null,
+    "expected_tools": [
+      "user_purchase_history"
+    ],
+    "expected_tool_params": null,
+    "standard_answer": "返回当前用户订单或购买记录",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-076",
+    "query": "查询订单CC20250522008的商品",
+    "intent": "order_query",
+    "difficulty": "medium",
+    "expected_docs": null,
+    "expected_tools": [
+      "order_lookup"
+    ],
+    "expected_tool_params": null,
+    "standard_answer": "返回当前用户订单或购买记录",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-077",
+    "query": "订单CC20260603001还在保修期吗？",
+    "intent": "warranty_query",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_policy_warranty"
+    ],
+    "expected_tools": [
+      "warranty_check"
+    ],
+    "expected_tool_params": {
+      "order_no": "CC20260603001"
+    },
+    "standard_answer": "结合订单时间和保修月数判断",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-078",
+    "query": "订单CC20250522008还在保修期吗？",
+    "intent": "warranty_query",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_policy_warranty"
+    ],
+    "expected_tools": [
+      "warranty_check"
+    ],
+    "expected_tool_params": {
+      "order_no": "CC20250522008"
+    },
+    "standard_answer": "结合订单时间和保修月数判断",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-079",
+    "query": "订单CC20260603001还在保修期吗？",
+    "intent": "warranty_query",
+    "difficulty": "medium",
+    "expected_docs": [
+      "kb_policy_warranty"
+    ],
+    "expected_tools": [
+      "warranty_check"
+    ],
+    "expected_tool_params": {
+      "order_no": "CC20260603001"
+    },
+    "standard_answer": "结合订单时间和保修月数判断",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic"
+    ]
+  },
+  {
+    "case_id": "EVAL-080",
+    "query": "订单CC20250522008买了超过7天，包装拆了还能退吗？",
+    "intent": "return_eligibility",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_policy_return_7d"
+    ],
+    "expected_tools": [
+      "order_lookup"
+    ],
+    "expected_tool_params": null,
+    "standard_answer": "结合订单和售后政策判断，不直接承诺",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic",
+      "policy"
+    ]
+  },
+  {
+    "case_id": "EVAL-081",
+    "query": "订单CC20260603001包装完整能退吗？",
+    "intent": "return_eligibility",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_policy_return_7d"
+    ],
+    "expected_tools": [
+      "order_lookup"
+    ],
+    "expected_tool_params": null,
+    "standard_answer": "结合订单和售后政策判断，不直接承诺",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic",
+      "policy"
+    ]
+  },
+  {
+    "case_id": "EVAL-082",
+    "query": "订单CC20250522008有质量问题可以换货吗？",
+    "intent": "return_eligibility",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_policy_return_7d"
+    ],
+    "expected_tools": [
+      "order_lookup"
+    ],
+    "expected_tool_params": null,
+    "standard_answer": "结合订单和售后政策判断，不直接承诺",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic",
+      "policy"
+    ]
+  },
+  {
+    "case_id": "EVAL-083",
+    "query": "确认帮我为订单CC20260603001创建售后工单，问题编号1",
+    "intent": "create_after_sales_ticket",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_policy_ticket"
+    ],
+    "expected_tools": [
+      "create_after_sales_ticket"
+    ],
+    "expected_tool_params": {
+      "confirmed": true,
+      "order_no": "CC20260603001"
+    },
+    "standard_answer": "明确确认后幂等创建工单",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic",
+      "side_effect"
+    ]
+  },
+  {
+    "case_id": "EVAL-084",
+    "query": "确认帮我为订单CC20250522008创建售后工单，问题编号2",
+    "intent": "create_after_sales_ticket",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_policy_ticket"
+    ],
+    "expected_tools": [
+      "create_after_sales_ticket"
+    ],
+    "expected_tool_params": {
+      "confirmed": true,
+      "order_no": "CC20250522008"
+    },
+    "standard_answer": "明确确认后幂等创建工单",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic",
+      "side_effect"
+    ]
+  },
+  {
+    "case_id": "EVAL-085",
+    "query": "确认帮我为订单CC20260603001创建售后工单，问题编号3",
+    "intent": "create_after_sales_ticket",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_policy_ticket"
+    ],
+    "expected_tools": [
+      "create_after_sales_ticket"
+    ],
+    "expected_tool_params": {
+      "confirmed": true,
+      "order_no": "CC20260603001"
+    },
+    "standard_answer": "明确确认后幂等创建工单",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "kb_tool",
+      "dynamic",
+      "side_effect"
+    ]
+  },
+  {
+    "case_id": "EVAL-086",
+    "query": "T20 充不进电怎么办？",
+    "intent": "troubleshooting",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_fault_t20_charge"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "按故障树逐步排查",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "diagnosis_multi_turn",
+      "diagnosis"
+    ]
+  },
+  {
+    "case_id": "EVAL-087",
+    "query": "T20 已完成第一步检查但问题仍在，下一步做什么？",
+    "intent": "troubleshooting",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_fault_t20_charge"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "继续下一故障节点并避免拆机",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "diagnosis_multi_turn",
+      "diagnosis"
+    ]
+  },
+  {
+    "case_id": "EVAL-088",
+    "query": "X20 Pro 滚刷缠绕并异响怎么办？",
+    "intent": "troubleshooting",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_fault_x20_tangle"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "按故障树逐步排查",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "diagnosis_multi_turn",
+      "diagnosis"
+    ]
+  },
+  {
+    "case_id": "EVAL-089",
+    "query": "X20 Pro 已完成第一步检查但问题仍在，下一步做什么？",
+    "intent": "troubleshooting",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_fault_x20_tangle"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "继续下一故障节点并避免拆机",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "diagnosis_multi_turn",
+      "diagnosis"
+    ]
+  },
+  {
+    "case_id": "EVAL-090",
+    "query": "P400 运行时异响怎么办？",
+    "intent": "troubleshooting",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_fault_p400_noise"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "按故障树逐步排查",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "diagnosis_multi_turn",
+      "diagnosis"
+    ]
+  },
+  {
+    "case_id": "EVAL-091",
+    "query": "P400 已完成第一步检查但问题仍在，下一步做什么？",
+    "intent": "troubleshooting",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_fault_p400_noise"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "继续下一故障节点并避免拆机",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "diagnosis_multi_turn",
+      "diagnosis"
+    ]
+  },
+  {
+    "case_id": "EVAL-092",
+    "query": "P500 传感器数值异常怎么办？",
+    "intent": "troubleshooting",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_fault_p500_sensor"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "按故障树逐步排查",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "diagnosis_multi_turn",
+      "diagnosis"
+    ]
+  },
+  {
+    "case_id": "EVAL-093",
+    "query": "P500 已完成第一步检查但问题仍在，下一步做什么？",
+    "intent": "troubleshooting",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_fault_p500_sensor"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "继续下一故障节点并避免拆机",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "diagnosis_multi_turn",
+      "diagnosis"
+    ]
+  },
+  {
+    "case_id": "EVAL-094",
+    "query": "W300 漏水怎么办？",
+    "intent": "troubleshooting",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_fault_w300_leak"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "按故障树逐步排查",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "diagnosis_multi_turn",
+      "diagnosis"
+    ]
+  },
+  {
+    "case_id": "EVAL-095",
+    "query": "W300 已完成第一步检查但问题仍在，下一步做什么？",
+    "intent": "troubleshooting",
+    "difficulty": "hard",
+    "expected_docs": [
+      "kb_fault_w300_leak"
+    ],
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "继续下一故障节点并避免拆机",
+    "should_clarify": false,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "diagnosis_multi_turn",
+      "diagnosis"
+    ]
+  },
+  {
+    "case_id": "EVAL-096",
+    "query": "这个多少钱？",
+    "intent": "price_query",
+    "difficulty": "simple",
+    "expected_docs": null,
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "请补充型号或订单号",
+    "should_clarify": true,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "reject_clarify",
+      "clarify"
+    ]
+  },
+  {
+    "case_id": "EVAL-097",
+    "query": "它能用吗？",
+    "intent": "clarification",
+    "difficulty": "simple",
+    "expected_docs": null,
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "请补充型号或订单号",
+    "should_clarify": true,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "reject_clarify",
+      "clarify"
+    ]
+  },
+  {
+    "case_id": "EVAL-098",
+    "query": "我想退货",
+    "intent": "return_eligibility",
+    "difficulty": "simple",
+    "expected_docs": null,
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "请补充型号或订单号",
+    "should_clarify": true,
+    "should_reject": false,
+    "expected_evidence_ids": null,
+    "tags": [
+      "reject_clarify",
+      "clarify"
+    ]
+  },
+  {
+    "case_id": "EVAL-099",
+    "query": "推荐一款手机",
+    "intent": "out_of_scope",
+    "difficulty": "simple",
+    "expected_docs": null,
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "超出清洁电器范围",
+    "should_clarify": false,
+    "should_reject": true,
+    "expected_evidence_ids": null,
+    "tags": [
+      "reject_clarify",
+      "reject"
+    ]
+  },
+  {
+    "case_id": "EVAL-100",
+    "query": "帮我查询发票",
+    "intent": "out_of_scope",
+    "difficulty": "simple",
+    "expected_docs": null,
+    "expected_tools": null,
+    "expected_tool_params": null,
+    "standard_answer": "超出清洁电器范围",
+    "should_clarify": false,
+    "should_reject": true,
+    "expected_evidence_ids": null,
+    "tags": [
+      "reject_clarify",
+      "reject"
+    ]
+  }
+]

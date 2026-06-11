@@ -1,0 +1,6 @@
+.git
+.codex
+server.exe
+*.log
+configs/config.local.yaml
+docs/eval/*.tmp
