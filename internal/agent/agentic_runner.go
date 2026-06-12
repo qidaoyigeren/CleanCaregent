@@ -12,6 +12,7 @@ import (
 	"CleanCaregent/internal/generator"
 	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/llm"
+	"CleanCaregent/internal/observability"
 	"CleanCaregent/internal/prompt"
 	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/trace"
@@ -19,17 +20,20 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.uber.org/zap"
 )
 
 var (
 	ErrMaxStepsExceeded = errors.New("agent maximum steps exceeded")
 	ErrRepeatedAction   = errors.New("agent repeated action detected")
+	ErrPlanDependency   = errors.New("agent plan dependency not satisfied")
 )
 
 // AgenticConfig holds configuration parameters for the AgenticRunner.
 type AgenticConfig struct {
 	MaxSteps      int
 	TokenBudget   int
+	PlanningMode  string
 	DenseTopK     int
 	KeywordTopK   int
 	RerankTopK    int
@@ -53,6 +57,7 @@ type AgenticRunner struct {
 	clarifier       *Clarifier
 	prompts         *prompt.Registry
 	config          AgenticConfig
+	metricsLogger   *zap.Logger
 }
 
 // AgenticRunnerOption allows optional components to be injected.
@@ -86,6 +91,10 @@ func WithClarifier(clarifier *Clarifier) AgenticRunnerOption {
 // WithPromptRegistry injects a prompt template registry for scenario-based generation.
 func WithPromptRegistry(prompts *prompt.Registry) AgenticRunnerOption {
 	return func(r *AgenticRunner) { r.prompts = prompts }
+}
+
+func WithMetricsLogger(logger *zap.Logger) AgenticRunnerOption {
+	return func(r *AgenticRunner) { r.metricsLogger = logger }
 }
 
 // NewAgenticRunner creates an AgenticRunner with sensible defaults for missing dependencies.
@@ -141,14 +150,23 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 	}()
 
 	// ---- Step 1: Intent Routing ----
-	route, err := r.router.Route(ctx, intent.RouteRequest{
+	routeCtx, routeSpan := otel.Tracer("clean-care-agent/agent").Start(ctx, "intent.route")
+	route, err := r.router.Route(routeCtx, intent.RouteRequest{
 		Query:          request.Query,
 		Summary:        request.Context.Summary,
 		RecentMessages: request.Context.RecentMessages,
 	})
 	if err != nil {
+		routeSpan.RecordError(err)
+		routeSpan.SetStatus(codes.Error, err.Error())
+		routeSpan.End()
 		return Result{}, fmt.Errorf("route intent: %w", err)
 	}
+	routeSpan.SetAttributes(
+		attribute.String("intent.secondary", string(route.Secondary)),
+		attribute.Float64("intent.confidence", route.Confidence),
+	)
+	routeSpan.End()
 	route = continueDiagnosisRoute(route, request)
 	span.SetAttributes(
 		attribute.String("agent.intent", string(route.Secondary)),
@@ -156,18 +174,28 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 	)
 
 	// ---- Step 2: Query Rewriting ----
-	rewrite, err := r.rewriter.Rewrite(ctx, RewriteRequest{
+	rewriteCtx, rewriteSpan := otel.Tracer("clean-care-agent/agent").Start(ctx, "query.rewrite")
+	rewrite, err := r.rewriter.Rewrite(rewriteCtx, RewriteRequest{
 		Query:          request.Query,
 		Intent:         route,
 		Summary:        request.Context.Summary,
 		RecentMessages: request.Context.RecentMessages,
 	})
 	if err != nil {
+		rewriteSpan.RecordError(err)
+		rewriteSpan.SetStatus(codes.Error, err.Error())
+		rewriteSpan.End()
 		return Result{}, fmt.Errorf("rewrite query: %w", err)
 	}
+	rewriteSpan.SetAttributes(
+		attribute.Int("query.search_queries", len(rewrite.SearchQueries)),
+		attribute.Int("query.sub_questions", len(rewrite.SubQuestions)),
+	)
+	rewriteSpan.End()
 	route.Entities = rewrite.Entities
 
 	// ---- Step 3: Planning ----
+	planCtx, planSpan := otel.Tracer("clean-care-agent/agent").Start(ctx, "planner.plan")
 	toolWhitelist := allowedTools(route.Secondary)
 	planRequest := PlanRequest{
 		TraceID:        request.TraceID,
@@ -184,16 +212,32 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		TokenBudget:  r.config.TokenBudget,
 		Deadline:     contextDeadline(ctx),
 	}
-	plan, err := r.planner.Plan(ctx, planRequest)
+	plan, err := r.planner.Plan(planCtx, planRequest)
 	if err != nil {
+		planSpan.RecordError(err)
+		planSpan.SetStatus(codes.Error, err.Error())
+		planSpan.End()
 		return Result{}, fmt.Errorf("plan agent request: %w", err)
+	}
+	planExecutePlanner, usePlanExecute := r.planner.(PlanAndExecutePlanner)
+	usePlanExecute = usePlanExecute && shouldUsePlanExecute(r.config.PlanningMode, route.Secondary)
+	if usePlanExecute {
+		completePlan, completeErr := planExecutePlanner.CompletePlan(planCtx, planRequest)
+		if completeErr == nil && completePlan != nil && len(completePlan.Steps) > 0 {
+			plan = completePlan
+		} else {
+			usePlanExecute = false
+		}
 	}
 
 	reactivePlanner, useReactivePlanner := r.planner.(ReactivePlanner)
-	useReactivePlanner = useReactivePlanner && plan.Mode == "react" && r.config.EnableLLMComponents
+	useReactivePlanner = useReactivePlanner &&
+		!usePlanExecute &&
+		plan.Mode == "react" &&
+		r.config.EnableLLMComponents
 	if useReactivePlanner {
 		staticFallback := append([]PlanStep(nil), plan.Steps...)
-		firstStep, nextErr := reactivePlanner.NextStep(ctx, planRequest, 0, nil, "", "")
+		firstStep, nextErr := reactivePlanner.NextStep(planCtx, planRequest, 0, nil, "", "")
 		if nextErr != nil {
 			useReactivePlanner = false
 			plan.Steps = staticFallback
@@ -207,6 +251,12 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		attribute.String("agent.route_mode", plan.Mode),
 		attribute.Int("agent.plan_steps", len(plan.Steps)),
 	)
+	planSpan.SetAttributes(
+		attribute.String("planner.mode", plan.Mode),
+		attribute.Int("planner.steps", len(plan.Steps)),
+		attribute.Bool("planner.plan_execute", usePlanExecute),
+	)
+	planSpan.End()
 
 	// ---- Trace start ----
 	r.startTrace(ctx, request, route, plan)
@@ -230,6 +280,29 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		}
 		if usage.CompletionTokens > 0 {
 			outputTokens = usage.CompletionTokens
+		}
+		metrics := observability.DefaultAgentMetrics.Record(
+			time.Since(startedAt),
+			inputTokens,
+			outputTokens,
+			runErr != nil,
+		)
+		span.SetAttributes(
+			attribute.Int("agent.input_tokens", inputTokens),
+			attribute.Int("agent.output_tokens", outputTokens),
+			attribute.Int64("agent.latency_ms", time.Since(startedAt).Milliseconds()),
+			attribute.Int64("agent.p95_latency_ms", metrics.P95LatencyMS),
+		)
+		if r.metricsLogger != nil {
+			r.metricsLogger.Info("agent runtime metrics",
+				zap.String("trace_id", request.TraceID),
+				zap.Int("input_tokens", inputTokens),
+				zap.Int("output_tokens", outputTokens),
+				zap.Int("total_tokens", inputTokens+outputTokens),
+				zap.Int64("latency_ms", time.Since(startedAt).Milliseconds()),
+				zap.Int64("p95_latency_ms", metrics.P95LatencyMS),
+				zap.Bool("failed", runErr != nil),
+			)
 		}
 		r.finishTrace(
 			context.WithoutCancel(ctx),
@@ -258,7 +331,42 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 
 	// ---- Step 4: Execute plan steps ----
 	seenActions := map[string]struct{}{}
+	completedStatuses := map[string]string{}
+	completedSteps := make([]PlanStep, 0, len(plan.Steps))
+	revisionCount := 0
 	executedActions := 0
+	reviseRemaining := func(index int, cause error) bool {
+		if !usePlanExecute || revisionCount >= 1 {
+			return false
+		}
+		revised, reviseErr := planExecutePlanner.RevisePlan(
+			ctx,
+			planRequest,
+			plan,
+			append([]PlanStep(nil), completedSteps...),
+			mergeEvidences(evidences, searchResults),
+			cause,
+		)
+		if reviseErr != nil || revised == nil || len(revised.Steps) == 0 {
+			return false
+		}
+		remainingBudget := plan.MaxSteps - executedActions
+		if remainingBudget <= 0 {
+			return false
+		}
+		steps := revised.Steps
+		if len(steps) > remainingBudget {
+			steps = steps[:remainingBudget]
+		}
+		lastCompleted := ""
+		if len(completedSteps) > 0 {
+			lastCompleted = completedSteps[len(completedSteps)-1].StepID
+		}
+		steps = rebasePlanSteps(steps, index+2, lastCompleted)
+		plan.Steps = append(plan.Steps[:index+1], steps...)
+		revisionCount++
+		return true
+	}
 	for index := 0; index < len(plan.Steps); index++ {
 		planStep := plan.Steps[index]
 		if planStep.Action != ActionFinish && executedActions >= plan.MaxSteps {
@@ -278,6 +386,13 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		}
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
+		}
+		if missing := unsatisfiedDependencies(planStep, completedStatuses); len(missing) > 0 {
+			stepStartedAt := time.Now()
+			r.appendTraceStep(ctx, request.TraceID, planStep, "blocked", stepStartedAt, map[string]any{
+				"missing_dependencies": missing,
+			})
+			return Result{}, fmt.Errorf("%w for %s: %s", ErrPlanDependency, planStep.StepID, strings.Join(missing, ","))
 		}
 		signature := actionSignature(planStep)
 		if _, exists := seenActions[signature]; exists {
@@ -312,6 +427,10 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			if retrieveErr != nil {
 				stepStatus = "failed"
 				r.appendTraceStep(ctx, request.TraceID, planStep, stepStatus, stepStartedAt, stepMetadata)
+				completedStatuses[planStep.StepID] = stepStatus
+				if reviseRemaining(index, retrieveErr) {
+					continue
+				}
 				return Result{}, fmt.Errorf("retrieve evidence: %w", retrieveErr)
 			}
 			searchResults = mergeSearchResults(searchResults, items)
@@ -337,6 +456,10 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			if executeErr != nil {
 				stepStatus = "failed"
 				r.appendTraceStep(ctx, request.TraceID, planStep, stepStatus, stepStartedAt, stepMetadata)
+				completedStatuses[planStep.StepID] = stepStatus
+				if reviseRemaining(index, executeErr) {
+					continue
+				}
 				return Result{}, executeErr
 			}
 			answer = dynamicResult.Answer
@@ -360,8 +483,9 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			if answer == "" {
 				evidences = mergeEvidences(evidences, searchResults)
 				scenario := selectGenerateScenario(route.Secondary)
+				generateCtx, generateSpan := otel.Tracer("clean-care-agent/agent").Start(ctx, "llm.generate")
 				generated, generateErr := r.generator.GenerateWithScenario(
-					ctx,
+					generateCtx,
 					scenario,
 					rewrite.Rewritten,
 					searchResults,
@@ -370,14 +494,34 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 					rewrite.Entities["models"],
 				)
 				if generateErr != nil {
+					generateSpan.RecordError(generateErr)
+					generateSpan.SetStatus(codes.Error, generateErr.Error())
+					generateSpan.End()
 					stepStatus = "failed"
 					r.appendTraceStep(ctx, request.TraceID, planStep, stepStatus, stepStartedAt, stepMetadata)
 					return Result{}, fmt.Errorf("generate grounded answer: %w", generateErr)
 				}
+				generateSpan.SetAttributes(
+					attribute.String("generation.scenario", string(scenario)),
+					attribute.Int("generation.evidence_count", len(searchResults)),
+				)
+				generateSpan.End()
 				answer = generated
 			}
 		}
 		r.appendTraceStep(ctx, request.TraceID, planStep, stepStatus, stepStartedAt, stepMetadata)
+		completedStatuses[planStep.StepID] = stepStatus
+		completedSteps = append(completedSteps, planStep)
+
+		if usePlanExecute && planStep.Action != ActionFinish {
+			needsRevision := metadataBool(stepMetadata, "degraded")
+			if count, ok := stepMetadata["result_count"].(int); ok && count == 0 {
+				needsRevision = true
+			}
+			if needsRevision && reviseRemaining(index, errors.New("plan observation requires revision")) {
+				continue
+			}
+		}
 
 		// A Skill owns its internal retrieval/tool orchestration. Once it returns
 		// a user-facing answer or the next diagnostic question, this turn is
@@ -415,6 +559,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 	// ---- Step 5: Final reflection ----
 	evidences = mergeEvidences(evidences, searchResults)
 	reflectionStartedAt := time.Now()
+	reflectionCtx, reflectionSpan := otel.Tracer("clean-care-agent/agent").Start(ctx, "reflection.check")
 	reflectionRequest := ReflectionRequest{
 		Query:                    request.Query,
 		Intent:                   route.Secondary,
@@ -439,7 +584,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		)
 		reflection.Warnings = append(reflection.Warnings, "llm_reflection_skipped_token_budget")
 	} else {
-		reflection = r.reviewAnswer(ctx, reflectionRequest)
+		reflection = r.reviewAnswer(reflectionCtx, reflectionRequest)
 	}
 	if reflection.Action == "rerun_retrieval" {
 		recoveryStartedAt := time.Now()
@@ -447,7 +592,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		if rerunQuery == "" {
 			rerunQuery = rewrite.Rewritten
 		}
-		recovered, recoveryErr := r.retrievePlanStep(ctx, PlanStep{
+		recovered, recoveryErr := r.retrievePlanStep(reflectionCtx, PlanStep{
 			StepID:     "step_reflection_retrieval",
 			Action:     ActionRetrieve,
 			Query:      rerunQuery,
@@ -467,7 +612,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			)
 			evidences = mergeEvidences(evidences, searchResults)
 			regenerated, generateErr := r.generator.GenerateWithScenario(
-				ctx,
+				reflectionCtx,
 				selectGenerateScenario(route.Secondary),
 				rewrite.Rewritten,
 				searchResults,
@@ -481,7 +626,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 				reflection.Warnings = append(reflection.Warnings, "reflection_regeneration_failed")
 			} else {
 				answer = regenerated
-				reflection = r.reviewAnswer(ctx, ReflectionRequest{
+				reflection = r.reviewAnswer(reflectionCtx, ReflectionRequest{
 					Query:                    request.Query,
 					Intent:                   route.Secondary,
 					Answer:                   answer,
@@ -502,7 +647,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		})
 	} else if reflection.Action == "regenerate" {
 		if regenerated, generateErr := r.generator.GenerateWithScenario(
-			ctx,
+			reflectionCtx,
 			selectGenerateScenario(route.Secondary),
 			regenerationQuery(rewrite.Rewritten, reflection.UnsupportedClaims),
 			searchResults,
@@ -511,7 +656,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			rewrite.Entities["models"],
 		); generateErr == nil {
 			answer = regenerated
-			reflection = r.reviewAnswer(ctx, ReflectionRequest{
+			reflection = r.reviewAnswer(reflectionCtx, ReflectionRequest{
 				Query:                    request.Query,
 				Intent:                   route.Secondary,
 				Answer:                   answer,
@@ -521,7 +666,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			})
 		}
 	} else if reflection.Action == "clarify" && !intentionalClarification {
-		answer = r.generateClarification(ctx, route, request.Query, rewrite.Entities)
+		answer = r.generateClarification(reflectionCtx, route, request.Query, rewrite.Entities)
 		reflection.Answer = answer
 	}
 	answer = reflection.Answer
@@ -533,6 +678,12 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 	if reflection.ShouldTransfer {
 		answer += "\n\n当前结论置信度不足，建议转人工客服复核后再执行售后操作。"
 	}
+	reflectionSpan.SetAttributes(
+		attribute.String("reflection.action", reflection.Action),
+		attribute.Bool("reflection.low_confidence", reflection.LowConfidence),
+		attribute.Int("reflection.unsupported_claims", len(reflection.UnsupportedClaims)),
+	)
+	reflectionSpan.End()
 	r.appendTraceStep(ctx, request.TraceID, PlanStep{
 		StepID:     "step_grounding_review",
 		Action:     ActionReflect,
@@ -956,9 +1107,54 @@ func traceErrorCode(err error) string {
 		return "REPEATED_ACTION"
 	case errors.Is(err, ErrMaxStepsExceeded):
 		return "MAX_STEPS_EXCEEDED"
+	case errors.Is(err, ErrPlanDependency):
+		return "PLAN_DEPENDENCY"
 	default:
 		return "AGENT_FAILED"
 	}
+}
+
+func shouldUsePlanExecute(mode string, intentType intent.Type) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "plan_execute":
+		return true
+	case "auto":
+		switch intentType {
+		case intent.ProductComparison,
+			intent.PurchaseRecommendation,
+			intent.AccessoryCompatibility,
+			intent.Troubleshooting,
+			intent.ReturnEligibility,
+			intent.WarrantyQuery,
+			intent.CreateAfterSalesTicket:
+			return true
+		}
+	}
+	return false
+}
+
+func unsatisfiedDependencies(step PlanStep, statuses map[string]string) []string {
+	var missing []string
+	for _, dependency := range step.DependsOn {
+		if statuses[dependency] != "success" && statuses[dependency] != "warning" {
+			missing = append(missing, dependency)
+		}
+	}
+	return missing
+}
+
+func rebasePlanSteps(steps []PlanStep, startIndex int, firstDependency string) []PlanStep {
+	result := append([]PlanStep(nil), steps...)
+	previous := firstDependency
+	for index := range result {
+		result[index].StepID = fmt.Sprintf("step_%02d", startIndex+index)
+		result[index].DependsOn = nil
+		if previous != "" {
+			result[index].DependsOn = []string{previous}
+		}
+		previous = result[index].StepID
+	}
+	return result
 }
 
 func reflectionStatus(result ReflectionResult) string {

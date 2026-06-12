@@ -12,6 +12,9 @@ import (
 	"CleanCaregent/internal/model"
 	"CleanCaregent/internal/platform/id"
 	"CleanCaregent/internal/repository"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 )
 
 var (
@@ -130,9 +133,12 @@ func (s *ConversationService) Ask(
 		return AskResult{}, err
 	}
 	conversationContext := memory.ConversationContext{ConversationID: conversationID}
+	memoryCtx, memorySpan := otel.Tracer("clean-care-agent/service").Start(ctx, "memory.load")
+	var memoryLoadErr error
 	if s.memory != nil {
-		loaded, loadErr := s.memory.LoadContext(ctx, conversationID, 10)
+		loaded, loadErr := s.memory.LoadContext(memoryCtx, conversationID, 10)
 		if loadErr != nil {
+			memoryLoadErr = loadErr
 			if s.onMemoryError != nil {
 				s.onMemoryError(loadErr)
 			}
@@ -140,11 +146,18 @@ func (s *ConversationService) Ask(
 			conversationContext = *loaded
 		}
 	} else {
-		recent, loadErr := s.repository.ListMessages(ctx, userID, conversationID, 10)
+		recent, loadErr := s.repository.ListMessages(memoryCtx, userID, conversationID, 10)
 		if loadErr == nil {
 			conversationContext.RecentMessages = recent
+		} else {
+			memoryLoadErr = loadErr
 		}
 	}
+	if memoryLoadErr != nil {
+		memorySpan.RecordError(memoryLoadErr)
+		memorySpan.SetStatus(codes.Error, memoryLoadErr.Error())
+	}
+	memorySpan.End()
 
 	userMessage := model.Message{
 		ID:             id.New("msg"),

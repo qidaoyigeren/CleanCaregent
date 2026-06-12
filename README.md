@@ -72,14 +72,19 @@ GET  /api/v1/orders/{order_no}
 POST /api/v1/after-sales/tickets
 
 POST /api/v1/admin/kb/documents
+POST /api/v1/admin/kb/documents?async=true
 POST /api/v1/admin/kb/search
 GET  /api/v1/admin/traces/{trace_id}
 
 POST /api/v1/admin/eval/runs
+POST /api/v1/admin/eval/comparisons
+GET  /api/v1/admin/eval/comparisons/{comparison_id}
 GET  /api/v1/admin/eval/runs/{run_no}?include_failures=true
+GET  /api/v1/admin/metrics/agent
 ```
 
 评估运行接口返回 `202 Accepted`，任务在后台执行；使用返回的 `run_no` 查询进度和结果。
+创建售后工单必须同时提交 `confirmed=true`（或 `contact_confirmed=true`）和非空 `idempotency_key`。
 
 创建会话并提问：
 

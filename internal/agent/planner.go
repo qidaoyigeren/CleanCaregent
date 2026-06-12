@@ -72,3 +72,19 @@ type ReactivePlanner interface {
 		toolResults string,
 	) (*PlanStep, error)
 }
+
+// PlanAndExecutePlanner is an optional capability for planners that create
+// the complete dependency-aware plan before execution and can revise the
+// remaining steps after an observation or execution failure.
+type PlanAndExecutePlanner interface {
+	Planner
+	CompletePlan(ctx context.Context, req PlanRequest) (*Plan, error)
+	RevisePlan(
+		ctx context.Context,
+		req PlanRequest,
+		current *Plan,
+		completed []PlanStep,
+		evidences []Evidence,
+		cause error,
+	) (*Plan, error)
+}

@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	output := flag.String("output", "docs/eval/eval-cases-v1.json", "output JSON path")
+	output := flag.String("output", "docs/eval/eval-cases-v2.json", "output JSON path")
 	flag.Parse()
 	raw, err := json.MarshalIndent(eval.DefaultCases(), "", "  ")
 	if err != nil {

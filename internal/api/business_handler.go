@@ -25,6 +25,8 @@ type createAfterSalesRequest struct {
 	DiagnosisSummary string   `json:"diagnosis_summary"`
 	EvidenceIDs      []string `json:"evidence_ids"`
 	IdempotencyKey   string   `json:"idempotency_key"`
+	Confirmed        bool     `json:"confirmed"`
+	ContactConfirmed bool     `json:"contact_confirmed"`
 }
 
 func NewBusinessHandler(service *service.BusinessService) *BusinessHandler {
@@ -89,6 +91,10 @@ func (h *BusinessHandler) CreateAfterSales(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "order_no and description are required")
 		return
 	}
+	if (!request.Confirmed && !request.ContactConfirmed) || request.IdempotencyKey == "" {
+		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "explicit confirmation and idempotency_key are required")
+		return
+	}
 	item, err := h.service.CreateAfterSales(c.Request.Context(), service.CreateAfterSalesRequest{
 		UserID:           middleware.UserID(c),
 		OrderNo:          request.OrderNo,
@@ -98,6 +104,7 @@ func (h *BusinessHandler) CreateAfterSales(c *gin.Context) {
 		DiagnosisSummary: request.DiagnosisSummary,
 		EvidenceIDs:      request.EvidenceIDs,
 		IdempotencyKey:   request.IdempotencyKey,
+		Confirmed:        request.Confirmed || request.ContactConfirmed,
 	})
 	if err != nil {
 		writeBusinessError(c, err)

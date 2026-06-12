@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -185,22 +186,27 @@ func (h *Hybrid) denseSearch(ctx context.Context, request rag.SearchRequest) ([]
 
 func (h *Hybrid) keywordSearch(ctx context.Context, request rag.SearchRequest) ([]rag.SearchResult, error) {
 	chunks, err := h.repository.KeywordSearch(ctx, repository.KnowledgeSearchRequest{
-		Query:       request.Query,
-		Terms:       queryTerms(request.Query),
-		Categories:  request.Filter.Categories,
-		Brands:      request.Filter.Brands,
-		DocTypes:    request.Filter.DocTypes,
-		Models:      request.Filter.Models,
-		EffectiveAt: effectiveAt(request.Filter.EffectiveAt),
-		Limit:       request.KeywordTopK,
+		Query:        request.Query,
+		Terms:        queryTerms(request.Query),
+		ProductIDs:   request.Filter.ProductIDs,
+		SKUIDs:       request.Filter.SKUIDs,
+		Categories:   request.Filter.Categories,
+		Brands:       request.Filter.Brands,
+		DocTypes:     request.Filter.DocTypes,
+		Models:       request.Filter.Models,
+		IntentTags:   request.Filter.IntentTags,
+		Version:      request.Filter.Version,
+		FaultNodeIDs: request.Filter.FaultNodeIDs,
+		EffectiveAt:  effectiveAt(request.Filter.EffectiveAt),
+		Limit:        request.KeywordTopK,
 	})
 	if err != nil {
 		return nil, err
 	}
-	results := make([]rag.SearchResult, len(chunks))
-	for index, chunk := range chunks {
-		score := 1 / float64(index+1)
-		results[index] = toSearchResult(chunk, 0, score)
+	scored := bm25Candidates(chunks, queryTerms(request.Query))
+	results := make([]rag.SearchResult, len(scored))
+	for index, candidate := range scored {
+		results[index] = toSearchResult(candidate.chunk, 0, candidate.score)
 	}
 	return results, nil
 }
@@ -240,8 +246,96 @@ func buildVectorFilter(filter rag.MetadataFilter) map[string]any {
 	addMatchAny("category", filter.Categories)
 	addMatchAny("brand", filter.Brands)
 	addMatchAny("doc_type", filter.DocTypes)
-	addMatchAny("metadata.model", filter.Models)
+	if models := compactStrings(filter.Models); len(models) > 0 {
+		must = append(must, map[string]any{
+			"should": []map[string]any{
+				{"key": "metadata.model", "match": map[string]any{"any": models}},
+				{"key": "metadata.models", "match": map[string]any{"any": models}},
+			},
+		})
+	}
+	addMatchAny("metadata.product_ids", filter.ProductIDs)
+	addMatchAny("metadata.sku_ids", filter.SKUIDs)
+	addMatchAny("intent_tags", filter.IntentTags)
+	addMatchAny("metadata.fault_node_ids", filter.FaultNodeIDs)
+	if version := strings.TrimSpace(filter.Version); version != "" {
+		must = append(must, map[string]any{
+			"key":   "version",
+			"match": map[string]any{"value": version},
+		})
+	}
 	return map[string]any{"must": must}
+}
+
+type bm25Candidate struct {
+	chunk model.KnowledgeChunk
+	score float64
+}
+
+func bm25Candidates(chunks []model.KnowledgeChunk, terms []string) []bm25Candidate {
+	if len(chunks) == 0 {
+		return nil
+	}
+	terms = compactStrings(terms)
+	if len(terms) == 0 {
+		result := make([]bm25Candidate, len(chunks))
+		for index, chunk := range chunks {
+			result[index] = bm25Candidate{chunk: chunk}
+		}
+		return result
+	}
+
+	const (
+		k1 = 1.2
+		b  = 0.75
+	)
+	tokenized := make([][]string, len(chunks))
+	documentFrequency := make(map[string]int, len(terms))
+	totalLength := 0
+	for index, chunk := range chunks {
+		tokens := queryTerms(chunk.Title + "\n" + chunk.Content)
+		tokenized[index] = tokens
+		totalLength += len(tokens)
+		present := make(map[string]struct{}, len(tokens))
+		for _, token := range tokens {
+			present[token] = struct{}{}
+		}
+		for _, term := range terms {
+			if _, ok := present[term]; ok {
+				documentFrequency[term]++
+			}
+		}
+	}
+	averageLength := float64(totalLength) / float64(len(chunks))
+	if averageLength < 1 {
+		averageLength = 1
+	}
+
+	result := make([]bm25Candidate, len(chunks))
+	documentCount := float64(len(chunks))
+	for index, chunk := range chunks {
+		frequencies := make(map[string]int, len(tokenized[index]))
+		for _, token := range tokenized[index] {
+			frequencies[token]++
+		}
+		documentLength := float64(len(tokenized[index]))
+		score := 0.0
+		for _, term := range terms {
+			tf := float64(frequencies[term])
+			if tf == 0 {
+				continue
+			}
+			df := float64(documentFrequency[term])
+			idf := math.Log(1 + (documentCount-df+0.5)/(df+0.5))
+			denominator := tf + k1*(1-b+b*documentLength/averageLength)
+			score += idf * (tf * (k1 + 1) / denominator)
+		}
+		result[index] = bm25Candidate{chunk: chunk, score: score}
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].score > result[j].score
+	})
+	return result
 }
 
 func reciprocalRankFusion(dense, keyword []rag.SearchResult, rankConstant float64) []rag.SearchResult {

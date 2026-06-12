@@ -10,6 +10,7 @@ import (
 
 	"CleanCaregent/internal/llm"
 	"CleanCaregent/internal/prompt"
+	"CleanCaregent/internal/trace"
 )
 
 func TestCompositeEvaluatorOverridesSemanticMetrics(t *testing.T) {
@@ -52,6 +53,19 @@ func TestCompositeEvaluatorOverridesSemanticMetrics(t *testing.T) {
 
 func TestClassifyBadCase(t *testing.T) {
 	if got := classifyBadCase("tool_parameter_accuracy"); got != "tool_parameter_error" {
+		t.Fatalf("classification = %q", got)
+	}
+}
+
+func TestClassifyBadCaseUsesTraceFailure(t *testing.T) {
+	record := trace.AgentTraceRecord{
+		ToolCalls: []trace.ToolCall{{
+			ToolName:  "price_query",
+			Status:    "failed",
+			ErrorCode: "INVALID_TOOL_RESULT",
+		}},
+	}
+	if got := classifyBadCaseWithTrace("answer_correctness", record); got != "tool_parameter_error" {
 		t.Fatalf("classification = %q", got)
 	}
 }

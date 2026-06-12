@@ -222,8 +222,8 @@ func validateToolData(name string, data any) error {
 		items, _ := payload["items"].([]any)
 		for _, rawItem := range items {
 			item, _ := rawItem.(map[string]any)
-			if numberValue(item["current_price"]) <= 0 ||
-				numberValue(item["estimated_final_price"]) <= 0 {
+			if numberValue(item["current_price_cents"]) <= 0 ||
+				numberValue(item["estimated_final_price_cents"]) <= 0 {
 				return errors.New("price result contains a non-positive price")
 			}
 		}

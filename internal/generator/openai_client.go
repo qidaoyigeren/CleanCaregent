@@ -86,6 +86,7 @@ func (c *OpenAIClient) GenerateWithScenario(
 		"tool_results":         toolResults,
 		"conversation_summary": conversationSummary,
 		"models":               models,
+		"model":                models,
 		"concerns":             "",
 		"symptom":              "",
 		"diagnosis_state":      "",
@@ -95,7 +96,17 @@ func (c *OpenAIClient) GenerateWithScenario(
 	}
 
 	messages := tmpl.BuildMessages(params)
-	return c.client.Chat(ctx, messages)
+	var answer strings.Builder
+	if err := c.client.ChatStream(ctx, messages, func(delta string) error {
+		answer.WriteString(delta)
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(answer.String()) == "" {
+		return "", fmt.Errorf("streaming generation returned no answer")
+	}
+	return strings.TrimSpace(answer.String()), nil
 }
 
 // buildEvidenceContext formats search results into the [EN] evidence format.

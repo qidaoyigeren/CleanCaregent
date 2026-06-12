@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"CleanCaregent/internal/agent"
@@ -158,19 +159,7 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 			request.Intent.Entities["models"] = state.ProductModel
 		}
 	}
-	searchData, err := s.retriever.Search(ctx, rag.SearchRequest{
-		Query: request.Query,
-		Mode:  rag.SearchHybrid,
-		Filter: rag.MetadataFilter{
-			Models:   models,
-			DocTypes: docTypes,
-		},
-		DenseTopK:   s.config.DenseTopK,
-		KeywordTopK: s.config.KeywordTopK,
-		RerankTopK:  s.config.RerankTopK,
-		MinScore:    s.config.MinDenseScore,
-		NeedRerank:  true,
-	})
+	searchData, err := s.retrieveInitial(ctx, request, models, docTypes)
 	if err != nil {
 		return nil, fmt.Errorf("run %s retrieval: %w", s.name, err)
 	}
@@ -355,6 +344,92 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 			"knowledge_evidence": len(searchData),
 		},
 	}, nil
+}
+
+func (s *Workflow) retrieveInitial(
+	ctx context.Context,
+	request Request,
+	models []string,
+	docTypes []string,
+) ([]rag.SearchResult, error) {
+	type route struct {
+		query    string
+		models   []string
+		docTypes []string
+	}
+	routes := []route{{query: request.Query, models: models, docTypes: docTypes}}
+	switch s.name {
+	case ProductComparisonSkill:
+		routes = routes[:0]
+		for _, modelName := range compactValues(models) {
+			routes = append(routes, route{
+				query:    modelName + " " + request.Query,
+				models:   []string{modelName},
+				docTypes: []string{"product_detail", "product_parameter"},
+			})
+		}
+		routes = append(routes, route{
+			query:    request.Query + " 使用场景 选购取舍",
+			models:   models,
+			docTypes: []string{"product_comparison", "purchase_guide"},
+		})
+	case PurchaseRecommendationSkill:
+		routes = []route{
+			{
+				query:    request.Query + " 候选产品 参数",
+				models:   models,
+				docTypes: []string{"product_detail", "product_parameter"},
+			},
+			{
+				query:    request.Query + " 选购场景 硬约束",
+				models:   models,
+				docTypes: []string{"purchase_guide", "product_comparison"},
+			},
+		}
+	}
+
+	results := make([][]rag.SearchResult, len(routes))
+	errs := make([]error, len(routes))
+	var waitGroup sync.WaitGroup
+	for index, current := range routes {
+		index, current := index, current
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			results[index], errs[index] = s.retriever.Search(ctx, rag.SearchRequest{
+				Query: current.query,
+				Mode:  rag.SearchHybrid,
+				Filter: rag.MetadataFilter{
+					Models:   current.models,
+					DocTypes: current.docTypes,
+				},
+				DenseTopK:   s.config.DenseTopK,
+				KeywordTopK: s.config.KeywordTopK,
+				RerankTopK:  s.config.RerankTopK,
+				MinScore:    s.config.MinDenseScore,
+				NeedRerank:  true,
+			})
+		}()
+	}
+	waitGroup.Wait()
+
+	var (
+		merged      []rag.SearchResult
+		failedCount int
+		lastErr     error
+	)
+	for index := range results {
+		if errs[index] != nil {
+			failedCount++
+			lastErr = errs[index]
+			continue
+		}
+		merged = mergeSearchData(merged, results[index])
+	}
+	if failedCount == len(routes) {
+		return nil, lastErr
+	}
+	return merged, nil
 }
 
 func (s *Workflow) runCompatibilityCheck(
@@ -638,10 +713,10 @@ func toolResultSummary(name string, data any, citation string) string {
 			parts := make([]string, 0, len(payload.Items))
 			for _, item := range payload.Items {
 				parts = append(parts, fmt.Sprintf(
-					"%s 当前价 %.0f 元，优惠后预估 %.0f 元",
+					"%s 当前价 %s 元，优惠后预估 %s 元",
 					item.Model,
-					item.CurrentPrice,
-					item.EstimatedFinalPrice,
+					formatCents(item.CurrentPriceCents),
+					formatCents(item.EstimatedFinalPriceCents),
 				))
 			}
 			return fmt.Sprintf(
@@ -718,6 +793,15 @@ func toolResultSummary(name string, data any, citation string) string {
 		}
 	}
 	return "动态业务数据已查询 " + citation
+}
+
+func formatCents(value int64) string {
+	sign := ""
+	if value < 0 {
+		sign = "-"
+		value = -value
+	}
+	return fmt.Sprintf("%s%d.%02d", sign, value/100, value%100)
 }
 
 type warrantyToolPayload struct {

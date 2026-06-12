@@ -14,14 +14,19 @@ var (
 )
 
 type KnowledgeSearchRequest struct {
-	Query       string
-	Terms       []string
-	Categories  []string
-	Brands      []string
-	DocTypes    []string
-	Models      []string
-	EffectiveAt time.Time
-	Limit       int
+	Query        string
+	Terms        []string
+	ProductIDs   []string
+	SKUIDs       []string
+	Categories   []string
+	Brands       []string
+	DocTypes     []string
+	Models       []string
+	IntentTags   []string
+	Version      string
+	FaultNodeIDs []string
+	EffectiveAt  time.Time
+	Limit        int
 }
 
 type KnowledgeRepository interface {

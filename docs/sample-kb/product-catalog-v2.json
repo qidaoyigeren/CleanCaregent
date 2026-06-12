@@ -1,0 +1,31 @@
+{
+  "doc_id": "doc_product_catalog_v2_demo",
+  "title": "CleanCare 十款核心产品结构化参数目录",
+  "content": "# 核心产品参数目录\n\n| 型号 | 品类 | 核心能力 | 适用范围 | 关键耗材/结构 |\n|---|---|---|---|---|\n| T20 | 扫地机器人 | 6000Pa，LDS+结构光，180分钟续航 | 80-120㎡ | 400mL尘盒，200mL水箱，胶刷+毛刷 |\n| X20 Pro | 扫地机器人 | 8000Pa，AI结构光，210分钟续航 | 100-150㎡ | 双胶刷，自动集尘，基站补水 |\n| R10 | 扫地机器人 | 5000Pa，LDS+红外，150分钟续航 | 60-100㎡ | 450mL尘盒，180mL水箱，单胶刷 |\n| R20 | 扫地机器人 | 7000Pa，双线激光，190分钟续航 | 90-130㎡ | 防缠绕胶刷，可选集尘基站 |\n| P400 | 空气净化器 | 450m³/h CADR，PM2.5传感器 | 35-55㎡ | F400复合滤芯，6-12个月 |\n| P500 | 空气净化器 | 600m³/h CADR，PM2.5+VOC传感器 | 50-75㎡ | F500复合滤芯，6-12个月 |\n| W300 | 净水器 | 400G，1.05L/min，2:1净废水比 | 3-4人 | C300复合滤芯+RO膜 |\n| W500 | 净水器 | 600G，1.58L/min，2.5:1净废水比 | 4-6人 | C500复合滤芯+RO膜 |\n| H100 | 加湿器 | 4L，300mL/h，≤30dB(A) | 20-35㎡ | 3档，湿度传感器，缺水保护 |\n| H200 | 加湿器 | 6L，450mL/h，≤32dB(A) | 30-50㎡ | 4档，双湿度传感器，自动恒湿 |\n\n## 使用约束\n以上均为面试演示用模拟静态参数。价格、库存、订单和保修状态不得从本文档回答，必须通过动态工具查询。产品详情页应按型号单独入库，本目录用于跨型号召回和参数表分块演示。",
+  "category": "cleaning_appliance",
+  "brand": "CleanCare",
+  "doc_type": "product_parameter",
+  "version": "demo-2",
+  "source": "mock://clean-care/product-catalog-v2",
+  "intent_tags": [
+    "product_parameter",
+    "product_comparison",
+    "purchase_recommendation"
+  ],
+  "metadata": {
+    "models": [
+      "T20",
+      "X20 Pro",
+      "R10",
+      "R20",
+      "P400",
+      "P500",
+      "W300",
+      "W500",
+      "H100",
+      "H200"
+    ],
+    "parameter_dimensions_min": 10,
+    "data_scope": "mock"
+  }
+}

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -114,19 +113,22 @@ func (r *BusinessRepository) QueryPrices(ctx context.Context, userID string, pro
 	}
 	quotes := make([]model.PriceQuote, 0, len(skus))
 	for _, sku := range skus {
-		finalPrice := sku.CurrentPrice
+		finalPriceCents := sku.CurrentPriceCents
 		for _, coupon := range coupons {
 			switch coupon.DiscountType {
 			case "amount":
-				finalPrice -= coupon.DiscountValue
+				finalPriceCents -= coupon.DiscountAmountCents
 			case "percent":
-				finalPrice *= coupon.DiscountValue
+				finalPriceCents = (finalPriceCents*coupon.DiscountBasisPoints + 5000) / 10000
 			}
 		}
+		if finalPriceCents < 0 {
+			finalPriceCents = 0
+		}
 		quotes = append(quotes, model.PriceQuote{
-			ProductSKU:          sku,
-			EstimatedFinalPrice: math.Max(0, math.Round(finalPrice*100)/100),
-			AvailableCoupons:    coupons,
+			ProductSKU:               sku,
+			EstimatedFinalPriceCents: finalPriceCents,
+			AvailableCoupons:         coupons,
 		})
 	}
 	return quotes, nil
@@ -205,13 +207,14 @@ func (r *BusinessRepository) ListPurchaseHistory(
 func (r *BusinessRepository) GetOrder(ctx context.Context, userID, orderNo string) (model.OrderDetail, error) {
 	var order model.OrderDetail
 	var paidAt, deliveredAt sql.NullTime
+	var totalAmountRaw string
 	err := r.db.QueryRowContext(ctx, `
 		SELECT o.order_no, u.user_no, o.status, o.total_amount, o.paid_at, o.delivered_at, o.created_at
 		FROM orders o
 		JOIN users u ON u.id = o.user_id
 		WHERE u.user_no = ? AND o.order_no = ?
 	`, userID, orderNo).Scan(
-		&order.OrderNo, &order.UserID, &order.Status, &order.TotalAmount,
+		&order.OrderNo, &order.UserID, &order.Status, &totalAmountRaw,
 		&paidAt, &deliveredAt, &order.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -219,6 +222,10 @@ func (r *BusinessRepository) GetOrder(ctx context.Context, userID, orderNo strin
 	}
 	if err != nil {
 		return model.OrderDetail{}, fmt.Errorf("get order: %w", err)
+	}
+	order.TotalAmountCents, err = parseDecimalCents(totalAmountRaw)
+	if err != nil {
+		return model.OrderDetail{}, fmt.Errorf("parse order total amount: %w", err)
 	}
 	if paidAt.Valid {
 		order.PaidAt = &paidAt.Time
@@ -435,12 +442,21 @@ func (r *BusinessRepository) querySKUs(ctx context.Context, refs []string) ([]mo
 	for rows.Next() {
 		var sku model.ProductSKU
 		var specsRaw []byte
+		var listPriceRaw, currentPriceRaw string
 		if err := rows.Scan(
 			&sku.SKUCode, &sku.ProductCode, &sku.ProductName, &sku.Model, &sku.SKUName,
-			&specsRaw, &sku.ListPrice, &sku.CurrentPrice, &sku.Currency,
+			&specsRaw, &listPriceRaw, &currentPriceRaw, &sku.Currency,
 			&sku.AvailableStock, &sku.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan product sku: %w", err)
+		}
+		sku.ListPriceCents, err = parseDecimalCents(listPriceRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse product sku list price: %w", err)
+		}
+		sku.CurrentPriceCents, err = parseDecimalCents(currentPriceRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse product sku current price: %w", err)
 		}
 		if len(specsRaw) > 0 {
 			_ = json.Unmarshal(specsRaw, &sku.Specs)
@@ -474,8 +490,20 @@ func (r *BusinessRepository) availableCoupons(
 	coupons := make([]model.CouponBenefit, 0)
 	for rows.Next() {
 		var coupon model.CouponBenefit
-		if err := rows.Scan(&coupon.CouponCode, &coupon.Name, &coupon.DiscountType, &coupon.DiscountValue); err != nil {
+		var discountRaw string
+		if err := rows.Scan(&coupon.CouponCode, &coupon.Name, &coupon.DiscountType, &discountRaw); err != nil {
 			return nil, fmt.Errorf("scan coupon: %w", err)
+		}
+		switch coupon.DiscountType {
+		case "amount":
+			coupon.DiscountAmountCents, err = parseDecimalCents(discountRaw)
+		case "percent":
+			coupon.DiscountBasisPoints, err = parseDecimalBasisPoints(discountRaw)
+		default:
+			err = fmt.Errorf("unsupported discount type %q", coupon.DiscountType)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse coupon %s discount: %w", coupon.CouponCode, err)
 		}
 		coupons = append(coupons, coupon)
 	}
@@ -504,12 +532,18 @@ func scanProduct(scanner productScanner) (model.Product, error) {
 func scanPurchaseRecord(scanner productScanner) (model.PurchaseRecord, error) {
 	var record model.PurchaseRecord
 	var paidAt, deliveredAt sql.NullTime
+	var unitPriceRaw string
 	if err := scanner.Scan(
 		&record.OrderNo, &record.Status, &record.ProductCode, &record.ProductName,
-		&record.Model, &record.SKUCode, &record.Quantity, &record.UnitPrice,
+		&record.Model, &record.SKUCode, &record.Quantity, &unitPriceRaw,
 		&paidAt, &deliveredAt, &record.OrderItemID, &record.WarrantyMonths,
 	); err != nil {
 		return model.PurchaseRecord{}, fmt.Errorf("scan purchase record: %w", err)
+	}
+	var err error
+	record.UnitPriceCents, err = parseDecimalCents(unitPriceRaw)
+	if err != nil {
+		return model.PurchaseRecord{}, fmt.Errorf("parse purchase unit price: %w", err)
 	}
 	if paidAt.Valid {
 		record.PaidAt = paidAt.Time

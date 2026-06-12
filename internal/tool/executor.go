@@ -117,6 +117,15 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 		e.log(context.WithoutCancel(ctx), call, executed)
 		return executed, fmt.Errorf("execute tool %s: %w", call.Name, err)
 	}
+	if err := ValidateResult(call.Name, executed.Data); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid tool result")
+		executed.Success = false
+		executed.ErrorCode = "INVALID_TOOL_RESULT"
+		executed.Message = err.Error()
+		e.log(context.WithoutCancel(ctx), call, executed)
+		return executed, fmt.Errorf("validate tool %s result: %w", call.Name, err)
+	}
 	executed.Success = true
 	span.SetAttributes(attribute.Int64("tool.latency_ms", executed.FinishedAt.Sub(executed.StartedAt).Milliseconds()))
 	e.log(context.WithoutCancel(ctx), call, executed)

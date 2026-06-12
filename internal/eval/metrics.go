@@ -3,9 +3,9 @@ package eval
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
-	"unicode"
 )
 
 type RuleEvaluator struct{}
@@ -31,7 +31,7 @@ func (e *RuleEvaluator) Evaluate(_ context.Context, evalCase Case, output AgentO
 	if needsEvidence(evalCase) && len(output.EvidenceIDs) == 0 {
 		faithfulness = 0
 	}
-	correctness := answerSimilarity(evalCase.StandardAnswer, output.Answer)
+	correctness := answerFactCoverage(evalCase.StandardAnswer, output.Answer)
 	multiStep := contextRecall == 1 && toolSelection
 	if len(expectedDocs) == 0 {
 		multiStep = toolSelection
@@ -49,7 +49,7 @@ func (e *RuleEvaluator) Evaluate(_ context.Context, evalCase Case, output AgentO
 		{Name: "tool_selection_accuracy", Value: boolValue(toolSelection), Pass: toolSelection},
 		{Name: "tool_parameter_accuracy", Value: paramAccuracy, Pass: paramAccuracy >= 0.8},
 		{Name: "answer_faithfulness", Value: faithfulness, Pass: faithfulness >= 1},
-		{Name: "answer_correctness", Value: correctness, Pass: correctness >= 0.15},
+		{Name: "answer_correctness", Value: correctness, Pass: correctness >= 0.5},
 		{Name: "multi_step_completion", Value: boolValue(multiStep), Pass: multiStep},
 		{Name: "clarify_reject_accuracy", Value: boolValue(clarifyCorrect && rejectCorrect), Pass: clarifyCorrect && rejectCorrect},
 	}, nil
@@ -158,36 +158,60 @@ func containsJSONValue(actual, expected string) bool {
 	return true
 }
 
-func answerSimilarity(expected, actual string) float64 {
+var answerFactPattern = regexp.MustCompile(`(?i)[a-z0-9]+(?:\.[0-9]+)?(?:pa|ghz|mah|db|g|l|w)?`)
+
+// answerFactCoverage is deliberately conservative. It only detects empty
+// answers, exact expected clauses, and missing literal model/numeric facts.
+// Semantic correctness is evaluated by LLMJudgeEvaluator.
+func answerFactCoverage(expected, actual string) float64 {
 	if strings.TrimSpace(expected) == "" {
 		return 1
 	}
-	expectedTokens := tokenSet(expected)
-	actualTokens := tokenSet(actual)
-	if len(expectedTokens) == 0 {
-		return boolValue(strings.Contains(strings.ToLower(actual), strings.ToLower(expected)))
+	if strings.TrimSpace(actual) == "" {
+		return 0
 	}
+	normalizedExpected := normalizeAnswerText(expected)
+	normalizedActual := normalizeAnswerText(actual)
+	if normalizedExpected != "" && strings.Contains(normalizedActual, normalizedExpected) {
+		return 1
+	}
+	expectedTokens := uniqueStrings(answerFactPattern.FindAllString(strings.ToLower(expected), -1))
+	if len(expectedTokens) == 0 {
+		return 0.5
+	}
+	actualLower := strings.ToLower(actual)
 	hits := 0
-	for token := range expectedTokens {
-		if _, ok := actualTokens[token]; ok {
+	for _, token := range expectedTokens {
+		if strings.Contains(actualLower, token) {
 			hits++
 		}
 	}
 	return float64(hits) / float64(len(expectedTokens))
 }
 
-func tokenSet(value string) map[string]struct{} {
-	value = strings.ToLower(value)
-	var runes []rune
-	for _, current := range value {
-		if unicode.IsLetter(current) || unicode.IsNumber(current) {
-			runes = append(runes, current)
+func normalizeAnswerText(value string) string {
+	return strings.Map(func(current rune) rune {
+		switch current {
+		case ' ', '\t', '\r', '\n', '，', '。', '：', '；', '、', ',', '.', ':', ';':
+			return -1
+		default:
+			return current
 		}
-	}
-	result := map[string]struct{}{}
-	for index := 0; index < len(runes); index++ {
-		end := min(index+2, len(runes))
-		result[string(runes[index:end])] = struct{}{}
+	}, strings.ToLower(value))
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
 	}
 	return result
 }

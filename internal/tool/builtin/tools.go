@@ -156,7 +156,7 @@ func (t *CreateAfterSalesTicket) Execute(ctx context.Context, call tool.Call) (t
 	}
 	key := call.IdempotencyKey
 	if key == "" {
-		key = call.TraceID + ":" + orderNo
+		return invalid(call, "idempotency key is required")
 	}
 	ticket, err := t.repository.CreateAfterSalesTicket(ctx, repository.CreateTicketRequest{
 		UserID:           call.UserID,

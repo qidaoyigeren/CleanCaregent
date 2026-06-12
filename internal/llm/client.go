@@ -3,6 +3,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,14 +16,15 @@ import (
 
 // Client wraps an OpenAI-compatible chat completions endpoint.
 type Client struct {
-	endpoint    string
-	apiKey      string
-	model       string
-	maxTokens   int
-	temperature float64
-	httpClient  *http.Client
-	breaker     *CircuitBreaker
-	fallbacks   []*Client
+	endpoint          string
+	apiKey            string
+	model             string
+	maxTokens         int
+	temperature       float64
+	httpClient        *http.Client
+	breaker           *CircuitBreaker
+	fallbacks         []*Client
+	firstTokenTimeout time.Duration
 }
 
 // ToolDefinition is an OpenAI-compatible function tool declaration.
@@ -69,13 +71,14 @@ func NewClient(
 	timeout time.Duration,
 ) *Client {
 	return &Client{
-		endpoint:    endpoint,
-		apiKey:      apiKey,
-		model:       model,
-		maxTokens:   maxTokens,
-		temperature: temperature,
-		httpClient:  &http.Client{Timeout: timeout},
-		breaker:     NewCircuitBreaker(5, 30*time.Second),
+		endpoint:          endpoint,
+		apiKey:            apiKey,
+		model:             model,
+		maxTokens:         maxTokens,
+		temperature:       temperature,
+		httpClient:        &http.Client{Timeout: timeout},
+		breaker:           NewCircuitBreaker(5, time.Minute),
+		firstTokenTimeout: minDuration(5*time.Second, timeout),
 	}
 }
 
@@ -89,6 +92,21 @@ func (c *Client) WithFallbacks(fallbacks ...*Client) *Client {
 	return c
 }
 
+// WithCircuitBreaker configures provider-local failure isolation.
+func (c *Client) WithCircuitBreaker(failureThreshold int, openTimeout time.Duration) *Client {
+	c.breaker = NewCircuitBreaker(failureThreshold, openTimeout)
+	return c
+}
+
+// WithFirstTokenTimeout configures how long streaming calls wait for the
+// first non-empty content delta before the provider is considered failed.
+func (c *Client) WithFirstTokenTimeout(timeout time.Duration) *Client {
+	if timeout > 0 {
+		c.firstTokenTimeout = timeout
+	}
+	return c
+}
+
 // WithModel creates a model-specific client for lightweight routing while
 // preserving the configured endpoint and fallback chain.
 func (c *Client) WithModel(model string) *Client {
@@ -96,14 +114,211 @@ func (c *Client) WithModel(model string) *Client {
 		return c
 	}
 	return (&Client{
-		endpoint:    c.endpoint,
-		apiKey:      c.apiKey,
-		model:       strings.TrimSpace(model),
-		maxTokens:   c.maxTokens,
-		temperature: c.temperature,
-		httpClient:  &http.Client{Timeout: c.httpClient.Timeout},
-		breaker:     NewCircuitBreaker(5, 30*time.Second),
+		endpoint:          c.endpoint,
+		apiKey:            c.apiKey,
+		model:             strings.TrimSpace(model),
+		maxTokens:         c.maxTokens,
+		temperature:       c.temperature,
+		httpClient:        &http.Client{Timeout: c.httpClient.Timeout},
+		breaker:           NewCircuitBreaker(5, time.Minute),
+		firstTokenTimeout: c.firstTokenTimeout,
 	}).WithFallbacks(c.fallbacks...)
+}
+
+// ChatStream consumes an OpenAI-compatible SSE response. Fallback providers
+// are attempted only before any content has been emitted.
+func (c *Client) ChatStream(
+	ctx context.Context,
+	messages []map[string]string,
+	onDelta func(string) error,
+) error {
+	if onDelta == nil {
+		return fmt.Errorf("stream delta callback is required")
+	}
+	payload := map[string]any{
+		"model":       c.model,
+		"messages":    messages,
+		"temperature": c.temperature,
+		"max_tokens":  c.maxTokens,
+		"stream":      true,
+		"stream_options": map[string]bool{
+			"include_usage": true,
+		},
+	}
+	emitted, err := c.streamSingle(ctx, payload, onDelta)
+	if err == nil {
+		return nil
+	}
+	if emitted {
+		return err
+	}
+	failures := []string{c.model + ": " + err.Error()}
+	for _, fallback := range c.fallbacks {
+		if fallback == nil {
+			continue
+		}
+		fallbackPayload := clonePayload(payload)
+		fallbackPayload["model"] = fallback.model
+		fallbackPayload["max_tokens"] = fallback.maxTokens
+		fallbackPayload["temperature"] = fallback.temperature
+		emitted, fallbackErr := fallback.streamSingle(ctx, fallbackPayload, onDelta)
+		if fallbackErr == nil {
+			return nil
+		}
+		if emitted {
+			return fallbackErr
+		}
+		failures = append(failures, fallback.model+": "+fallbackErr.Error())
+	}
+	return fmt.Errorf("all streaming chat providers failed: %s", strings.Join(failures, "; "))
+}
+
+type streamEvent struct {
+	data string
+	err  error
+}
+
+func (c *Client) streamSingle(
+	ctx context.Context,
+	payload map[string]any,
+	onDelta func(string) error,
+) (bool, error) {
+	if c.breaker != nil && !c.breaker.Allow() {
+		return false, ErrCircuitOpen
+	}
+	success := false
+	defer func() {
+		if c.breaker != nil {
+			c.breaker.Record(success)
+		}
+	}()
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return false, fmt.Errorf("encode streaming chat request: %w", err)
+	}
+	requestCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return false, fmt.Errorf("create streaming chat request: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "text/event-stream")
+	if c.apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return false, fmt.Errorf("call streaming chat endpoint: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return false, fmt.Errorf(
+			"streaming chat endpoint returned %d: %s",
+			response.StatusCode,
+			strings.TrimSpace(string(raw)),
+		)
+	}
+
+	events := make(chan streamEvent, 1)
+	go scanSSE(response.Body, events)
+
+	timer := time.NewTimer(c.firstTokenTimeout)
+	defer timer.Stop()
+	firstContent := false
+	for {
+		var timeout <-chan time.Time
+		if !firstContent {
+			timeout = timer.C
+		}
+		select {
+		case <-ctx.Done():
+			return firstContent, ctx.Err()
+		case <-timeout:
+			cancel()
+			_ = response.Body.Close()
+			return false, fmt.Errorf("streaming chat first token timeout after %s", c.firstTokenTimeout)
+		case event, ok := <-events:
+			if !ok {
+				if !firstContent {
+					return false, fmt.Errorf("streaming chat endpoint returned no content")
+				}
+				success = true
+				return true, nil
+			}
+			if event.err != nil {
+				return firstContent, event.err
+			}
+			if event.data == "[DONE]" {
+				if !firstContent {
+					return false, fmt.Errorf("streaming chat endpoint completed without content")
+				}
+				success = true
+				return true, nil
+			}
+			var chunk struct {
+				Choices []struct {
+					Delta struct {
+						Content string `json:"content"`
+					} `json:"delta"`
+				} `json:"choices"`
+				Usage Usage `json:"usage"`
+			}
+			if err := json.Unmarshal([]byte(event.data), &chunk); err != nil {
+				return firstContent, fmt.Errorf("decode streaming chat event: %w", err)
+			}
+			if chunk.Usage.TotalTokens > 0 {
+				collectUsage(ctx, chunk.Usage)
+			}
+			for _, choice := range chunk.Choices {
+				if choice.Delta.Content == "" {
+					continue
+				}
+				if !firstContent {
+					firstContent = true
+					if !timer.Stop() {
+						select {
+						case <-timer.C:
+						default:
+						}
+					}
+				}
+				if err := onDelta(choice.Delta.Content); err != nil {
+					return true, fmt.Errorf("consume streaming chat delta: %w", err)
+				}
+			}
+		}
+	}
+}
+
+func scanSSE(reader io.Reader, events chan<- streamEvent) {
+	defer close(events)
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 4096), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" {
+			continue
+		}
+		events <- streamEvent{data: data}
+	}
+	if err := scanner.Err(); err != nil {
+		events <- streamEvent{err: fmt.Errorf("read streaming chat response: %w", err)}
+	}
+}
+
+func minDuration(left, right time.Duration) time.Duration {
+	if right <= 0 || left < right {
+		return left
+	}
+	return right
 }
 
 // Chat sends messages and returns the assistant's response text.

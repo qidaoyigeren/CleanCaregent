@@ -1,32 +1,13 @@
 package seed
 
 import (
-	"fmt"
 	"strings"
 
 	"CleanCaregent/internal/service"
 )
 
-type seedProduct struct {
-	Model    string
-	Category string
-	Kind     string
-	Spec     string
-}
-
 func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
-	products := []seedProduct{
-		{"T20", "robot_vacuum", "扫地机器人", "6000Pa 吸力，适用 80-120 平米，支持地毯增压和宠物毛发清洁"},
-		{"X20 Pro", "robot_vacuum", "扫地机器人", "8000Pa 吸力，适用 100-150 平米，双胶刷防缠绕并支持基站自清洁"},
-		{"R10", "robot_vacuum", "扫地机器人", "5000Pa 吸力，适用 60-100 平米，主打基础清扫"},
-		{"R20", "robot_vacuum", "扫地机器人", "7000Pa 吸力，适用 90-130 平米，支持地毯识别"},
-		{"P400", "air_purifier", "空气净化器", "CADR 450m³/h，建议面积 35-55 平米，兼容 F400 滤芯"},
-		{"P500", "air_purifier", "空气净化器", "CADR 600m³/h，建议面积 50-75 平米，兼容 F500 滤芯"},
-		{"W300", "water_purifier", "净水器", "400G 通量，适合 3-4 人家庭，兼容 C300 滤芯"},
-		{"W500", "water_purifier", "净水器", "600G 通量，适合 4-6 人家庭，兼容 C500 滤芯"},
-		{"H100", "humidifier", "加湿器", "4L 水箱，300mL/h 加湿量，适用 20-35 平米"},
-		{"H200", "humidifier", "加湿器", "6L 水箱，450mL/h 加湿量，适用 30-50 平米"},
-	}
+	products := defaultProducts()
 	var documents []service.IngestDocumentRequest
 	add := func(docID, title, content, category, docType string, models []string, tags ...string) {
 		metadata := map[string]any{"data_scope": "mock"}
@@ -53,7 +34,7 @@ func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
 		add(
 			"kb_detail_"+slug(product.Model),
 			product.Model+" "+product.Kind+"商品详情",
-			fmt.Sprintf("# %s\n\n%s。核心规格：%s。实际价格和库存必须通过动态工具查询。", product.Model, product.Kind, product.Spec),
+			renderProductDetail(product),
 			product.Category,
 			"product_detail",
 			[]string{product.Model},
@@ -61,11 +42,11 @@ func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
 		)
 	}
 
-	for _, product := range []seedProduct{products[0], products[1], products[4], products[6], products[8]} {
+	for _, product := range products {
 		add(
 			"kb_params_"+slug(product.Model),
-			product.Model+" 核心参数表",
-			fmt.Sprintf("# 参数表\n\n| 型号 | 品类 | 核心参数 |\n|---|---|---|\n| %s | %s | %s |", product.Model, product.Kind, product.Spec),
+			product.Model+" 结构化参数表",
+			renderParameterTable(product),
 			product.Category,
 			"product_parameter",
 			[]string{product.Model},
@@ -84,7 +65,19 @@ func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
 		{"h100_h200", "H100 与 H200 对比", "H100 适合卧室，H200 水箱和加湿量更大，适合客厅。", "humidifier", []string{"H100", "H200"}},
 	}
 	for _, item := range comparisons {
-		add("kb_compare_"+item.id, item.title, "# 对比结论\n\n"+item.content, item.category, "product_comparison", item.models, "product_comparison")
+		add(
+			"kb_compare_"+item.id,
+			item.title,
+			renderProductComparison(
+				findSeedProduct(products, item.models[0]),
+				findSeedProduct(products, item.models[1]),
+				item.content,
+			),
+			item.category,
+			"product_comparison",
+			item.models,
+			"product_comparison",
+		)
 	}
 
 	guides := []struct{ id, title, category, content string }{
@@ -95,7 +88,15 @@ func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
 		{"humidifier_room", "卧室和客厅加湿器选购指南", "humidifier", "卧室关注噪音和小面积控制，客厅关注水箱容量和持续加湿量。"},
 	}
 	for _, item := range guides {
-		add("kb_guide_"+item.id, item.title, "# 选购约束\n\n"+item.content, item.category, "purchase_guide", nil, "purchase_recommendation")
+		add(
+			"kb_guide_"+item.id,
+			item.title,
+			renderPurchaseGuide(item.title, item.category, item.content),
+			item.category,
+			"purchase_guide",
+			nil,
+			"purchase_recommendation",
+		)
 	}
 
 	compatibilities := []struct{ host, accessory, category, cycle string }{
@@ -109,7 +110,7 @@ func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
 		add(
 			"kb_compat_"+slug(item.host)+"_"+slug(item.accessory),
 			item.host+" 配件兼容表",
-			fmt.Sprintf("# 兼容关系\n\n| 主机型号 | 配件型号 | 建议周期 |\n|---|---|---|\n| %s | %s | %s |\n\n购买前必须核对主机铭牌。", item.host, item.accessory, item.cycle),
+			renderCompatibility(item.host, item.accessory, item.cycle),
 			item.category,
 			"accessory_compatibility",
 			[]string{item.host},
@@ -122,7 +123,7 @@ func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
 		add(
 			"kb_manual_"+slug(product.Model),
 			product.Model+" 使用说明书",
-			fmt.Sprintf("# 首次使用\n\n%s 使用前应移除包装、按说明安装并完成首次清洁。维护前断电，不得自行拆解电气部件。", product.Model),
+			renderUserManual(product),
 			product.Category,
 			"user_manual",
 			[]string{product.Model},
@@ -139,7 +140,15 @@ func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
 		{"h100_mist", "H100 不出雾排查", "humidifier", "H100", "确认水位、浮子和雾化片清洁状态，禁止干烧。"},
 	}
 	for _, item := range faults {
-		add("kb_fault_"+item.id, item.title, "# 故障树\n\n"+item.content, item.category, "troubleshooting", []string{item.model}, "troubleshooting")
+		add(
+			"kb_fault_"+item.id,
+			item.title,
+			renderTroubleshootingTree(item.id, item.model, item.content),
+			item.category,
+			"troubleshooting",
+			[]string{item.model},
+			"troubleshooting",
+		)
 	}
 
 	policies := []struct{ id, title, content string }{
@@ -150,7 +159,16 @@ func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
 		{"ticket", "售后工单创建规则", "创建工单前必须确认订单、问题描述和用户明确授权；使用幂等键避免重复建单。"},
 	}
 	for _, item := range policies {
-		add("kb_policy_"+item.id, item.title, "# 条款\n\n"+item.content, "cleaning_appliance", "after_sales_policy", nil, "return_eligibility", "warranty_query")
+		add(
+			"kb_policy_"+item.id,
+			item.title,
+			renderPolicy(item.title, item.content),
+			"cleaning_appliance",
+			"after_sales_policy",
+			nil,
+			"return_eligibility",
+			"warranty_query",
+		)
 	}
 
 	faqs := []struct{ id, title, category, model, content string }{
@@ -164,7 +182,16 @@ func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
 		{"h200_water", "H200 应使用什么水", "humidifier", "H200", "优先使用洁净软水，并按周期清洁水箱和雾化片。"},
 	}
 	for _, item := range faqs {
-		add("kb_faq_"+item.id, item.title, "# FAQ\n\n"+item.content, item.category, "faq", []string{item.model}, "usage_instruction", "product_parameter")
+		add(
+			"kb_faq_"+item.id,
+			item.title,
+			renderFAQ(item.title, item.content),
+			item.category,
+			"faq",
+			[]string{item.model},
+			"usage_instruction",
+			"product_parameter",
+		)
 	}
 	return documents
 }

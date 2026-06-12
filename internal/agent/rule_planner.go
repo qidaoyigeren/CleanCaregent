@@ -94,6 +94,55 @@ func (p *RulePlanner) Plan(ctx context.Context, request PlanRequest) (*Plan, err
 	return plan, nil
 }
 
+func (p *RulePlanner) CompletePlan(ctx context.Context, request PlanRequest) (*Plan, error) {
+	plan, err := p.Plan(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if plan.Mode == "react" {
+		plan.Mode = "plan_execute"
+	}
+	addSequentialDependencies(plan.Steps)
+	return plan, nil
+}
+
+func (p *RulePlanner) RevisePlan(
+	ctx context.Context,
+	request PlanRequest,
+	current *Plan,
+	completed []PlanStep,
+	evidences []Evidence,
+	cause error,
+) (*Plan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	remaining := max(1, request.MaxSteps-len(completed))
+	plan := &Plan{
+		ID:          id.New("plan"),
+		Mode:        "plan_execute",
+		Intent:      request.Intent.Secondary,
+		MaxSteps:    request.MaxSteps,
+		TokenBudget: request.TokenBudget,
+		Confidence:  request.Intent.Confidence,
+	}
+	if len(evidences) > 0 {
+		plan.Steps = []PlanStep{
+			newPlanStep(1, ActionReflect, "", "", "", nil, "revision_use_available_evidence"),
+			finishStep(2, "revision_grounded_finish"),
+		}
+	} else {
+		plan.Steps = []PlanStep{
+			newPlanStep(1, ActionClarify, "", "", request.Query, nil, "revision_missing_evidence"),
+		}
+	}
+	if len(plan.Steps) > remaining {
+		plan.Steps = plan.Steps[:remaining]
+	}
+	addSequentialDependencies(plan.Steps)
+	return plan, nil
+}
+
 func focusedRetrievalPlan(
 	queries []string,
 	docTypes []string,
@@ -103,7 +152,7 @@ func focusedRetrievalPlan(
 		queries = []string{""}
 	}
 	query := queries[0]
-	return []PlanStep{
+	steps := []PlanStep{
 		newPlanStep(1, ActionRetrieve, "", "", query, map[string]any{
 			"search_queries": []string{query},
 			"doc_types":      docTypes,
@@ -112,21 +161,35 @@ func focusedRetrievalPlan(
 		newPlanStep(2, ActionReflect, "", "", "", nil, "check_evidence_coverage"),
 		newPlanStep(3, ActionFinish, "", "", "", nil, "grounded_answer"),
 	}
+	addSequentialDependencies(steps)
+	return steps
 }
 
 func dynamicPlan(toolName, query string, entities map[string]string) []PlanStep {
-	return []PlanStep{
+	steps := []PlanStep{
 		newPlanStep(1, ActionCallTool, toolName, "", query, stringMapToAny(entities), "dynamic_data_required"),
 		newPlanStep(2, ActionReflect, "", "", "", nil, "check_tool_evidence"),
 		newPlanStep(3, ActionFinish, "", "", "", nil, "grounded_answer"),
 	}
+	addSequentialDependencies(steps)
+	return steps
 }
 
 func skillPlan(skillName, query string, entities map[string]string) []PlanStep {
-	return []PlanStep{
+	steps := []PlanStep{
 		newPlanStep(1, ActionRunSkill, "", skillName, query, stringMapToAny(entities), "complex_workflow_required"),
 		newPlanStep(2, ActionReflect, "", "", "", nil, "check_skill_evidence"),
 		newPlanStep(3, ActionFinish, "", "", "", nil, "grounded_answer"),
+	}
+	addSequentialDependencies(steps)
+	return steps
+}
+
+func addSequentialDependencies(steps []PlanStep) {
+	for index := 1; index < len(steps); index++ {
+		if len(steps[index].DependsOn) == 0 {
+			steps[index].DependsOn = []string{steps[index-1].StepID}
+		}
 	}
 }
 
@@ -160,3 +223,5 @@ func stringMapToAny(source map[string]string) map[string]any {
 	}
 	return result
 }
+
+var _ PlanAndExecutePlanner = (*RulePlanner)(nil)

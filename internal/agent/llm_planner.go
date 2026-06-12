@@ -31,6 +31,22 @@ type llmActionDetail struct {
 	Reason          string         `json:"reason"`
 }
 
+type llmCompletePlan struct {
+	Confidence float64               `json:"confidence"`
+	Steps      []llmCompletePlanStep `json:"steps"`
+}
+
+type llmCompletePlanStep struct {
+	Action        string         `json:"action"`
+	ToolName      string         `json:"tool_name"`
+	SkillName     string         `json:"skill_name"`
+	Query         string         `json:"query"`
+	SearchQueries []string       `json:"search_queries"`
+	DocTypes      []string       `json:"doc_types"`
+	Params        map[string]any `json:"params"`
+	Reason        string         `json:"reason"`
+}
+
 // LLMPlanner uses an LLM to dynamically decide the next action in a ReAct loop.
 // It wraps a RulePlanner for the initial plan structure; the LLM decides each
 // subsequent step based on accumulated evidence.
@@ -95,6 +111,173 @@ func (p *LLMPlanner) Plan(ctx context.Context, request PlanRequest) (*Plan, erro
 	// ReAct plans are executed one action at a time through NextStep. The rule
 	// skeleton remains available to the runner as a deterministic fallback.
 	return plan, nil
+}
+
+func (p *LLMPlanner) CompletePlan(ctx context.Context, request PlanRequest) (*Plan, error) {
+	fallback, err := p.rule.CompletePlan(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if p.llm == nil || p.prompts == nil || fallback.Mode != "plan_execute" {
+		return fallback, nil
+	}
+	plan, err := p.generateCompletePlan(ctx, request, "", "")
+	if err != nil || len(plan.Steps) == 0 {
+		return fallback, nil
+	}
+	return plan, nil
+}
+
+func (p *LLMPlanner) RevisePlan(
+	ctx context.Context,
+	request PlanRequest,
+	current *Plan,
+	completed []PlanStep,
+	evidences []Evidence,
+	cause error,
+) (*Plan, error) {
+	if p.llm == nil || p.prompts == nil {
+		return p.rule.RevisePlan(ctx, request, current, completed, evidences, cause)
+	}
+	evidenceRaw, _ := json.Marshal(evidences)
+	causeText := ""
+	if cause != nil {
+		causeText = cause.Error()
+	}
+	plan, err := p.generateCompletePlan(ctx, request, string(evidenceRaw), causeText)
+	if err != nil || len(plan.Steps) == 0 {
+		return p.rule.RevisePlan(ctx, request, current, completed, evidences, cause)
+	}
+	return plan, nil
+}
+
+func (p *LLMPlanner) generateCompletePlan(
+	ctx context.Context,
+	request PlanRequest,
+	evidenceSummary string,
+	cause string,
+) (*Plan, error) {
+	tmpl, err := p.prompts.Get(prompt.ScenarioPlan)
+	if err != nil {
+		return nil, err
+	}
+	if evidenceSummary == "" {
+		evidenceSummary = "(尚未执行步骤)"
+	}
+	contextRaw, _ := json.Marshal(map[string]any{
+		"query":             request.Query,
+		"intent":            request.Intent,
+		"rewritten_queries": request.RewrittenQueries,
+		"allowed_tools":     request.AllowedTools,
+		"max_steps":         min(request.MaxSteps, 5),
+		"observations":      evidenceSummary,
+		"revision_cause":    cause,
+	})
+	messages := []map[string]string{
+		{
+			"role": "system",
+			"content": tmpl.System + `
+
+# Plan-and-Execute 补充规则
+你现在必须先输出完整计划，而不是只输出下一步。步骤总数不超过 5。
+已知复杂业务 Skill 应优先作为受控步骤；工具必须来自 allowed_tools。
+输出 JSON：
+{"confidence":0.0,"steps":[{"action":"retrieve|call_tool|run_skill|clarify|reflect|finish","tool_name":"","skill_name":"","query":"","search_queries":[],"doc_types":[],"params":{},"reason":""}]}`,
+		},
+		{
+			"role":    "user",
+			"content": "请根据以下上下文生成完整可执行计划：\n" + string(contextRaw),
+		},
+	}
+	var output llmCompletePlan
+	if err := p.llm.ChatJSON(ctx, messages, &output); err != nil {
+		return nil, fmt.Errorf("generate complete plan: %w", err)
+	}
+	steps, err := p.validateCompleteSteps(request, output.Steps)
+	if err != nil {
+		return nil, err
+	}
+	return &Plan{
+		ID:          "llm_complete_" + request.TraceID,
+		Mode:        "plan_execute",
+		Intent:      request.Intent.Secondary,
+		Steps:       steps,
+		MaxSteps:    min(max(1, request.MaxSteps), 5),
+		TokenBudget: request.TokenBudget,
+		Confidence:  output.Confidence,
+	}, nil
+}
+
+func (p *LLMPlanner) validateCompleteSteps(
+	request PlanRequest,
+	values []llmCompletePlanStep,
+) ([]PlanStep, error) {
+	maxSteps := min(max(1, request.MaxSteps), 5)
+	if len(values) == 0 {
+		return nil, fmt.Errorf("complete plan returned no steps")
+	}
+	if len(values) > maxSteps {
+		values = values[:maxSteps]
+	}
+	steps := make([]PlanStep, 0, len(values)+1)
+	for _, value := range values {
+		action := normalizeAction(value.Action)
+		if action == "" {
+			return nil, fmt.Errorf("complete plan returned unsupported action %q", value.Action)
+		}
+		step := PlanStep{
+			StepID:     fmt.Sprintf("step_%02d", len(steps)+1),
+			Action:     action,
+			Query:      strings.TrimSpace(value.Query),
+			ToolName:   strings.TrimSpace(value.ToolName),
+			SkillName:  strings.TrimSpace(value.SkillName),
+			Params:     cloneAnyMap(value.Params),
+			ReasonCode: strings.TrimSpace(value.Reason),
+		}
+		switch action {
+		case ActionRetrieve:
+			queries := compactStrings(value.SearchQueries)
+			if len(queries) == 0 && step.Query != "" {
+				queries = []string{step.Query}
+			}
+			step.Params["search_queries"] = queries
+			step.Params["doc_types"] = allowedDocTypes(value.DocTypes)
+		case ActionCallTool:
+			if !containsString(request.AllowedTools, step.ToolName) {
+				return nil, fmt.Errorf("complete plan selected non-whitelisted tool %q", step.ToolName)
+			}
+		case ActionRunSkill:
+			if !skillAllowedForIntent(request.Intent.Secondary, step.SkillName) {
+				return nil, fmt.Errorf(
+					"complete plan selected skill %q for incompatible intent %q",
+					step.SkillName,
+					request.Intent.Secondary,
+				)
+			}
+		}
+		steps = append(steps, step)
+		if action == ActionFinish || action == ActionClarify {
+			break
+		}
+	}
+	if len(steps) < maxSteps &&
+		steps[len(steps)-1].Action != ActionFinish &&
+		steps[len(steps)-1].Action != ActionClarify {
+		steps = append(steps, finishStep(len(steps)+1, "complete_plan_finish"))
+	}
+	addSequentialDependencies(steps)
+	return steps, nil
+}
+
+func cloneAnyMap(source map[string]any) map[string]any {
+	if source == nil {
+		return map[string]any{}
+	}
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }
 
 // NextStep asks the LLM to decide the next action in a ReAct loop based on
@@ -409,3 +592,4 @@ func skillAllowedForIntent(intentType intent.Type, skillName string) bool {
 // Ensure LLMPlanner implements the interface.
 var _ Planner = (*LLMPlanner)(nil)
 var _ ReactivePlanner = (*LLMPlanner)(nil)
+var _ PlanAndExecutePlanner = (*LLMPlanner)(nil)

@@ -30,4 +30,16 @@ func TestDefaultCasesDistribution(t *testing.T) {
 			t.Fatalf("%s count = %d, want %d", path, paths[path], want)
 		}
 	}
+	colloquial := 0
+	for _, item := range cases {
+		for _, tag := range item.Tags {
+			if tag == "口语化" || tag == "省略" || tag == "错别字" || tag == "歧义" {
+				colloquial++
+				break
+			}
+		}
+	}
+	if colloquial < 30 {
+		t.Fatalf("colloquial cases = %d, want at least 30", colloquial)
+	}
 }

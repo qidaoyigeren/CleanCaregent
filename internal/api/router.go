@@ -6,7 +6,9 @@ import (
 	"CleanCaregent/internal/config"
 	"CleanCaregent/internal/eval"
 	"CleanCaregent/internal/health"
+	"CleanCaregent/internal/ingest"
 	"CleanCaregent/internal/middleware"
+	"CleanCaregent/internal/observability"
 	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/service"
 	"CleanCaregent/internal/trace"
@@ -27,7 +29,10 @@ type Dependencies struct {
 	BusinessService     *service.BusinessService
 	RedisClient         goredis.UniversalClient
 	EvalRunner          *eval.Runner
+	EvalComparison      *eval.ComparisonRunner
 	EvalStore           eval.Store
+	AgentMetrics        *observability.AgentMetrics
+	IngestPublisher     ingest.Publisher
 }
 
 func NewRouter(deps Dependencies) http.Handler {
@@ -67,6 +72,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		deps.Config.RAG.KeywordTopK,
 		deps.Config.RAG.RerankTopK,
 		deps.Config.RAG.MinDenseScore,
+		WithKnowledgeIngestPublisher(deps.IngestPublisher),
 	)
 	v1.POST("/admin/kb/documents", knowledge.Ingest)
 	v1.POST("/admin/kb/search", knowledge.Search)
@@ -80,9 +86,14 @@ func NewRouter(deps Dependencies) http.Handler {
 	v1.GET("/orders/:order_no", business.GetOrder)
 	v1.POST("/after-sales/tickets", business.CreateAfterSales)
 
-	evaluations := NewEvalHandler(deps.EvalRunner, deps.EvalStore)
+	evaluations := NewEvalHandler(deps.EvalRunner, deps.EvalComparison, deps.EvalStore)
 	v1.POST("/admin/eval/runs", evaluations.Run)
+	v1.POST("/admin/eval/comparisons", evaluations.Compare)
+	v1.GET("/admin/eval/comparisons/:comparison_id", evaluations.GetComparison)
 	v1.GET("/admin/eval/runs/:run_no", evaluations.Get)
+
+	metrics := NewMetricsHandler(deps.AgentMetrics)
+	v1.GET("/admin/metrics/agent", metrics.Agent)
 
 	return router
 }

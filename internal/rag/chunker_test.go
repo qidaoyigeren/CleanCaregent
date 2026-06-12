@@ -87,3 +87,19 @@ func TestStructureAwareChunkerUsesHeadingsAndSizeLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestStructureAwareChunkerUsesDocumentProfiles(t *testing.T) {
+	chunker := NewProfiledStructureAwareChunker(500, 50, map[string]ChunkProfile{
+		"faq": {MaxRunes: 80, Overlap: 0},
+	})
+	content := "Q: 问题\nA: " + strings.Repeat("这是一个完整回答。", 20)
+	chunks := chunker.Split("faq", "常见问题", content)
+	if len(chunks) < 2 {
+		t.Fatalf("chunk count = %d, want profile to split content", len(chunks))
+	}
+	for _, chunk := range chunks {
+		if utf8.RuneCountInString(chunk.Content) > 80 {
+			t.Fatalf("profile size was not applied: %d", utf8.RuneCountInString(chunk.Content))
+		}
+	}
+}

@@ -3,9 +3,11 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 	"unicode/utf8"
 
+	"CleanCaregent/internal/ingest"
 	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/repository"
 	"CleanCaregent/internal/service"
@@ -17,6 +19,7 @@ import (
 type KnowledgeHandler struct {
 	service   *service.KnowledgeService
 	retriever rag.Retriever
+	publisher ingest.Publisher
 	ragConfig struct {
 		DenseTopK     int
 		KeywordTopK   int
@@ -38,6 +41,7 @@ type ingestKnowledgeRequest struct {
 	Source        string         `json:"source"`
 	IntentTags    []string       `json:"intent_tags"`
 	Metadata      map[string]any `json:"metadata"`
+	ContentFormat string         `json:"content_format"`
 }
 
 type searchKnowledgeRequest struct {
@@ -54,6 +58,7 @@ func NewKnowledgeHandler(
 	retriever rag.Retriever,
 	denseTopK, keywordTopK, rerankTopK int,
 	minDenseScore float64,
+	options ...KnowledgeHandlerOption,
 ) *KnowledgeHandler {
 	handler := &KnowledgeHandler{
 		service:   service,
@@ -63,7 +68,18 @@ func NewKnowledgeHandler(
 	handler.ragConfig.KeywordTopK = keywordTopK
 	handler.ragConfig.RerankTopK = rerankTopK
 	handler.ragConfig.MinDenseScore = minDenseScore
+	for _, option := range options {
+		option(handler)
+	}
 	return handler
+}
+
+type KnowledgeHandlerOption func(*KnowledgeHandler)
+
+func WithKnowledgeIngestPublisher(publisher ingest.Publisher) KnowledgeHandlerOption {
+	return func(handler *KnowledgeHandler) {
+		handler.publisher = publisher
+	}
 }
 
 func (h *KnowledgeHandler) Ingest(c *gin.Context) {
@@ -77,7 +93,20 @@ func (h *KnowledgeHandler) Ingest(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid knowledge document")
 		return
 	}
-	result, err := h.service.Ingest(c.Request.Context(), service.IngestDocumentRequest{
+	content, err := ingest.NormalizeContent(request.ContentFormat, request.Content)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "INVALID_CONTENT_FORMAT", err.Error())
+		return
+	}
+	request.Content = content
+	if request.Metadata == nil {
+		request.Metadata = map[string]any{}
+	}
+	if request.ContentFormat == "" {
+		request.ContentFormat = "markdown"
+	}
+	request.Metadata["content_format"] = request.ContentFormat
+	ingestRequest := service.IngestDocumentRequest{
 		DocID:         request.DocID,
 		Title:         request.Title,
 		Content:       request.Content,
@@ -90,7 +119,29 @@ func (h *KnowledgeHandler) Ingest(c *gin.Context) {
 		Source:        request.Source,
 		IntentTags:    request.IntentTags,
 		Metadata:      request.Metadata,
-	})
+	}
+	async := false
+	if raw := c.Query("async"); raw != "" {
+		async, err = strconv.ParseBool(raw)
+		if err != nil {
+			response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "async must be boolean")
+			return
+		}
+	}
+	if async {
+		if h.publisher == nil {
+			response.Error(c, http.StatusServiceUnavailable, "INGEST_QUEUE_UNAVAILABLE", "knowledge ingest queue is not configured")
+			return
+		}
+		queued, queueErr := h.publisher.Enqueue(c.Request.Context(), ingestRequest)
+		if queueErr != nil {
+			response.Error(c, http.StatusInternalServerError, "KNOWLEDGE_ENQUEUE_FAILED", "knowledge document enqueue failed")
+			return
+		}
+		response.Accepted(c, queued)
+		return
+	}
+	result, err := h.service.Ingest(c.Request.Context(), ingestRequest)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidKnowledgeDocument):

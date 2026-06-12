@@ -227,7 +227,7 @@ func requestedFacets(query string) []string {
 
 func answerCoversFacet(answer, facet string) bool {
 	keywords := map[string][]string{
-		"price":     {"价格", "price", "current_price", "元"},
+		"price":     {"价格", "price", "current_price", "current_price_cents", "元"},
 		"coupon":    {"优惠", "coupon", "券"},
 		"inventory": {"库存", "stock", "有货"},
 		"warranty":  {"保修", "warranty", "在保"},

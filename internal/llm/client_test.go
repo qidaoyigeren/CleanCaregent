@@ -3,8 +3,10 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -158,5 +160,89 @@ func TestClientWithModelUsesOverride(t *testing.T) {
 	}
 	if answer != "ok" {
 		t.Fatalf("answer = %q", answer)
+	}
+}
+
+func TestChatStreamFallsBackOnFirstTokenTimeout(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		time.Sleep(100 * time.Millisecond)
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer primary.Close()
+
+	secondary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["stream"] != true || payload["model"] != "secondary-model" {
+			t.Fatalf("payload = %#v", payload)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"fallback \"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"stream\"}}],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer secondary.Close()
+
+	client := NewClient(primary.URL, "", "primary-model", 100, 0, time.Second).
+		WithFirstTokenTimeout(20 * time.Millisecond).
+		WithFallbacks(
+			NewClient(secondary.URL, "", "secondary-model", 100, 0, time.Second).
+				WithFirstTokenTimeout(20 * time.Millisecond),
+		)
+	collector := &UsageCollector{}
+	var answer strings.Builder
+	err := client.ChatStream(
+		WithUsageCollector(context.Background(), collector),
+		[]map[string]string{{"role": "user", "content": "hello"}},
+		func(delta string) error {
+			answer.WriteString(delta)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer.String() != "fallback stream" {
+		t.Fatalf("answer = %q", answer.String())
+	}
+	if usage := collector.Snapshot(); usage.TotalTokens != 4 || usage.Calls != 1 {
+		t.Fatalf("usage = %#v", usage)
+	}
+}
+
+func TestChatStreamDoesNotFallbackAfterContent(t *testing.T) {
+	var fallbackCalls int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: not-json\n\n")
+	}))
+	defer primary.Close()
+	secondary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fallbackCalls++
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer secondary.Close()
+
+	client := NewClient(primary.URL, "", "primary", 100, 0, time.Second).
+		WithFallbacks(NewClient(secondary.URL, "", "secondary", 100, 0, time.Second))
+	var answer strings.Builder
+	err := client.ChatStream(context.Background(), nil, func(delta string) error {
+		answer.WriteString(delta)
+		return nil
+	})
+	if err == nil {
+		t.Fatal("ChatStream() expected decode error")
+	}
+	if answer.String() != "partial" || fallbackCalls != 0 {
+		t.Fatalf("answer = %q, fallback calls = %d", answer.String(), fallbackCalls)
 	}
 }

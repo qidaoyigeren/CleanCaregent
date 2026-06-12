@@ -20,6 +20,12 @@ type Chunker interface {
 type StructureAwareChunker struct {
 	maxRunes int
 	overlap  int
+	profiles map[string]ChunkProfile
+}
+
+type ChunkProfile struct {
+	MaxRunes int
+	Overlap  int
 }
 
 type section struct {
@@ -38,7 +44,19 @@ func NewStructureAwareChunker(maxRunes, overlap int) *StructureAwareChunker {
 	return &StructureAwareChunker{maxRunes: maxRunes, overlap: overlap}
 }
 
+func NewProfiledStructureAwareChunker(
+	maxRunes, overlap int,
+	profiles map[string]ChunkProfile,
+) *StructureAwareChunker {
+	return &StructureAwareChunker{
+		maxRunes: maxRunes,
+		overlap:  overlap,
+		profiles: cloneProfiles(profiles),
+	}
+}
+
 func (c *StructureAwareChunker) Split(docType, title, content string) []Chunk {
+	active := c.forDocumentType(docType)
 	content = normalizeContent(content)
 	if content == "" {
 		return nil
@@ -47,17 +65,42 @@ func (c *StructureAwareChunker) Split(docType, title, content string) []Chunk {
 	sections := parseSections(title, content)
 	chunks := make([]Chunk, 0, len(sections))
 	for _, current := range sections {
-		if structured := c.splitStructured(docType, current); len(structured) > 0 {
+		if structured := active.splitStructured(docType, current); len(structured) > 0 {
 			chunks = append(chunks, structured...)
 			continue
 		}
 		if isTableDocument(docType) && containsMarkdownTable(current.content) {
-			chunks = append(chunks, c.splitTable(current)...)
+			chunks = append(chunks, active.splitTable(current)...)
 			continue
 		}
-		chunks = append(chunks, c.splitText(current)...)
+		chunks = append(chunks, active.splitText(current)...)
 	}
 	return chunks
+}
+
+func (c *StructureAwareChunker) forDocumentType(docType string) *StructureAwareChunker {
+	if c == nil {
+		return &StructureAwareChunker{maxRunes: 1200, overlap: 120}
+	}
+	profile, ok := c.profiles[docType]
+	if !ok || profile.MaxRunes <= 0 || profile.Overlap < 0 || profile.Overlap >= profile.MaxRunes {
+		return c
+	}
+	active := *c
+	active.maxRunes = profile.MaxRunes
+	active.overlap = profile.Overlap
+	return &active
+}
+
+func cloneProfiles(source map[string]ChunkProfile) map[string]ChunkProfile {
+	if len(source) == 0 {
+		return nil
+	}
+	result := make(map[string]ChunkProfile, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }
 
 func (c *StructureAwareChunker) splitStructured(docType string, value section) []Chunk {

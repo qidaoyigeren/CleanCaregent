@@ -82,6 +82,12 @@ func (fixedRetriever) Search(context.Context, rag.SearchRequest) ([]rag.SearchRe
 	}}, nil
 }
 
+type emptyRetriever struct{}
+
+func (emptyRetriever) Search(context.Context, rag.SearchRequest) ([]rag.SearchResult, error) {
+	return nil, nil
+}
+
 type fixedGenerator struct{}
 
 func (fixedGenerator) Name() string { return "fixed" }
@@ -137,5 +143,104 @@ func TestAgenticRunnerUsesReactivePlannerAfterObservation(t *testing.T) {
 	}
 	if len(result.Evidences) != 1 || result.Evidences[0].ID != "E1" {
 		t.Fatalf("evidences = %#v", result.Evidences)
+	}
+}
+
+type planExecuteTestPlanner struct {
+	completeCalls int
+	reviseCalls   int
+}
+
+func (p *planExecuteTestPlanner) Plan(context.Context, PlanRequest) (*Plan, error) {
+	return &Plan{
+		ID:          "initial",
+		Mode:        "react",
+		Steps:       []PlanStep{finishStep(1, "fallback")},
+		MaxSteps:    5,
+		TokenBudget: 2000,
+	}, nil
+}
+
+func (p *planExecuteTestPlanner) CompletePlan(context.Context, PlanRequest) (*Plan, error) {
+	p.completeCalls++
+	return &Plan{
+		ID:   "complete",
+		Mode: "plan_execute",
+		Steps: []PlanStep{
+			{
+				StepID: "step_01",
+				Action: ActionRetrieve,
+				Query:  "T20 X20 Pro",
+				Params: map[string]any{"doc_types": []string{"product_comparison"}},
+			},
+			{
+				StepID:    "step_02",
+				Action:    ActionFinish,
+				Params:    map[string]any{},
+				DependsOn: []string{"step_01"},
+			},
+		},
+		MaxSteps:    5,
+		TokenBudget: 2000,
+	}, nil
+}
+
+func (p *planExecuteTestPlanner) RevisePlan(
+	context.Context,
+	PlanRequest,
+	*Plan,
+	[]PlanStep,
+	[]Evidence,
+	error,
+) (*Plan, error) {
+	p.reviseCalls++
+	return &Plan{
+		ID:   "revised",
+		Mode: "plan_execute",
+		Steps: []PlanStep{{
+			StepID: "step_01",
+			Action: ActionClarify,
+			Query:  "请补充希望重点比较的维度。",
+			Params: map[string]any{},
+		}},
+		MaxSteps:    5,
+		TokenBudget: 2000,
+	}, nil
+}
+
+func TestAgenticRunnerPlanAndExecuteRevisesAfterZeroRecall(t *testing.T) {
+	planner := &planExecuteTestPlanner{}
+	runner := NewAgenticRunner(
+		fixedRouter{},
+		fixedRewriter{},
+		planner,
+		emptyRetriever{},
+		fixedGenerator{},
+		nil,
+		nil,
+		AgenticConfig{
+			MaxSteps:     5,
+			TokenBudget:  2000,
+			PlanningMode: "plan_execute",
+			DenseTopK:    5,
+			KeywordTopK:  5,
+			RerankTopK:   3,
+		},
+	)
+
+	result, err := runner.Run(context.Background(), Request{
+		TraceID:        "tr_plan_execute",
+		UserID:         "u_1",
+		ConversationID: "cv_1",
+		Query:          "T20和X20 Pro怎么选",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planner.completeCalls != 1 || planner.reviseCalls != 1 {
+		t.Fatalf("complete calls = %d, revise calls = %d", planner.completeCalls, planner.reviseCalls)
+	}
+	if result.Answer == "" {
+		t.Fatal("plan-and-execute returned an empty answer")
 	}
 }

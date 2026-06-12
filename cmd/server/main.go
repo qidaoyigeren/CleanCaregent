@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	evalmysql "CleanCaregent/internal/eval/mysql"
 	"CleanCaregent/internal/generator"
 	"CleanCaregent/internal/health"
+	"CleanCaregent/internal/ingest"
 	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/llm"
 	"CleanCaregent/internal/logging"
@@ -175,7 +177,11 @@ func main() {
 			knowledgeRepo,
 			vectorStore,
 			embedder,
-			rag.NewStructureAwareChunker(cfg.RAG.MaxChunkRunes, cfg.RAG.ChunkOverlap),
+			rag.NewProfiledStructureAwareChunker(
+				cfg.RAG.MaxChunkRunes,
+				cfg.RAG.ChunkOverlap,
+				chunkProfiles(cfg.RAG.ChunkProfiles),
+			),
 		)
 	}
 
@@ -221,6 +227,7 @@ func main() {
 		agentConfig := agent.AgenticConfig{
 			MaxSteps:            cfg.Agent.MaxSteps,
 			TokenBudget:         cfg.Agent.TokenBudget,
+			PlanningMode:        cfg.Agent.PlanningMode,
 			DenseTopK:           cfg.RAG.DenseTopK,
 			KeywordTopK:         cfg.RAG.KeywordTopK,
 			RerankTopK:          cfg.RAG.RerankTopK,
@@ -228,7 +235,11 @@ func main() {
 			EnableLLMComponents: cfg.Prompt.EnableLLMComponents,
 		}
 		var agentOpts []agent.AgenticRunnerOption
-		agentOpts = append(agentOpts, agent.WithPromptRegistry(promptRegistry))
+		agentOpts = append(
+			agentOpts,
+			agent.WithPromptRegistry(promptRegistry),
+			agent.WithMetricsLogger(logger),
+		)
 		if cfg.Prompt.EnableLLMComponents && llmClient != nil {
 			intentLLMClient := llmClient.WithModel(cfg.Prompt.IntentClassifierModel)
 			agentOpts = append(agentOpts,
@@ -293,10 +304,50 @@ func main() {
 		)
 	}
 	conversationService := service.NewConversationService(conversationRepo, runner, cfg.Agent.Timeout, serviceOptions...)
+	var (
+		ingestPublisher ingest.Publisher
+		stopIngest      context.CancelFunc
+	)
+	if cfg.Redis.IngestStreamEnabled && sharedRedis != nil && knowledgeService != nil {
+		stream := ingest.NewRedisStream(
+			sharedRedis,
+			knowledgeService,
+			ingest.StreamConfig{
+				Stream:     cfg.Redis.IngestStream,
+				Group:      cfg.Redis.IngestConsumerGroup,
+				Consumer:   cfg.Redis.IngestConsumerName,
+				DeadLetter: cfg.Redis.IngestDeadLetterName,
+				Block:      cfg.Redis.IngestBlockTimeout,
+				ClaimIdle:  cfg.Redis.IngestClaimIdle,
+				BatchSize:  cfg.Redis.IngestBatchSize,
+				MaxRetries: cfg.Redis.IngestMaxRetries,
+			},
+			logger,
+		)
+		if groupErr := stream.EnsureGroup(context.Background()); groupErr != nil {
+			logger.Fatal("initialize knowledge ingest stream", zap.Error(groupErr))
+		}
+		workerCtx, cancelWorker := context.WithCancel(context.Background())
+		stopIngest = cancelWorker
+		ingestPublisher = stream
+		go func() {
+			if workerErr := stream.Run(workerCtx); workerErr != nil && workerCtx.Err() == nil {
+				logger.Error("knowledge ingest worker stopped", zap.Error(workerErr))
+			}
+		}()
+		logger.Info("knowledge ingest worker started",
+			zap.String("stream", cfg.Redis.IngestStream),
+			zap.String("consumer", cfg.Redis.IngestConsumerName),
+		)
+	}
+	if stopIngest != nil {
+		defer stopIngest()
+	}
 	var evalRunner *eval.Runner
+	var evalComparison *eval.ComparisonRunner
 	if evalStore != nil && traceStore != nil {
 		var evaluator eval.Evaluator = eval.NewRuleEvaluator()
-		if llmClient != nil && cfg.Prompt.EnableLLMComponents {
+		if llmClient != nil {
 			evaluator = eval.NewCompositeEvaluator(
 				evaluator,
 				eval.NewLLMJudgeEvaluator(llmClient, promptRegistry),
@@ -309,6 +360,32 @@ func main() {
 			traceStore,
 			intent.NewRuleRouter(),
 		)
+		if cfg.Agent.Mode == "agentic" && knowledgeRetriever != nil {
+			baselineRunner := agent.NewNaiveRAGRunner(
+				knowledgeRetriever,
+				answerGenerator,
+				agent.NaiveRAGConfig{
+					DenseTopK:     cfg.RAG.DenseTopK,
+					KeywordTopK:   cfg.RAG.KeywordTopK,
+					RerankTopK:    cfg.RAG.RerankTopK,
+					MinDenseScore: cfg.RAG.MinDenseScore,
+				},
+			)
+			baselineService := service.NewConversationService(
+				conversationRepo,
+				baselineRunner,
+				cfg.Agent.Timeout,
+				serviceOptions...,
+			)
+			baselineEvalRunner := eval.NewRunner(
+				evalStore,
+				evaluator,
+				baselineService,
+				traceStore,
+				intent.NewRuleRouter(),
+			)
+			evalComparison = eval.NewComparisonRunner(baselineEvalRunner, evalRunner)
+		}
 	}
 	var businessService *service.BusinessService
 	if businessRepo != nil {
@@ -326,7 +403,10 @@ func main() {
 		BusinessService:     businessService,
 		RedisClient:         sharedRedis,
 		EvalRunner:          evalRunner,
+		EvalComparison:      evalComparison,
 		EvalStore:           evalStore,
+		AgentMetrics:        observability.DefaultAgentMetrics,
+		IngestPublisher:     ingestPublisher,
 	})
 
 	server := &http.Server{
@@ -374,19 +454,44 @@ func main() {
 
 func buildEmbedder(cfg config.Config) embedding.Embedder {
 	if cfg.Embedding.Provider == "openai_compatible" {
-		primary := embedding.NewOpenAIClient(
-			cfg.Embedding.Endpoint,
-			cfg.Embedding.APIKey,
-			cfg.Embedding.Model,
-			cfg.Embedding.Dimension,
-			cfg.Embedding.BatchSize,
-			cfg.Embedding.RequestTimeout,
+		var current embedding.Embedder = embedding.WithCircuitBreaker(
+			embedding.NewOpenAIClient(
+				cfg.Embedding.Endpoint,
+				cfg.Embedding.APIKey,
+				cfg.Embedding.Model,
+				cfg.Embedding.Dimension,
+				cfg.Embedding.BatchSize,
+				cfg.Embedding.RequestTimeout,
+			),
+			cfg.Embedding.FailureThreshold,
+			cfg.Embedding.OpenTimeout,
 		)
-		fallback, err := embedding.NewFallback(primary, embedding.NewLocalHash(cfg.Embedding.Dimension))
-		if err != nil {
-			panic(err)
+		fallbacks := make([]embedding.Embedder, 0, len(cfg.Embedding.Fallbacks)+1)
+		for _, fallback := range cfg.Embedding.Fallbacks {
+			fallbacks = append(fallbacks, embedding.WithCircuitBreaker(
+				embedding.NewOpenAIClient(
+					fallback.Endpoint,
+					fallback.APIKey,
+					fallback.Model,
+					fallback.Dimension,
+					fallback.BatchSize,
+					fallback.RequestTimeout,
+				),
+				cfg.Embedding.FailureThreshold,
+				cfg.Embedding.OpenTimeout,
+			))
 		}
-		return fallback
+		if !strings.EqualFold(cfg.App.Env, "production") {
+			fallbacks = append(fallbacks, embedding.NewLocalHash(cfg.Embedding.Dimension))
+		}
+		for _, fallback := range fallbacks {
+			chain, err := embedding.NewFallback(current, fallback)
+			if err != nil {
+				panic(err)
+			}
+			current = chain
+		}
+		return current
 	}
 	return embedding.NewLocalHash(cfg.Embedding.Dimension)
 }
@@ -416,7 +521,8 @@ func buildLLMClient(cfg config.Config) *llm.Client {
 		cfg.LLM.MaxTokens,
 		cfg.LLM.Temperature,
 		cfg.LLM.RequestTimeout,
-	)
+	).WithCircuitBreaker(cfg.LLM.FailureThreshold, cfg.LLM.OpenTimeout).
+		WithFirstTokenTimeout(cfg.LLM.FirstTokenTimeout)
 	fallbacks := make([]*llm.Client, 0, len(cfg.LLM.Fallbacks))
 	for _, fallback := range cfg.LLM.Fallbacks {
 		fallbacks = append(fallbacks, llm.NewClient(
@@ -426,7 +532,8 @@ func buildLLMClient(cfg config.Config) *llm.Client {
 			fallback.MaxTokens,
 			fallback.Temperature,
 			fallback.RequestTimeout,
-		))
+		).WithCircuitBreaker(cfg.LLM.FailureThreshold, cfg.LLM.OpenTimeout).
+			WithFirstTokenTimeout(min(cfg.LLM.FirstTokenTimeout, fallback.RequestTimeout)))
 	}
 	return primary.WithFallbacks(fallbacks...)
 }
@@ -436,11 +543,41 @@ func buildReranker(cfg config.Config) reranker.Reranker {
 	if cfg.Reranker.Provider != "openai_compatible" {
 		return local
 	}
-	remote := reranker.NewOpenAIClient(
-		cfg.Reranker.Endpoint,
-		cfg.Reranker.APIKey,
-		cfg.Reranker.Model,
-		cfg.Reranker.RequestTimeout,
+	var current reranker.Reranker = reranker.WithCircuitBreaker(
+		reranker.NewOpenAIClient(
+			cfg.Reranker.Endpoint,
+			cfg.Reranker.APIKey,
+			cfg.Reranker.Model,
+			cfg.Reranker.RequestTimeout,
+		),
+		cfg.Reranker.FailureThreshold,
+		cfg.Reranker.OpenTimeout,
 	)
-	return reranker.NewFallback(remote, local)
+	for _, fallback := range cfg.Reranker.Fallbacks {
+		current = reranker.NewFallback(current, reranker.WithCircuitBreaker(
+			reranker.NewOpenAIClient(
+				fallback.Endpoint,
+				fallback.APIKey,
+				fallback.Model,
+				fallback.RequestTimeout,
+			),
+			cfg.Reranker.FailureThreshold,
+			cfg.Reranker.OpenTimeout,
+		))
+	}
+	if !strings.EqualFold(cfg.App.Env, "production") {
+		current = reranker.NewFallback(current, local)
+	}
+	return current
+}
+
+func chunkProfiles(values map[string]config.ChunkProfileConfig) map[string]rag.ChunkProfile {
+	result := make(map[string]rag.ChunkProfile, len(values))
+	for docType, value := range values {
+		result[docType] = rag.ChunkProfile{
+			MaxRunes: value.MaxChunkRunes,
+			Overlap:  value.ChunkOverlap,
+		}
+	}
+	return result
 }

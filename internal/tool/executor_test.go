@@ -11,6 +11,7 @@ import (
 type fakeTool struct {
 	name   string
 	schema json.RawMessage
+	data   any
 }
 
 func (t fakeTool) Name() string        { return t.name }
@@ -22,6 +23,19 @@ func (t fakeTool) ParamsSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object"}`)
 }
 func (t fakeTool) Execute(context.Context, Call) (Result, error) {
+	if t.data != nil {
+		return Result{Data: t.data}, nil
+	}
+	if t.name == "price_query" {
+		return Result{Data: map[string]any{"items": []any{map[string]any{
+			"sku_code":                    "SKU-T20",
+			"model":                       "T20",
+			"list_price_cents":            399900,
+			"current_price_cents":         359900,
+			"estimated_final_price_cents": 359900,
+			"currency":                    "CNY",
+		}}}}, nil
+	}
 	return Result{Data: map[string]any{"ok": true}}, nil
 }
 
@@ -70,5 +84,32 @@ func TestExecutorRejectsNonWhitelistedTool(t *testing.T) {
 	}, []string{"order_lookup"})
 	if !errors.Is(err, ErrToolNotAllowed) {
 		t.Fatalf("error = %v, want not allowed", err)
+	}
+}
+
+func TestExecutorRejectsInvalidSuccessfulToolResult(t *testing.T) {
+	registry := NewRegistry()
+	_ = registry.Register(fakeTool{
+		name: "price_query",
+		data: map[string]any{"items": []any{map[string]any{
+			"sku_code":                    "SKU-T20",
+			"model":                       "T20",
+			"list_price_cents":            399900,
+			"current_price_cents":         0,
+			"estimated_final_price_cents": 0,
+			"currency":                    "CNY",
+		}}},
+	})
+	executor := NewExecutor(registry, nil, time.Second)
+	result, err := executor.Execute(context.Background(), Call{
+		TraceID: "tr_invalid_result",
+		CallID:  "call_invalid_result",
+		Name:    "price_query",
+	}, []string{"price_query"})
+	if !errors.Is(err, ErrInvalidResult) {
+		t.Fatalf("error = %v, want ErrInvalidResult", err)
+	}
+	if result.Success || result.ErrorCode != "INVALID_TOOL_RESULT" {
+		t.Fatalf("result = %#v", result)
 	}
 }

@@ -41,9 +41,13 @@ func main() {
 	}
 	var embedder embedding.Embedder = embedding.NewLocalHash(cfg.Embedding.Dimension)
 	if cfg.Embedding.Provider == "openai_compatible" {
-		primary := embedding.NewOpenAIClient(
-			cfg.Embedding.Endpoint, cfg.Embedding.APIKey, cfg.Embedding.Model,
-			cfg.Embedding.Dimension, cfg.Embedding.BatchSize, cfg.Embedding.RequestTimeout,
+		primary := embedding.WithCircuitBreaker(
+			embedding.NewOpenAIClient(
+				cfg.Embedding.Endpoint, cfg.Embedding.APIKey, cfg.Embedding.Model,
+				cfg.Embedding.Dimension, cfg.Embedding.BatchSize, cfg.Embedding.RequestTimeout,
+			),
+			cfg.Embedding.FailureThreshold,
+			cfg.Embedding.OpenTimeout,
 		)
 		embedder, err = embedding.NewFallback(primary, embedder)
 		if err != nil {
@@ -54,7 +58,11 @@ func main() {
 		mysqlrepository.NewKnowledgeRepository(db),
 		vector,
 		embedder,
-		rag.NewStructureAwareChunker(cfg.RAG.MaxChunkRunes, cfg.RAG.ChunkOverlap),
+		rag.NewProfiledStructureAwareChunker(
+			cfg.RAG.MaxChunkRunes,
+			cfg.RAG.ChunkOverlap,
+			chunkProfiles(cfg.RAG.ChunkProfiles),
+		),
 	)
 	created, skipped := 0, 0
 	for _, document := range seed.DefaultKnowledgeDocuments() {
@@ -73,4 +81,15 @@ func main() {
 func fail(action string, err error) {
 	fmt.Fprintf(os.Stderr, "%s: %v\n", action, err)
 	os.Exit(1)
+}
+
+func chunkProfiles(values map[string]config.ChunkProfileConfig) map[string]rag.ChunkProfile {
+	result := make(map[string]rag.ChunkProfile, len(values))
+	for docType, value := range values {
+		result[docType] = rag.ChunkProfile{
+			MaxRunes: value.MaxChunkRunes,
+			Overlap:  value.ChunkOverlap,
+		}
+	}
+	return result
 }

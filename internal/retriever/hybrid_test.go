@@ -2,6 +2,7 @@ package retriever
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,6 +55,77 @@ func TestHybridCombinesDenseAndKeywordResults(t *testing.T) {
 	}
 	if vector.request.Filter == nil {
 		t.Fatal("vector filter was not applied")
+	}
+	for _, result := range results {
+		if result.FusionScore <= 0 {
+			t.Fatalf("result %s fusion score = %f", result.ChunkID, result.FusionScore)
+		}
+		if result.RerankScore <= 0 {
+			t.Fatalf("result %s rerank score = %f", result.ChunkID, result.RerankScore)
+		}
+	}
+}
+
+func TestBuildVectorFilterCoversMetadataContract(t *testing.T) {
+	filter := buildVectorFilter(rag.MetadataFilter{
+		ProductIDs:   []string{"product-1"},
+		SKUIDs:       []string{"sku-1"},
+		Categories:   []string{"robot_vacuum"},
+		Brands:       []string{"CleanCare"},
+		Models:       []string{"T20"},
+		DocTypes:     []string{"product_parameter"},
+		IntentTags:   []string{"product_parameter"},
+		Version:      "kb-v2",
+		FaultNodeIDs: []string{"CHARGE-01"},
+	})
+	must, ok := filter["must"].([]map[string]any)
+	if !ok {
+		t.Fatalf("must filter = %#v", filter["must"])
+	}
+	keys := make(map[string]bool, len(must))
+	modelFields := map[string]bool{}
+	for _, condition := range must {
+		key, _ := condition["key"].(string)
+		keys[key] = true
+		if should, ok := condition["should"].([]map[string]any); ok {
+			for _, nested := range should {
+				nestedKey, _ := nested["key"].(string)
+				modelFields[nestedKey] = true
+			}
+		}
+	}
+	for _, key := range []string{
+		"status",
+		"category",
+		"brand",
+		"doc_type",
+		"metadata.product_ids",
+		"metadata.sku_ids",
+		"intent_tags",
+		"metadata.fault_node_ids",
+		"version",
+	} {
+		if !keys[key] {
+			t.Errorf("vector filter missing %q: %#v", key, must)
+		}
+	}
+	if !modelFields["metadata.model"] || !modelFields["metadata.models"] {
+		t.Fatalf("vector model filter does not cover scalar and array metadata: %#v", must)
+	}
+}
+
+func TestBM25CandidatesRewardRareExactTerm(t *testing.T) {
+	chunks := []model.KnowledgeChunk{
+		{ChunkID: "exact", Title: "T20 充电故障", Content: strings.Repeat("充电 ", 4) + "CHARGE-01"},
+		{ChunkID: "generic", Title: "清洁说明", Content: strings.Repeat("清洁 保养 ", 12)},
+		{ChunkID: "other", Title: "P400 滤芯", Content: "滤芯寿命和更换方法"},
+	}
+	results := bm25Candidates(chunks, queryTerms("T20 充电"))
+	if len(results) != 3 {
+		t.Fatalf("result count = %d", len(results))
+	}
+	if results[0].chunk.ChunkID != "exact" || results[0].score <= results[1].score {
+		t.Fatalf("BM25 results = %#v", results)
 	}
 }
 

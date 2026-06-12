@@ -63,3 +63,69 @@ func TestValidateAutoMigrateRequiresMultiStatements(t *testing.T) {
 		t.Fatal("Validate() expected multiStatements error")
 	}
 }
+
+func TestValidateRejectsLocalHashInProduction(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.App.Env = "production"
+	cfg.Embedding.Provider = "local_hash"
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() expected production local_hash error")
+	}
+}
+
+func TestValidateEmbeddingFallbackDimension(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Embedding.Fallbacks = []EmbeddingFallbackConfig{{
+		Endpoint:       "https://example.com/v1/embeddings",
+		Model:          "fallback",
+		Dimension:      cfg.Embedding.Dimension + 1,
+		BatchSize:      8,
+		RequestTimeout: time.Second,
+	}}
+
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() expected fallback dimension error")
+	}
+}
+
+func TestLoadProvidesDocumentChunkProfiles(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.RAG.ChunkProfiles) != 9 {
+		t.Fatalf("chunk profile count = %d", len(cfg.RAG.ChunkProfiles))
+	}
+	if profile := cfg.RAG.ChunkProfiles["troubleshooting"]; profile.MaxChunkRunes != 900 || profile.ChunkOverlap != 0 {
+		t.Fatalf("troubleshooting profile = %#v", profile)
+	}
+}
+
+func TestExampleConfigsLoad(t *testing.T) {
+	for _, path := range []string{
+		filepath.Join("..", "..", "configs", "config.example.yaml"),
+		filepath.Join("..", "..", "configs", "config.local.example.yaml"),
+	} {
+		if _, err := Load(path); err != nil {
+			t.Fatalf("Load(%s) error = %v", path, err)
+		}
+	}
+}
+
+func TestValidateRejectsMoreThanFiveAgentSteps(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Agent.MaxSteps = 6
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() expected max steps error")
+	}
+}

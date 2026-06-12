@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"CleanCaregent/internal/model"
-	"CleanCaregent/internal/platform/id"
 	"CleanCaregent/internal/repository"
 )
 
@@ -25,6 +24,7 @@ type CreateAfterSalesRequest struct {
 	DiagnosisSummary string
 	EvidenceIDs      []string
 	IdempotencyKey   string
+	Confirmed        bool
 }
 
 func NewBusinessService(repository repository.BusinessRepository) *BusinessService {
@@ -57,14 +57,16 @@ func (s *BusinessService) CreateAfterSales(
 ) (model.AfterSalesTicket, error) {
 	request.OrderNo = strings.ToUpper(strings.TrimSpace(request.OrderNo))
 	request.Description = strings.TrimSpace(request.Description)
-	if request.UserID == "" || request.OrderNo == "" || request.Description == "" {
+	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)
+	if request.UserID == "" ||
+		request.OrderNo == "" ||
+		request.Description == "" ||
+		request.IdempotencyKey == "" ||
+		!request.Confirmed {
 		return model.AfterSalesTicket{}, ErrInvalidBusinessRequest
 	}
 	if request.IssueType == "" {
 		request.IssueType = "repair"
-	}
-	if request.IdempotencyKey == "" {
-		request.IdempotencyKey = id.New("idem")
 	}
 	return s.repository.CreateAfterSalesTicket(ctx, repository.CreateTicketRequest{
 		UserID:           request.UserID,

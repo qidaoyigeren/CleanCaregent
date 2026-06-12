@@ -226,15 +226,18 @@ func (r *KnowledgeRepository) KeywordSearch(
 	addInCondition(&conditions, &args, "d.category", request.Categories)
 	addInCondition(&conditions, &args, "d.brand", request.Brands)
 	addInCondition(&conditions, &args, "d.doc_type", request.DocTypes)
+	if version := strings.TrimSpace(request.Version); version != "" {
+		conditions = append(conditions, "d.version = ?")
+		args = append(args, version)
+	}
 
 	if len(request.Models) > 0 {
-		placeholders := make([]string, 0, len(request.Models))
-		for _, modelName := range request.Models {
-			placeholders = append(placeholders, "JSON_UNQUOTE(JSON_EXTRACT(c.metadata_json, '$.model')) = ?")
-			args = append(args, modelName)
-		}
-		conditions = append(conditions, "("+strings.Join(placeholders, " OR ")+")")
+		addJSONMetadataAnyCondition(&conditions, &args, "model", "models", request.Models)
 	}
+	addJSONMetadataAnyCondition(&conditions, &args, "product_id", "product_ids", request.ProductIDs)
+	addJSONMetadataAnyCondition(&conditions, &args, "sku_id", "sku_ids", request.SKUIDs)
+	addJSONArrayAnyCondition(&conditions, &args, "c.intent_tags_json", request.IntentTags)
+	addJSONMetadataAnyCondition(&conditions, &args, "fault_node_id", "fault_node_ids", request.FaultNodeIDs)
 
 	var keywordConditions []string
 	for _, term := range terms {
@@ -363,6 +366,38 @@ func addInCondition(conditions *[]string, args *[]any, column string, values []s
 	for _, value := range values {
 		*args = append(*args, value)
 	}
+}
+
+func addJSONMetadataAnyCondition(
+	conditions *[]string,
+	args *[]any,
+	singularKey string,
+	arrayKey string,
+	values []string,
+) {
+	values = uniqueNonEmpty(values)
+	if len(values) == 0 {
+		return
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, "(JSON_UNQUOTE(JSON_EXTRACT(c.metadata_json, '$."+singularKey+"')) = ? OR JSON_CONTAINS(c.metadata_json, JSON_QUOTE(?), '$."+arrayKey+"'))")
+		*args = append(*args, value, value)
+	}
+	*conditions = append(*conditions, "("+strings.Join(parts, " OR ")+")")
+}
+
+func addJSONArrayAnyCondition(conditions *[]string, args *[]any, column string, values []string) {
+	values = uniqueNonEmpty(values)
+	if len(values) == 0 {
+		return
+	}
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, "JSON_CONTAINS("+column+", JSON_QUOTE(?))")
+		*args = append(*args, value)
+	}
+	*conditions = append(*conditions, "("+strings.Join(parts, " OR ")+")")
 }
 
 func uniqueNonEmpty(values []string) []string {

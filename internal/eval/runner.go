@@ -86,7 +86,7 @@ func (r *Runner) prepareRun(
 	request RunRequest,
 ) (Run, []Case, RunRequest, error) {
 	if request.DatasetVersion == "" {
-		request.DatasetVersion = "v1"
+		request.DatasetVersion = "v2"
 	}
 	if request.SystemVersion == "" {
 		request.SystemVersion = "agentic-local"
@@ -224,7 +224,7 @@ func (r *Runner) runCase(ctx context.Context, userID string, evalCase Case) Case
 		if !metric.Pass {
 			passed = false
 			if errorType == "" {
-				errorType = classifyBadCase(metric.Name)
+				errorType = classifyBadCaseWithTrace(metric.Name, traceRecord)
 			}
 		}
 	}
@@ -369,6 +369,46 @@ func classifyBadCase(metricName string) string {
 	default:
 		return "metric:" + metricName
 	}
+}
+
+func classifyBadCaseWithTrace(metricName string, record trace.AgentTraceRecord) string {
+	for _, call := range record.ToolCalls {
+		if call.Status != "failed" && call.ErrorCode == "" {
+			continue
+		}
+		code := strings.ToUpper(call.ErrorCode)
+		if strings.Contains(code, "ARGUMENT") ||
+			strings.Contains(code, "PARAM") ||
+			strings.Contains(code, "INVALID_TOOL_RESULT") {
+			return "tool_parameter_error"
+		}
+		return "tool_selection_error"
+	}
+	for _, step := range record.Steps {
+		if step.Status != "failed" && step.Status != "blocked" {
+			continue
+		}
+		switch strings.ToLower(step.Type) {
+		case "retrieve":
+			return "retrieval_miss"
+		case "tool", "run_tool", "run_skill":
+			return "tool_selection_error"
+		case "clarify":
+			return "clarification_or_rejection_error"
+		case "generate", "answer_direct", "finish":
+			return "answer_incomplete_or_incorrect"
+		}
+	}
+	code := strings.ToUpper(record.ErrorCode)
+	switch {
+	case strings.Contains(code, "RETRIEV"):
+		return "retrieval_miss"
+	case strings.Contains(code, "TOOL"):
+		return "tool_selection_error"
+	case strings.Contains(code, "INTENT"):
+		return "intent_error"
+	}
+	return classifyBadCase(metricName)
 }
 
 func estimateTokens(value string) int {

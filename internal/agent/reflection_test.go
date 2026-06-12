@@ -74,7 +74,7 @@ func TestGroundingReflectorAcceptsUserBudgetAndToolPrice(t *testing.T) {
 		[]Evidence{{
 			ID:      "E1",
 			Kind:    "tool_result",
-			Content: `{"model":"X20 Pro","estimated_final_price":4599,"currency":"CNY"}`,
+			Content: `{"model":"X20 Pro","estimated_final_price_cents":459900,"currency":"CNY"}`,
 		}},
 	)
 	if len(result.UnsupportedClaims) > 0 {

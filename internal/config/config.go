@@ -66,10 +66,11 @@ type RateLimitConfig struct {
 }
 
 type AgentConfig struct {
-	Mode        string        `mapstructure:"mode"`
-	MaxSteps    int           `mapstructure:"max_steps"`
-	TokenBudget int           `mapstructure:"token_budget"`
-	Timeout     time.Duration `mapstructure:"timeout"`
+	Mode         string        `mapstructure:"mode"`
+	PlanningMode string        `mapstructure:"planning_mode"`
+	MaxSteps     int           `mapstructure:"max_steps"`
+	TokenBudget  int           `mapstructure:"token_budget"`
+	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
 type StorageConfig struct {
@@ -88,15 +89,24 @@ type MySQLConfig struct {
 }
 
 type RedisConfig struct {
-	Enabled        bool          `mapstructure:"enabled"`
-	Address        string        `mapstructure:"address"`
-	Password       string        `mapstructure:"password"`
-	DB             int           `mapstructure:"db"`
-	DialTimeout    time.Duration `mapstructure:"dial_timeout"`
-	ReadTimeout    time.Duration `mapstructure:"read_timeout"`
-	WriteTimeout   time.Duration `mapstructure:"write_timeout"`
-	SessionTTL     time.Duration `mapstructure:"session_ttl"`
-	RecentMessages int           `mapstructure:"recent_messages"`
+	Enabled              bool          `mapstructure:"enabled"`
+	Address              string        `mapstructure:"address"`
+	Password             string        `mapstructure:"password"`
+	DB                   int           `mapstructure:"db"`
+	DialTimeout          time.Duration `mapstructure:"dial_timeout"`
+	ReadTimeout          time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout         time.Duration `mapstructure:"write_timeout"`
+	SessionTTL           time.Duration `mapstructure:"session_ttl"`
+	RecentMessages       int           `mapstructure:"recent_messages"`
+	IngestStreamEnabled  bool          `mapstructure:"ingest_stream_enabled"`
+	IngestStream         string        `mapstructure:"ingest_stream"`
+	IngestConsumerGroup  string        `mapstructure:"ingest_consumer_group"`
+	IngestConsumerName   string        `mapstructure:"ingest_consumer_name"`
+	IngestBlockTimeout   time.Duration `mapstructure:"ingest_block_timeout"`
+	IngestClaimIdle      time.Duration `mapstructure:"ingest_claim_idle"`
+	IngestBatchSize      int64         `mapstructure:"ingest_batch_size"`
+	IngestMaxRetries     int           `mapstructure:"ingest_max_retries"`
+	IngestDeadLetterName string        `mapstructure:"ingest_dead_letter_name"`
 }
 
 type QdrantConfig struct {
@@ -115,7 +125,19 @@ type ReadinessConfig struct {
 }
 
 type EmbeddingConfig struct {
-	Provider       string        `mapstructure:"provider"`
+	Provider         string                    `mapstructure:"provider"`
+	Endpoint         string                    `mapstructure:"endpoint"`
+	APIKey           string                    `mapstructure:"api_key"`
+	Model            string                    `mapstructure:"model"`
+	Dimension        int                       `mapstructure:"dimension"`
+	RequestTimeout   time.Duration             `mapstructure:"request_timeout"`
+	BatchSize        int                       `mapstructure:"batch_size"`
+	Fallbacks        []EmbeddingFallbackConfig `mapstructure:"fallbacks"`
+	FailureThreshold int                       `mapstructure:"failure_threshold"`
+	OpenTimeout      time.Duration             `mapstructure:"open_timeout"`
+}
+
+type EmbeddingFallbackConfig struct {
 	Endpoint       string        `mapstructure:"endpoint"`
 	APIKey         string        `mapstructure:"api_key"`
 	Model          string        `mapstructure:"model"`
@@ -125,17 +147,33 @@ type EmbeddingConfig struct {
 }
 
 type RAGConfig struct {
-	DenseTopK      int     `mapstructure:"dense_top_k"`
-	KeywordTopK    int     `mapstructure:"keyword_top_k"`
-	RerankTopK     int     `mapstructure:"rerank_top_k"`
-	MinDenseScore  float64 `mapstructure:"min_dense_score"`
-	MaxChunkRunes  int     `mapstructure:"max_chunk_runes"`
-	ChunkOverlap   int     `mapstructure:"chunk_overlap"`
-	MaxAnswerRunes int     `mapstructure:"max_answer_runes"`
+	DenseTopK      int                           `mapstructure:"dense_top_k"`
+	KeywordTopK    int                           `mapstructure:"keyword_top_k"`
+	RerankTopK     int                           `mapstructure:"rerank_top_k"`
+	MinDenseScore  float64                       `mapstructure:"min_dense_score"`
+	MaxChunkRunes  int                           `mapstructure:"max_chunk_runes"`
+	ChunkOverlap   int                           `mapstructure:"chunk_overlap"`
+	ChunkProfiles  map[string]ChunkProfileConfig `mapstructure:"chunk_profiles"`
+	MaxAnswerRunes int                           `mapstructure:"max_answer_runes"`
+}
+
+type ChunkProfileConfig struct {
+	MaxChunkRunes int `mapstructure:"max_chunk_runes"`
+	ChunkOverlap  int `mapstructure:"chunk_overlap"`
 }
 
 type RerankerConfig struct {
-	Provider       string        `mapstructure:"provider"`
+	Provider         string                   `mapstructure:"provider"`
+	Endpoint         string                   `mapstructure:"endpoint"`
+	APIKey           string                   `mapstructure:"api_key"`
+	Model            string                   `mapstructure:"model"`
+	RequestTimeout   time.Duration            `mapstructure:"request_timeout"`
+	Fallbacks        []RerankerFallbackConfig `mapstructure:"fallbacks"`
+	FailureThreshold int                      `mapstructure:"failure_threshold"`
+	OpenTimeout      time.Duration            `mapstructure:"open_timeout"`
+}
+
+type RerankerFallbackConfig struct {
 	Endpoint       string        `mapstructure:"endpoint"`
 	APIKey         string        `mapstructure:"api_key"`
 	Model          string        `mapstructure:"model"`
@@ -143,14 +181,17 @@ type RerankerConfig struct {
 }
 
 type LLMConfig struct {
-	Provider       string              `mapstructure:"provider"`
-	Endpoint       string              `mapstructure:"endpoint"`
-	APIKey         string              `mapstructure:"api_key"`
-	Model          string              `mapstructure:"model"`
-	RequestTimeout time.Duration       `mapstructure:"request_timeout"`
-	MaxTokens      int                 `mapstructure:"max_tokens"`
-	Temperature    float64             `mapstructure:"temperature"`
-	Fallbacks      []LLMFallbackConfig `mapstructure:"fallbacks"`
+	Provider          string              `mapstructure:"provider"`
+	Endpoint          string              `mapstructure:"endpoint"`
+	APIKey            string              `mapstructure:"api_key"`
+	Model             string              `mapstructure:"model"`
+	RequestTimeout    time.Duration       `mapstructure:"request_timeout"`
+	FirstTokenTimeout time.Duration       `mapstructure:"first_token_timeout"`
+	MaxTokens         int                 `mapstructure:"max_tokens"`
+	Temperature       float64             `mapstructure:"temperature"`
+	FailureThreshold  int                 `mapstructure:"failure_threshold"`
+	OpenTimeout       time.Duration       `mapstructure:"open_timeout"`
+	Fallbacks         []LLMFallbackConfig `mapstructure:"fallbacks"`
 }
 
 type LLMFallbackConfig struct {
@@ -239,8 +280,13 @@ func (c Config) Validate() error {
 	if c.RateLimit.Backend == "redis" && !c.Redis.Enabled {
 		return errors.New("redis must be enabled when rate_limit.backend=redis")
 	}
-	if c.Agent.MaxSteps < 1 || c.Agent.MaxSteps > 10 {
-		return errors.New("agent.max_steps must be between 1 and 10")
+	if c.Agent.MaxSteps < 1 || c.Agent.MaxSteps > 5 {
+		return errors.New("agent.max_steps must be between 1 and 5")
+	}
+	switch c.Agent.PlanningMode {
+	case "react", "plan_execute", "auto":
+	default:
+		return errors.New("agent.planning_mode must be react, plan_execute, or auto")
 	}
 	if c.Agent.Timeout <= 0 {
 		return errors.New("agent.timeout must be positive")
@@ -288,6 +334,23 @@ func (c Config) Validate() error {
 			return errors.New("redis session settings are invalid")
 		}
 	}
+	if c.Redis.IngestStreamEnabled {
+		if !c.Redis.Enabled {
+			return errors.New("redis must be enabled when redis.ingest_stream_enabled=true")
+		}
+		if strings.TrimSpace(c.Redis.IngestStream) == "" ||
+			strings.TrimSpace(c.Redis.IngestConsumerGroup) == "" ||
+			strings.TrimSpace(c.Redis.IngestConsumerName) == "" ||
+			strings.TrimSpace(c.Redis.IngestDeadLetterName) == "" {
+			return errors.New("redis ingest stream names are required")
+		}
+		if c.Redis.IngestBlockTimeout <= 0 ||
+			c.Redis.IngestClaimIdle <= 0 ||
+			c.Redis.IngestBatchSize < 1 ||
+			c.Redis.IngestMaxRetries < 1 {
+			return errors.New("redis ingest stream settings are invalid")
+		}
+	}
 	if c.Qdrant.Enabled {
 		if strings.TrimSpace(c.Qdrant.BaseURL) == "" || strings.TrimSpace(c.Qdrant.Collection) == "" {
 			return errors.New("qdrant base_url and collection are required when qdrant is enabled")
@@ -306,6 +369,9 @@ func (c Config) Validate() error {
 	}
 	switch c.Embedding.Provider {
 	case "local_hash":
+		if strings.EqualFold(strings.TrimSpace(c.App.Env), "production") {
+			return errors.New("embedding.provider local_hash is not allowed in production")
+		}
 	case "openai_compatible":
 		if strings.TrimSpace(c.Embedding.Endpoint) == "" || strings.TrimSpace(c.Embedding.Model) == "" {
 			return errors.New("embedding endpoint and model are required for openai_compatible provider")
@@ -315,6 +381,20 @@ func (c Config) Validate() error {
 	}
 	if c.Embedding.Dimension < 1 || c.Embedding.BatchSize < 1 || c.Embedding.RequestTimeout <= 0 {
 		return errors.New("embedding dimension, batch_size and request_timeout must be positive")
+	}
+	if c.Embedding.FailureThreshold < 1 || c.Embedding.OpenTimeout <= 0 {
+		return errors.New("embedding circuit breaker settings are invalid")
+	}
+	for index, fallback := range c.Embedding.Fallbacks {
+		if strings.TrimSpace(fallback.Endpoint) == "" || strings.TrimSpace(fallback.Model) == "" {
+			return fmt.Errorf("embedding.fallbacks[%d] endpoint and model are required", index)
+		}
+		if fallback.Dimension < 1 || fallback.BatchSize < 1 || fallback.RequestTimeout <= 0 {
+			return fmt.Errorf("embedding.fallbacks[%d] settings are invalid", index)
+		}
+		if fallback.Dimension != c.Embedding.Dimension {
+			return fmt.Errorf("embedding.fallbacks[%d] dimension must equal embedding.dimension", index)
+		}
 	}
 	if c.Qdrant.Enabled && c.Embedding.Dimension != c.Qdrant.VectorSize {
 		return errors.New("embedding.dimension must equal qdrant.vector_size")
@@ -328,6 +408,16 @@ func (c Config) Validate() error {
 	if c.RAG.MaxChunkRunes < 100 || c.RAG.ChunkOverlap < 0 || c.RAG.ChunkOverlap >= c.RAG.MaxChunkRunes {
 		return errors.New("rag chunk size settings are invalid")
 	}
+	for docType, profile := range c.RAG.ChunkProfiles {
+		if !supportedChunkProfile(docType) {
+			return fmt.Errorf("rag.chunk_profiles contains unsupported document type %q", docType)
+		}
+		if profile.MaxChunkRunes < 100 ||
+			profile.ChunkOverlap < 0 ||
+			profile.ChunkOverlap >= profile.MaxChunkRunes {
+			return fmt.Errorf("rag.chunk_profiles.%s settings are invalid", docType)
+		}
+	}
 	switch c.Reranker.Provider {
 	case "local_lexical":
 	case "openai_compatible":
@@ -340,6 +430,17 @@ func (c Config) Validate() error {
 	if c.Reranker.RequestTimeout <= 0 {
 		return errors.New("reranker.request_timeout must be positive")
 	}
+	if c.Reranker.FailureThreshold < 1 || c.Reranker.OpenTimeout <= 0 {
+		return errors.New("reranker circuit breaker settings are invalid")
+	}
+	for index, fallback := range c.Reranker.Fallbacks {
+		if strings.TrimSpace(fallback.Endpoint) == "" || strings.TrimSpace(fallback.Model) == "" {
+			return fmt.Errorf("reranker.fallbacks[%d] endpoint and model are required", index)
+		}
+		if fallback.RequestTimeout <= 0 {
+			return fmt.Errorf("reranker.fallbacks[%d] request_timeout must be positive", index)
+		}
+	}
 	switch c.LLM.Provider {
 	case "extractive":
 	case "openai_compatible":
@@ -351,6 +452,12 @@ func (c Config) Validate() error {
 	}
 	if c.LLM.RequestTimeout <= 0 || c.LLM.MaxTokens < 1 || c.LLM.Temperature < 0 || c.LLM.Temperature > 2 {
 		return errors.New("llm settings are invalid")
+	}
+	if c.LLM.FirstTokenTimeout <= 0 || c.LLM.FirstTokenTimeout > c.LLM.RequestTimeout {
+		return errors.New("llm.first_token_timeout must be positive and no greater than request_timeout")
+	}
+	if c.LLM.FailureThreshold < 1 || c.LLM.OpenTimeout <= 0 {
+		return errors.New("llm circuit breaker settings are invalid")
 	}
 	for index, fallback := range c.LLM.Fallbacks {
 		if strings.TrimSpace(fallback.Endpoint) == "" || strings.TrimSpace(fallback.Model) == "" {
@@ -373,6 +480,23 @@ func (c Config) Validate() error {
 	return nil
 }
 
+func supportedChunkProfile(docType string) bool {
+	switch docType {
+	case "product_detail",
+		"product_parameter",
+		"product_comparison",
+		"purchase_guide",
+		"accessory_compatibility",
+		"user_manual",
+		"troubleshooting",
+		"after_sales_policy",
+		"faq":
+		return true
+	default:
+		return false
+	}
+}
+
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("app.name", "clean-care-agent")
 	v.SetDefault("app.env", "local")
@@ -391,6 +515,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("rate_limit.requests_per_second", 20)
 	v.SetDefault("rate_limit.burst", 40)
 	v.SetDefault("agent.mode", "bootstrap")
+	v.SetDefault("agent.planning_mode", "auto")
 	v.SetDefault("agent.max_steps", 5)
 	v.SetDefault("agent.token_budget", 6000)
 	v.SetDefault("agent.timeout", "20s")
@@ -412,6 +537,15 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("redis.write_timeout", "2s")
 	v.SetDefault("redis.session_ttl", "24h")
 	v.SetDefault("redis.recent_messages", 10)
+	v.SetDefault("redis.ingest_stream_enabled", false)
+	v.SetDefault("redis.ingest_stream", "cleancare:kb:ingest")
+	v.SetDefault("redis.ingest_consumer_group", "cleancare-kb-workers")
+	v.SetDefault("redis.ingest_consumer_name", "worker-1")
+	v.SetDefault("redis.ingest_block_timeout", "2s")
+	v.SetDefault("redis.ingest_claim_idle", "1m")
+	v.SetDefault("redis.ingest_batch_size", 8)
+	v.SetDefault("redis.ingest_max_retries", 3)
+	v.SetDefault("redis.ingest_dead_letter_name", "cleancare:kb:ingest:dead")
 	v.SetDefault("qdrant.enabled", false)
 	v.SetDefault("qdrant.base_url", "http://127.0.0.1:6333")
 	v.SetDefault("qdrant.api_key", "")
@@ -428,25 +562,52 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("embedding.dimension", 1024)
 	v.SetDefault("embedding.request_timeout", "15s")
 	v.SetDefault("embedding.batch_size", 16)
+	v.SetDefault("embedding.fallbacks", []map[string]any{})
+	v.SetDefault("embedding.failure_threshold", 5)
+	v.SetDefault("embedding.open_timeout", "1m")
 	v.SetDefault("rag.dense_top_k", 20)
 	v.SetDefault("rag.keyword_top_k", 20)
 	v.SetDefault("rag.rerank_top_k", 6)
 	v.SetDefault("rag.min_dense_score", 0.05)
 	v.SetDefault("rag.max_chunk_runes", 1200)
 	v.SetDefault("rag.chunk_overlap", 120)
+	v.SetDefault("rag.chunk_profiles.product_detail.max_chunk_runes", 1400)
+	v.SetDefault("rag.chunk_profiles.product_detail.chunk_overlap", 120)
+	v.SetDefault("rag.chunk_profiles.product_parameter.max_chunk_runes", 2200)
+	v.SetDefault("rag.chunk_profiles.product_parameter.chunk_overlap", 0)
+	v.SetDefault("rag.chunk_profiles.product_comparison.max_chunk_runes", 2000)
+	v.SetDefault("rag.chunk_profiles.product_comparison.chunk_overlap", 0)
+	v.SetDefault("rag.chunk_profiles.purchase_guide.max_chunk_runes", 1400)
+	v.SetDefault("rag.chunk_profiles.purchase_guide.chunk_overlap", 120)
+	v.SetDefault("rag.chunk_profiles.accessory_compatibility.max_chunk_runes", 1600)
+	v.SetDefault("rag.chunk_profiles.accessory_compatibility.chunk_overlap", 0)
+	v.SetDefault("rag.chunk_profiles.user_manual.max_chunk_runes", 1600)
+	v.SetDefault("rag.chunk_profiles.user_manual.chunk_overlap", 80)
+	v.SetDefault("rag.chunk_profiles.troubleshooting.max_chunk_runes", 900)
+	v.SetDefault("rag.chunk_profiles.troubleshooting.chunk_overlap", 0)
+	v.SetDefault("rag.chunk_profiles.after_sales_policy.max_chunk_runes", 1200)
+	v.SetDefault("rag.chunk_profiles.after_sales_policy.chunk_overlap", 0)
+	v.SetDefault("rag.chunk_profiles.faq.max_chunk_runes", 800)
+	v.SetDefault("rag.chunk_profiles.faq.chunk_overlap", 0)
 	v.SetDefault("rag.max_answer_runes", 900)
 	v.SetDefault("reranker.provider", "local_lexical")
 	v.SetDefault("reranker.endpoint", "")
 	v.SetDefault("reranker.api_key", "")
 	v.SetDefault("reranker.model", "")
 	v.SetDefault("reranker.request_timeout", "10s")
+	v.SetDefault("reranker.fallbacks", []map[string]any{})
+	v.SetDefault("reranker.failure_threshold", 5)
+	v.SetDefault("reranker.open_timeout", "1m")
 	v.SetDefault("llm.provider", "extractive")
 	v.SetDefault("llm.endpoint", "")
 	v.SetDefault("llm.api_key", "")
 	v.SetDefault("llm.model", "")
 	v.SetDefault("llm.request_timeout", "30s")
+	v.SetDefault("llm.first_token_timeout", "5s")
 	v.SetDefault("llm.max_tokens", 800)
 	v.SetDefault("llm.temperature", 0.1)
+	v.SetDefault("llm.failure_threshold", 5)
+	v.SetDefault("llm.open_timeout", "1m")
 	v.SetDefault("tool.timeout", "3s")
 	v.SetDefault("tracing.enabled", false)
 	v.SetDefault("tracing.service_name", "clean-care-agent")
