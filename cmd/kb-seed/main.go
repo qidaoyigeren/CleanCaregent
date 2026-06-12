@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"CleanCaregent/internal/config"
 	"CleanCaregent/internal/embedding"
@@ -41,6 +42,7 @@ func main() {
 	}
 	var embedder embedding.Embedder = embedding.NewLocalHash(cfg.Embedding.Dimension)
 	if cfg.Embedding.Provider == "openai_compatible" {
+		local := embedder
 		primary := embedding.WithCircuitBreaker(
 			embedding.NewOpenAIClient(
 				cfg.Embedding.Endpoint, cfg.Embedding.APIKey, cfg.Embedding.Model,
@@ -49,9 +51,12 @@ func main() {
 			cfg.Embedding.FailureThreshold,
 			cfg.Embedding.OpenTimeout,
 		)
-		embedder, err = embedding.NewFallback(primary, embedder)
-		if err != nil {
-			fail("create embedding fallback", err)
+		embedder = primary
+		if !strings.EqualFold(cfg.App.Env, "production") {
+			embedder, err = embedding.NewFallback(primary, local)
+			if err != nil {
+				fail("create embedding fallback", err)
+			}
 		}
 	}
 	knowledgeService := service.NewKnowledgeService(
