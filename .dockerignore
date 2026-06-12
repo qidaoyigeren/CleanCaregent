@@ -4,3 +4,5 @@ server.exe
 *.log
 configs/config.local.yaml
 docs/eval/*.tmp
+clean-care-frontend/node_modules
+clean-care-frontend/dist

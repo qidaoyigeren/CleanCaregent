@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 
 	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/llm"
@@ -40,7 +41,7 @@ func (c *Clarifier) Clarify(
 		}
 	}
 	// Fallback to rules.
-	return c.clarifyWithRules(intentType, knownEntities)
+	return c.clarifyWithRules(query, intentType, knownEntities, missingInfo)
 }
 
 func (c *Clarifier) clarifyWithLLM(
@@ -87,19 +88,40 @@ func (c *Clarifier) clarifyWithLLM(
 
 // clarifyWithRules provides canned clarification messages per intent type
 // when LLM is unavailable.
-func (c *Clarifier) clarifyWithRules(intentType intent.Type, knownEntities map[string]string) string {
+func (c *Clarifier) clarifyWithRules(
+	query string,
+	intentType intent.Type,
+	knownEntities map[string]string,
+	missingInfo []string,
+) string {
 	hasModel := knownEntities["models"] != ""
 	hasOrder := knownEntities["order_no"] != ""
+
+	if containsMissing(missingInfo, "比较型号") {
+		return "请问您想对比哪两款产品？例如 T20 和 X20 Pro。也请告诉我最关注的是价格、清洁能力、噪声还是维护成本。"
+	}
+	if containsMissing(missingInfo, "参数含义") {
+		return "您说的“够不够用”具体是指清洁面积、单次续航、净化能力、出水速度还是加湿时长？确认维度后我才能按对应参数判断。"
+	}
+	if containsMissing(missingInfo, "意图") {
+		return "您是想查产品参数、比较型号、获取选购推荐，还是处理故障或售后问题？请告诉我最想先解决的一项。"
+	}
+	if containsMissing(missingInfo, "产品型号") {
+		if containsAmbiguousReference(query) {
+			return "您提到的“那款/这台”具体是哪款产品？例如扫地机器人是 T20 还是 X20 Pro，净化器是 P400 还是 P500。型号不同，参数和配件不能混用。"
+		}
+		return "请问您使用的是哪款产品？目前型号包括 T20、X20 Pro、R10、R20、P400、P500、W300、W500、H100、H200。型号通常可在机身铭牌或订单中找到。"
+	}
 
 	switch intentType {
 	case intent.ProductParameter, intent.PriceQuery, intent.InventoryQuery, intent.AccessoryCompatibility:
 		if !hasModel {
-			return "为了帮您查询准确的参数/兼容信息，我需要确认一下：您具体是指哪个型号呢？\n常见的型号比如扫地机器人有 T20、X20 Pro，空气净化器有 P400、A500。\n（产品型号通常在机器底部标签或包装盒上可以看到）"
+			return "请问您使用的是哪款产品？目前型号包括 T20、X20 Pro、R10、R20、P400、P500、W300、W500、H100、H200。型号通常可在机身铭牌或订单中找到。"
 		}
 		return "请补充您想了解的具体信息，比如是想了解参数、价格还是兼容配件？"
 
 	case intent.PurchaseRecommendation:
-		return "帮您推荐合适的清洁方案，我需要多了解一点您家的情况：\n1. 您家的面积大概多大？（比如 80平以下 / 80-120平 / 120平以上）\n2. 家里有宠物吗？或者有对毛发过敏的家人吗？\n3. 您的预算大概是多少呢？\n这样我才能给出最适合您的推荐 😊"
+		return "为了筛选合适产品，请补充使用面积、预算，以及宠物、地毯、噪声敏感或安装空间等至少一项关键条件。"
 
 	case intent.Troubleshooting:
 		if !hasModel {
@@ -119,4 +141,22 @@ func (c *Clarifier) clarifyWithRules(intentType intent.Type, knownEntities map[s
 	default:
 		return "请补充具体型号、品类或您希望查询的内容，这样我才能更好地为您服务。"
 	}
+}
+
+func containsMissing(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAmbiguousReference(query string) bool {
+	for _, marker := range []string{"那个", "那款", "这个", "这台", "它"} {
+		if strings.Contains(query, marker) {
+			return true
+		}
+	}
+	return false
 }

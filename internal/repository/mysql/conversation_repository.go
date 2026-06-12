@@ -85,6 +85,8 @@ func (r *ConversationRepository) AppendMessage(ctx context.Context, userID strin
 		_ = tx.Rollback()
 	}()
 
+	// The user_no predicate is the tenant boundary. A conversation ID alone
+	// must never authorize a cross-user message write.
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO messages (
 			message_no, conversation_id, role, content, trace_id, created_at

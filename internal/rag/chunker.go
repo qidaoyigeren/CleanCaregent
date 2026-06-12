@@ -1,10 +1,14 @@
 package rag
 
 import (
+	"context"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"CleanCaregent/internal/embedding"
 )
 
 type Chunk struct {
@@ -17,15 +21,24 @@ type Chunker interface {
 	Split(docType, title, content string) []Chunk
 }
 
+// ContextChunker supports context-aware chunking for semantic embedding calls.
+type ContextChunker interface {
+	Chunker
+	SplitContext(ctx context.Context, docType, title, content string) []Chunk
+}
+
 type StructureAwareChunker struct {
-	maxRunes int
-	overlap  int
-	profiles map[string]ChunkProfile
+	maxRunes          int
+	overlap           int
+	semanticThreshold float64
+	profiles          map[string]ChunkProfile
+	embedder          embedding.Embedder
 }
 
 type ChunkProfile struct {
-	MaxRunes int
-	Overlap  int
+	MaxRunes          int
+	Overlap           int
+	SemanticThreshold float64
 }
 
 type section struct {
@@ -55,7 +68,39 @@ func NewProfiledStructureAwareChunker(
 	}
 }
 
+// NewSemanticProfiledStructureAwareChunker creates a profiled chunker that
+// detects semantic sentence boundaries for configured unstructured documents.
+func NewSemanticProfiledStructureAwareChunker(
+	maxRunes, overlap int,
+	profiles map[string]ChunkProfile,
+	embedder embedding.Embedder,
+) *StructureAwareChunker {
+	return &StructureAwareChunker{
+		maxRunes: maxRunes,
+		overlap:  overlap,
+		profiles: cloneProfiles(profiles),
+		embedder: embedder,
+	}
+}
+
 func (c *StructureAwareChunker) Split(docType, title, content string) []Chunk {
+	return c.split(context.Background(), docType, title, content, false)
+}
+
+// SplitContext splits a document and enables semantic boundaries when the
+// active profile has a positive threshold and an embedder is configured.
+func (c *StructureAwareChunker) SplitContext(
+	ctx context.Context,
+	docType, title, content string,
+) []Chunk {
+	return c.split(ctx, docType, title, content, true)
+}
+
+func (c *StructureAwareChunker) split(
+	ctx context.Context,
+	docType, title, content string,
+	semantic bool,
+) []Chunk {
 	active := c.forDocumentType(docType)
 	content = normalizeContent(content)
 	if content == "" {
@@ -73,6 +118,12 @@ func (c *StructureAwareChunker) Split(docType, title, content string) []Chunk {
 			chunks = append(chunks, active.splitTable(current)...)
 			continue
 		}
+		if semantic && active.canSemanticSplit(docType, current.content) {
+			if semanticChunks := active.splitSemantic(ctx, current); len(semanticChunks) > 0 {
+				chunks = append(chunks, semanticChunks...)
+				continue
+			}
+		}
 		chunks = append(chunks, active.splitText(current)...)
 	}
 	return chunks
@@ -89,6 +140,7 @@ func (c *StructureAwareChunker) forDocumentType(docType string) *StructureAwareC
 	active := *c
 	active.maxRunes = profile.MaxRunes
 	active.overlap = profile.Overlap
+	active.semanticThreshold = profile.SemanticThreshold
 	return &active
 }
 
@@ -101,6 +153,96 @@ func cloneProfiles(source map[string]ChunkProfile) map[string]ChunkProfile {
 		result[key] = value
 	}
 	return result
+}
+
+func (c *StructureAwareChunker) canSemanticSplit(docType, content string) bool {
+	if c.embedder == nil || c.semanticThreshold <= 0 || c.semanticThreshold >= 1 {
+		return false
+	}
+	switch docType {
+	case "purchase_guide", "product_detail":
+		return !containsMarkdownTable(content)
+	default:
+		return false
+	}
+}
+
+var semanticSentencePattern = regexp.MustCompile(`[^。！？!?；;\n]+[。！？!?；;]?`)
+
+func (c *StructureAwareChunker) splitSemantic(ctx context.Context, value section) []Chunk {
+	sentences := semanticSentencePattern.FindAllString(value.content, -1)
+	filtered := make([]string, 0, len(sentences))
+	for _, sentence := range sentences {
+		if sentence = strings.TrimSpace(sentence); sentence != "" {
+			filtered = append(filtered, sentence)
+		}
+	}
+	if len(filtered) < 2 {
+		return nil
+	}
+	vectors, err := c.embedder.Embed(ctx, filtered)
+	if err != nil || len(vectors) != len(filtered) {
+		return nil
+	}
+	for _, vector := range vectors {
+		if len(vector) != c.embedder.Dimension() {
+			return nil
+		}
+	}
+
+	var (
+		result  []Chunk
+		current strings.Builder
+	)
+	flush := func() {
+		content := strings.TrimSpace(current.String())
+		if content == "" {
+			return
+		}
+		path := value.path
+		if path != "" {
+			path += " > "
+		}
+		path += "语义块 " + strconv.Itoa(len(result)+1)
+		result = append(result, newChunk(path, content))
+		current.Reset()
+	}
+	for index, sentence := range filtered {
+		if index > 0 {
+			similarity := cosineSimilarity(vectors[index-1], vectors[index])
+			candidateRunes := utf8.RuneCountInString(current.String()) + utf8.RuneCountInString(sentence)
+			minSemanticRunes := max(24, min(80, c.maxRunes/12))
+			enoughContent := utf8.RuneCountInString(current.String()) >= minSemanticRunes
+			if candidateRunes > c.maxRunes ||
+				(similarity < c.semanticThreshold && enoughContent) {
+				flush()
+			}
+		}
+		current.WriteString(sentence)
+	}
+	flush()
+	if len(result) <= 1 && utf8.RuneCountInString(value.content) > c.maxRunes {
+		return nil
+	}
+	return result
+}
+
+func cosineSimilarity(left, right []float32) float64 {
+	if len(left) == 0 || len(left) != len(right) {
+		return 0
+	}
+	var dot, leftNorm, rightNorm float64
+	for index := range left {
+		lValue := float64(left[index])
+		rValue := float64(right[index])
+		dot += lValue * rValue
+		leftNorm += lValue * lValue
+		rightNorm += rValue * rValue
+	}
+	if leftNorm == 0 || rightNorm == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(leftNorm) * math.Sqrt(rightNorm))
 }
 
 func (c *StructureAwareChunker) splitStructured(docType string, value section) []Chunk {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"CleanCaregent/internal/trace"
 )
@@ -147,6 +148,87 @@ func (s *Store) Get(ctx context.Context, traceID string) (trace.AgentTraceRecord
 	}
 	record.ToolCalls = toolCalls
 	return record, nil
+}
+
+// ListByTime returns recent traces in the requested UTC interval.
+func (s *Store) ListByTime(
+	ctx context.Context,
+	from time.Time,
+	to time.Time,
+	limit int,
+) ([]trace.AgentTraceRecord, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT trace_id
+		FROM agent_traces
+		WHERE created_at >= ? AND created_at < ?
+		ORDER BY created_at DESC
+		LIMIT ?
+	`, from.UTC(), to.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("查询时间段 Trace 失败: %w", err)
+	}
+	defer rows.Close()
+	var traceIDs []string
+	for rows.Next() {
+		var traceID string
+		if err := rows.Scan(&traceID); err != nil {
+			return nil, fmt.Errorf("读取 Trace ID 失败: %w", err)
+		}
+		traceIDs = append(traceIDs, traceID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历 Trace ID 失败: %w", err)
+	}
+	result := make([]trace.AgentTraceRecord, 0, len(traceIDs))
+	for _, traceID := range traceIDs {
+		record, err := s.Get(ctx, traceID)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, record)
+	}
+	return result, nil
+}
+
+// RequestionRate calculates the share of user messages sent within 30 seconds
+// after the preceding assistant response.
+func (s *Store) RequestionRate(ctx context.Context, from, to time.Time) (float64, error) {
+	var (
+		requestions int
+		followUps   int
+	)
+	err := s.db.QueryRowContext(ctx, `
+		WITH ordered AS (
+			SELECT
+				role,
+				created_at,
+				LAG(role) OVER (PARTITION BY conversation_id ORDER BY id) AS previous_role,
+				LAG(created_at) OVER (PARTITION BY conversation_id ORDER BY id) AS previous_at
+			FROM messages
+			WHERE created_at >= ? AND created_at < ?
+		)
+		SELECT
+			COALESCE(SUM(
+				CASE WHEN role = 'user' AND previous_role = 'assistant'
+					AND TIMESTAMPDIFF(SECOND, previous_at, created_at) <= 30
+				THEN 1 ELSE 0 END
+			), 0),
+			COALESCE(SUM(
+				CASE WHEN role = 'user' AND previous_role = 'assistant'
+				THEN 1 ELSE 0 END
+			), 0)
+		FROM ordered
+	`, from.UTC(), to.UTC()).Scan(&requestions, &followUps)
+	if err != nil {
+		return 0, fmt.Errorf("计算用户重新提问率失败: %w", err)
+	}
+	if followUps == 0 {
+		return 0, nil
+	}
+	return float64(requestions) / float64(followUps), nil
 }
 
 func (s *Store) listToolCalls(ctx context.Context, traceID string) ([]trace.ToolCall, error) {

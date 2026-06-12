@@ -17,16 +17,18 @@ type AgentMetrics struct {
 	failureCount      uint64
 	promptTokens      uint64
 	completionTokens  uint64
+	costUSD           float64
 }
 
 type AgentMetricsSnapshot struct {
-	RequestCount     uint64 `json:"request_count"`
-	FailureCount     uint64 `json:"failure_count"`
-	PromptTokens     uint64 `json:"prompt_tokens"`
-	CompletionTokens uint64 `json:"completion_tokens"`
-	TotalTokens      uint64 `json:"total_tokens"`
-	P95LatencyMS     int64  `json:"p95_latency_ms"`
-	LatencySamples   int    `json:"latency_samples"`
+	RequestCount     uint64  `json:"request_count"`
+	FailureCount     uint64  `json:"failure_count"`
+	PromptTokens     uint64  `json:"prompt_tokens"`
+	CompletionTokens uint64  `json:"completion_tokens"`
+	TotalTokens      uint64  `json:"total_tokens"`
+	P95LatencyMS     int64   `json:"p95_latency_ms"`
+	LatencySamples   int     `json:"latency_samples"`
+	CostUSD          float64 `json:"cost_usd"`
 }
 
 var DefaultAgentMetrics = NewAgentMetrics(defaultLatencyWindow)
@@ -43,6 +45,16 @@ func (m *AgentMetrics) Record(
 	promptTokens, completionTokens int,
 	failed bool,
 ) AgentMetricsSnapshot {
+	return m.RecordWithCost(latency, promptTokens, completionTokens, 0, failed)
+}
+
+// RecordWithCost records latency, tokens, failure state, and estimated model cost.
+func (m *AgentMetrics) RecordWithCost(
+	latency time.Duration,
+	promptTokens, completionTokens int,
+	costUSD float64,
+	failed bool,
+) AgentMetricsSnapshot {
 	if m == nil {
 		return AgentMetricsSnapshot{}
 	}
@@ -56,6 +68,9 @@ func (m *AgentMetrics) Record(
 	}
 	if completionTokens > 0 {
 		m.completionTokens += uint64(completionTokens)
+	}
+	if costUSD > 0 {
+		m.costUSD += costUSD
 	}
 	latencyMS := latency.Milliseconds()
 	if len(m.latencies) < m.maxLatencySamples {
@@ -95,5 +110,6 @@ func (m *AgentMetrics) snapshotLocked() AgentMetricsSnapshot {
 		TotalTokens:      m.promptTokens + m.completionTokens,
 		P95LatencyMS:     p95,
 		LatencySamples:   len(latencies),
+		CostUSD:          m.costUSD,
 	}
 }

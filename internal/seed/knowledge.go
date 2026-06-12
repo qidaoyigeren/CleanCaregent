@@ -10,7 +10,10 @@ func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
 	products := defaultProducts()
 	var documents []service.IngestDocumentRequest
 	add := func(docID, title, content, category, docType string, models []string, tags ...string) {
-		metadata := map[string]any{"data_scope": "mock"}
+		metadata := map[string]any{
+			"data_scope":            "mock",
+			"structural_difficulty": structuralDifficulty(docType),
+		}
 		if len(models) == 1 {
 			metadata["model"] = models[0]
 		} else if len(models) > 1 {
@@ -193,7 +196,29 @@ func DefaultKnowledgeDocuments() []service.IngestDocumentRequest {
 			"product_parameter",
 		)
 	}
+	documents = append(documents, expandedKnowledgeDocuments(products)...)
 	return documents
+}
+
+func structuralDifficulty(docType string) string {
+	switch docType {
+	case "product_detail", "product_parameter", "product_comparison":
+		return "参数表完整性与多型号同口径对齐"
+	case "purchase_guide":
+		return "多条件约束、硬条件过滤与方案取舍"
+	case "accessory_compatibility":
+		return "主机型号、配件型号与兼容关系精确匹配"
+	case "user_manual":
+		return "操作步骤顺序、安全警告与前置条件不可拆散"
+	case "troubleshooting":
+		return "故障树父子节点、条件分支与安全停止"
+	case "after_sales_policy":
+		return "条款、适用条件、例外与时间边界联合判断"
+	case "faq":
+		return "问题、答案与型号范围必须保持在同一块"
+	default:
+		return "结构化字段与正文语义一致性"
+	}
 }
 
 func slug(value string) string {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -173,14 +174,20 @@ func main() {
 		if businessRepo != nil {
 			knowledgeRetriever = retriever.NewStructuredFirst(knowledgeRetriever, businessRepo)
 		}
+		knowledgeRetriever = retriever.NewCached(
+			knowledgeRetriever,
+			sharedRedis,
+			cfg.RAG.RetrievalCacheTTL,
+		)
 		knowledgeService = service.NewKnowledgeService(
 			knowledgeRepo,
 			vectorStore,
 			embedder,
-			rag.NewProfiledStructureAwareChunker(
+			rag.NewSemanticProfiledStructureAwareChunker(
 				cfg.RAG.MaxChunkRunes,
 				cfg.RAG.ChunkOverlap,
 				chunkProfiles(cfg.RAG.ChunkProfiles),
+				embedder,
 			),
 		)
 	}
@@ -212,18 +219,55 @@ func main() {
 			RerankTopK:    cfg.RAG.RerankTopK,
 			MinDenseScore: cfg.RAG.MinDenseScore,
 		}
-		for _, value := range []skill.Skill{
+		skillValues := []skill.Skill{
 			skill.NewProductComparison(knowledgeRetriever, answerGenerator, toolExecutor, skillConfig),
 			skill.NewPurchaseRecommendation(knowledgeRetriever, answerGenerator, toolExecutor, skillConfig),
 			skill.NewAccessoryCompatibility(knowledgeRetriever, answerGenerator, toolExecutor, skillConfig),
 			skill.NewFaultDiagnosis(knowledgeRetriever, answerGenerator, toolExecutor, skillConfig, memoryStore),
 			skill.NewAfterSalesJudgement(knowledgeRetriever, answerGenerator, toolExecutor, skillConfig),
-		} {
+		}
+		if cfg.Agent.SkillConfigPath != "" {
+			skillFile, openErr := os.Open(cfg.Agent.SkillConfigPath)
+			if openErr != nil {
+				logger.Fatal("open skill config", zap.Error(openErr))
+			}
+			definitions, loadErr := skill.LoadDefinitions(skillFile)
+			closeErr := skillFile.Close()
+			if loadErr != nil {
+				logger.Fatal("load skill config", zap.Error(loadErr))
+			}
+			if closeErr != nil {
+				logger.Fatal("close skill config", zap.Error(closeErr))
+			}
+			skillValues, loadErr = skill.BuildConfigured(definitions, skill.Dependencies{
+				Retriever: knowledgeRetriever, Generator: answerGenerator,
+				Tools: toolExecutor, DiagnosisStore: memoryStore,
+			})
+			if loadErr != nil {
+				logger.Fatal("build configured skills", zap.Error(loadErr))
+			}
+		}
+		for _, value := range skillValues {
 			if registerErr := skillRegistry.Register(value); registerErr != nil {
 				logger.Fatal("register skill", zap.String("skill", value.Name()), zap.Error(registerErr))
 			}
 		}
-		dynamicExecutor := orchestration.NewDynamicExecutor(toolExecutor, skillRegistry)
+		dynamicOptions := []orchestration.Option{
+			orchestration.WithKnowledgeRetriever(knowledgeRetriever),
+		}
+		if cfg.Prompt.EnableLLMComponents && llmClient != nil {
+			dynamicOptions = append(
+				dynamicOptions,
+				orchestration.WithArgumentExtractor(
+					orchestration.NewLLMArgumentExtractor(llmClient),
+				),
+			)
+		}
+		dynamicExecutor := orchestration.NewDynamicExecutor(
+			toolExecutor,
+			skillRegistry,
+			dynamicOptions...,
+		)
 		agentConfig := agent.AgenticConfig{
 			MaxSteps:            cfg.Agent.MaxSteps,
 			TokenBudget:         cfg.Agent.TokenBudget,
@@ -239,14 +283,18 @@ func main() {
 			agentOpts,
 			agent.WithPromptRegistry(promptRegistry),
 			agent.WithMetricsLogger(logger),
+			agent.WithStepEmbedder(embedder),
 		)
 		if cfg.Prompt.EnableLLMComponents && llmClient != nil {
 			intentLLMClient := llmClient.WithModel(cfg.Prompt.IntentClassifierModel)
 			agentOpts = append(agentOpts,
 				agent.WithLLMRouter(intent.NewHybridRouter(intentLLMClient, promptRegistry)),
-				agent.WithLLMRewriter(agent.NewLLMQueryRewriter(llmClient, promptRegistry)),
+				agent.WithLLMRewriter(agent.NewLLMQueryRewriter(
+					llmClient.WithModel(cfg.Prompt.QueryRewriteModel),
+					promptRegistry,
+				)),
 				agent.WithLLMPlanner(agent.NewLLMPlanner(
-					llmClient,
+					llmClient.WithModel(cfg.Prompt.PlannerModel),
 					promptRegistry,
 					toolRegistry.ListAllowed([]string{
 						"price_query",
@@ -257,8 +305,14 @@ func main() {
 						"create_after_sales_ticket",
 					})...,
 				)),
-				agent.WithLLMReflector(agent.NewLLMReflector(llmClient, promptRegistry)),
-				agent.WithClarifier(agent.NewClarifier(llmClient, promptRegistry)),
+				agent.WithLLMReflector(agent.NewLLMReflector(
+					llmClient.WithModel(cfg.Prompt.ReflectionModel),
+					promptRegistry,
+				)),
+				agent.WithClarifier(agent.NewClarifier(
+					llmClient.WithModel(cfg.Prompt.ClarifierModel),
+					promptRegistry,
+				)),
 			)
 			logger.Info("llm components enabled for agentic runner")
 		}
@@ -290,6 +344,7 @@ func main() {
 	default:
 		runner = agent.NewBootstrapRunner(cfg.Agent.Mode)
 	}
+	runner = agent.NewGuardedRunner(runner)
 	serviceOptions := make([]service.ConversationOption, 0, 1)
 	if memoryStore != nil {
 		serviceOptions = append(serviceOptions, service.WithMemoryStore(memoryStore, func(err error) {
@@ -298,7 +353,10 @@ func main() {
 		serviceOptions = append(
 			serviceOptions,
 			service.WithConversationSummarizer(
-				memory.NewLLMSummarizer(llmClient, promptRegistry),
+				memory.NewLLMSummarizer(
+					llmForModel(llmClient, cfg.Prompt.SummarizerModel),
+					promptRegistry,
+				),
 				5,
 			),
 		)
@@ -350,7 +408,10 @@ func main() {
 		if llmClient != nil {
 			evaluator = eval.NewCompositeEvaluator(
 				evaluator,
-				eval.NewLLMJudgeEvaluator(llmClient, promptRegistry),
+				eval.NewLLMJudgeEvaluator(
+					llmClient.WithModel(cfg.Prompt.EvalJudgeModel),
+					promptRegistry,
+				),
 			)
 		}
 		evalRunner = eval.NewRunner(
@@ -371,9 +432,10 @@ func main() {
 					MinDenseScore: cfg.RAG.MinDenseScore,
 				},
 			)
+			guardedBaselineRunner := agent.NewGuardedRunner(baselineRunner)
 			baselineService := service.NewConversationService(
 				conversationRepo,
-				baselineRunner,
+				guardedBaselineRunner,
 				cfg.Agent.Timeout,
 				serviceOptions...,
 			)
@@ -407,6 +469,11 @@ func main() {
 		EvalStore:           evalStore,
 		AgentMetrics:        observability.DefaultAgentMetrics,
 		IngestPublisher:     ingestPublisher,
+		CircuitManager:      llm.DefaultCircuitManager,
+		PromptRegistry:      promptRegistry,
+		PromptEvaluator: prompt.NewLLMVersionEvaluator(
+			llmForModel(llmClient, cfg.Prompt.EvalJudgeModel),
+		),
 	})
 
 	server := &http.Server{
@@ -502,10 +569,20 @@ func buildGenerator(
 	llmClient *llm.Client,
 ) generator.Generator {
 	if cfg.LLM.Provider == "openai_compatible" && llmClient != nil {
-		primary := generator.NewOpenAIClientFromClient(llmClient, prompts)
+		primary := generator.NewOpenAIClientFromClient(
+			llmClient.WithModel(cfg.Prompt.GenerationModel),
+			prompts,
+		)
 		return generator.NewFallback(primary, generator.NewExtractive(cfg.RAG.MaxAnswerRunes))
 	}
 	return generator.NewExtractive(cfg.RAG.MaxAnswerRunes)
+}
+
+func llmForModel(client *llm.Client, model string) *llm.Client {
+	if client == nil {
+		return nil
+	}
+	return client.WithModel(model)
 }
 
 // buildLLMClient creates a shared LLM client when the LLM provider is configured.
@@ -513,6 +590,37 @@ func buildGenerator(
 func buildLLMClient(cfg config.Config) *llm.Client {
 	if cfg.LLM.Provider != "openai_compatible" {
 		return nil
+	}
+	if len(cfg.LLM.Providers) > 0 {
+		providers := append([]config.LLMProviderConfig(nil), cfg.LLM.Providers...)
+		sort.SliceStable(providers, func(i, j int) bool {
+			return providers[i].Priority < providers[j].Priority
+		})
+		clients := make([]*llm.Client, 0, len(providers))
+		for _, provider := range providers {
+			timeout := provider.RequestTimeout
+			if timeout <= 0 {
+				timeout = cfg.LLM.RequestTimeout
+			}
+			maxTokens := provider.MaxTokens
+			if maxTokens <= 0 {
+				maxTokens = cfg.LLM.MaxTokens
+			}
+			temperature := provider.Temperature
+			if temperature == 0 {
+				temperature = cfg.LLM.Temperature
+			}
+			clients = append(clients, llm.NewClient(
+				provider.Endpoint,
+				provider.APIKey,
+				provider.Model,
+				maxTokens,
+				temperature,
+				timeout,
+			).WithCircuitBreaker(cfg.LLM.FailureThreshold, cfg.LLM.OpenTimeout).
+				WithFirstTokenTimeout(min(cfg.LLM.FirstTokenTimeout, timeout)))
+		}
+		return clients[0].WithFallbacks(clients[1:]...)
 	}
 	primary := llm.NewClient(
 		cfg.LLM.Endpoint,
@@ -575,8 +683,9 @@ func chunkProfiles(values map[string]config.ChunkProfileConfig) map[string]rag.C
 	result := make(map[string]rag.ChunkProfile, len(values))
 	for docType, value := range values {
 		result[docType] = rag.ChunkProfile{
-			MaxRunes: value.MaxChunkRunes,
-			Overlap:  value.ChunkOverlap,
+			MaxRunes:          value.MaxChunkRunes,
+			Overlap:           value.ChunkOverlap,
+			SemanticThreshold: value.SemanticThreshold,
 		}
 	}
 	return result

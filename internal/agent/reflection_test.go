@@ -81,3 +81,20 @@ func TestGroundingReflectorAcceptsUserBudgetAndToolPrice(t *testing.T) {
 		t.Fatalf("unsupported claims = %v", result.UnsupportedClaims)
 	}
 }
+
+func TestGroundingReflectorRerunsWhenTopEvidenceIsIrrelevant(t *testing.T) {
+	reflector := NewGroundingReflector()
+	result := reflector.Review(
+		"T20 适合养猫吗",
+		intent.ProductComparison,
+		"T20 可用于日常清扫。[E1]",
+		[]Evidence{
+			{ID: "E1", Kind: "kb_chunk", Content: "无关内容", Metadata: map[string]any{"rerank_score": 0.12}},
+			{ID: "E2", Kind: "kb_chunk", Content: "无关内容", Metadata: map[string]any{"rerank_score": 0.18}},
+			{ID: "E3", Kind: "kb_chunk", Content: "无关内容", Metadata: map[string]any{"rerank_score": 0.29}},
+		},
+	)
+	if result.Action != "rerun_retrieval" || !result.LowConfidence {
+		t.Fatalf("result = %#v", result)
+	}
+}

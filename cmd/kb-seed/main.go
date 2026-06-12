@@ -58,10 +58,11 @@ func main() {
 		mysqlrepository.NewKnowledgeRepository(db),
 		vector,
 		embedder,
-		rag.NewProfiledStructureAwareChunker(
+		rag.NewSemanticProfiledStructureAwareChunker(
 			cfg.RAG.MaxChunkRunes,
 			cfg.RAG.ChunkOverlap,
 			chunkProfiles(cfg.RAG.ChunkProfiles),
+			embedder,
 		),
 	)
 	created, skipped := 0, 0
@@ -87,8 +88,9 @@ func chunkProfiles(values map[string]config.ChunkProfileConfig) map[string]rag.C
 	result := make(map[string]rag.ChunkProfile, len(values))
 	for docType, value := range values {
 		result[docType] = rag.ChunkProfile{
-			MaxRunes: value.MaxChunkRunes,
-			Overlap:  value.ChunkOverlap,
+			MaxRunes:          value.MaxChunkRunes,
+			Overlap:           value.ChunkOverlap,
+			SemanticThreshold: value.SemanticThreshold,
 		}
 	}
 	return result

@@ -1,4 +1,23 @@
 services:
+  mysql:
+    image: mysql:8.4
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    environment:
+      MYSQL_DATABASE: cleancare
+      MYSQL_USER: cleancare
+      MYSQL_PASSWORD: cleancare
+      MYSQL_ROOT_PASSWORD: root-cleancare
+      TZ: UTC
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ucleancare", "-pcleancare"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
   redis:
     image: redis:7.4-alpine
     command: ["redis-server", "--appendonly", "yes"]
@@ -31,7 +50,7 @@ services:
       CLEANCARE_AGENT_MODE: agentic
       CLEANCARE_STORAGE_CONVERSATION_REPOSITORY: mysql
       CLEANCARE_MYSQL_ENABLED: "true"
-      CLEANCARE_MYSQL_DSN: ${CLEANCARE_MYSQL_DSN:-}
+      CLEANCARE_MYSQL_DSN: ${CLEANCARE_MYSQL_DSN:-cleancare:cleancare@tcp(mysql:3306)/cleancare?charset=utf8mb4&parseTime=true&loc=UTC}
       CLEANCARE_MYSQL_AUTO_MIGRATE: "true"
       CLEANCARE_REDIS_ENABLED: "true"
       CLEANCARE_REDIS_ADDRESS: redis:6379
@@ -44,11 +63,14 @@ services:
       CLEANCARE_RATE_LIMIT_BACKEND: redis
       CLEANCARE_TRACING_ENABLED: "true"
     depends_on:
+      mysql:
+        condition: service_healthy
       redis:
         condition: service_healthy
       qdrant:
         condition: service_started
 
 volumes:
+  mysql_data:
   redis_data:
   qdrant_data:

@@ -1,9 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -153,6 +157,63 @@ func (h *KnowledgeHandler) Ingest(c *gin.Context) {
 		default:
 			response.Error(c, http.StatusInternalServerError, "KNOWLEDGE_INGEST_FAILED", "knowledge document ingestion failed")
 		}
+		return
+	}
+	response.Created(c, result)
+}
+
+// Upload parses a multipart document and sends its extracted text through the normal ingest pipeline.
+func (h *KnowledgeHandler) Upload(c *gin.Context) {
+	if h.service == nil {
+		response.Error(c, http.StatusServiceUnavailable, "KNOWLEDGE_UNAVAILABLE", "知识库服务未配置")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<20)
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "INVALID_FILE", "请上传 file 字段")
+		return
+	}
+	raw, readErr := io.ReadAll(file)
+	closeErr := file.Close()
+	if readErr != nil {
+		response.Error(c, http.StatusBadRequest, "INVALID_FILE", "读取上传文件失败")
+		return
+	}
+	if closeErr != nil {
+		response.Error(c, http.StatusBadRequest, "INVALID_FILE", "关闭上传文件失败")
+		return
+	}
+	format := strings.TrimSpace(c.PostForm("format"))
+	if format == "" {
+		format = ingest.FormatFromFilename(header.Filename)
+	}
+	content, err := ingest.ParseDocument(bytes.NewReader(raw), format)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "DOCUMENT_PARSE_FAILED", err.Error())
+		return
+	}
+	request := service.IngestDocumentRequest{
+		DocID:    strings.TrimSpace(c.PostForm("doc_id")),
+		Title:    strings.TrimSpace(c.PostForm("title")),
+		Content:  content,
+		Category: strings.TrimSpace(c.PostForm("category")),
+		Brand:    strings.TrimSpace(c.PostForm("brand")),
+		DocType:  strings.TrimSpace(c.PostForm("doc_type")),
+		Version:  strings.TrimSpace(c.PostForm("version")),
+		Source:   "upload://" + filepath.Base(header.Filename),
+		Metadata: map[string]any{
+			"content_format": format,
+			"original_name":  filepath.Base(header.Filename),
+		},
+	}
+	result, err := h.service.Ingest(c.Request.Context(), request)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidKnowledgeDocument) {
+			response.Error(c, http.StatusBadRequest, "INVALID_KNOWLEDGE_DOCUMENT", err.Error())
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "KNOWLEDGE_INGEST_FAILED", "文档入库失败")
 		return
 	}
 	response.Created(c, result)

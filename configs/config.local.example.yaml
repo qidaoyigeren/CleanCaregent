@@ -1,0 +1,109 @@
+app:
+  env: local-infra
+
+storage:
+  conversation_repository: mysql
+
+mysql:
+  enabled: true
+  # Replace username and password with the credentials of your local MySQL.
+  dsn: cleancare:change-me@tcp(127.0.0.1:3306)/cleancare?parseTime=true&charset=utf8mb4&loc=UTC&multiStatements=true
+  auto_migrate: true
+
+redis:
+  enabled: true
+  address: 127.0.0.1:6379
+  ingest_stream_enabled: true
+  ingest_consumer_name: local-worker-1
+
+rate_limit:
+  enabled: true
+  backend: redis
+  requests_per_second: 20
+  burst: 40
+
+qdrant:
+  enabled: true
+  base_url: http://127.0.0.1:6333
+  ensure_collection: true
+
+agent:
+  mode: agentic
+  planning_mode: auto
+  skill_config_path: ""
+  max_steps: 5
+  token_budget: 6000
+  timeout: 30s
+
+# Embedding: use local_hash for local dev, or openai_compatible for a real API.
+# Example with SiliconFlow BGE:
+# embedding:
+#   provider: openai_compatible
+#   endpoint: https://api.siliconflow.cn/v1/embeddings
+#   api_key: sk-your-key
+#   model: BAAI/bge-large-zh-v1.5
+#   dimension: 1024
+embedding:
+  provider: local_hash
+  dimension: 1024
+  failure_threshold: 5
+  open_timeout: 1m
+  fallbacks: []
+
+# Rerank: local_lexical is the no-network default. Configure an
+# OpenAI-compatible BGE/GTE rerank endpoint for semantic reranking.
+reranker:
+  provider: local_lexical
+  endpoint: ""
+  api_key: ""
+  model: ""
+  request_timeout: 10s
+  failure_threshold: 5
+  open_timeout: 1m
+  fallbacks: []
+
+# LLM: use extractive (no API calls) for local dev, or openai_compatible.
+# Example with DeepSeek:
+# llm:
+#   provider: openai_compatible
+#   endpoint: https://api.deepseek.com/v1/chat/completions
+#   api_key: sk-your-key
+#   model: deepseek-chat
+#   request_timeout: 30s
+#   max_tokens: 2048
+#   temperature: 0.1
+llm:
+  provider: extractive
+  endpoint: ""
+  api_key: ""
+  model: ""
+  request_timeout: 30s
+  first_token_timeout: 3s
+  max_tokens: 800
+  temperature: 0.1
+  failure_threshold: 5
+  open_timeout: 1m
+  # Ordered OpenAI-compatible fallback providers.
+  fallbacks: []
+
+tool:
+  timeout: 3s
+
+# Enable LLM-powered intent/rewrite/plan/reflect when llm.provider is openai_compatible.
+prompt:
+  enable_llm_components: false
+  # Optional cheaper model used only for intent classification.
+  intent_classifier_model: ""
+  query_rewrite_model: ""
+  planner_model: ""
+  reflection_model: ""
+  clarifier_model: ""
+  generation_model: ""
+  summarizer_model: ""
+  eval_judge_model: ""
+
+tracing:
+  enabled: false
+  service_name: clean-care-agent
+  service_version: local
+  otlp_endpoint: ""

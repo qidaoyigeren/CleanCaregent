@@ -24,3 +24,10 @@ func TestShouldUseGroundingOnlyForSimpleGroundedIntent(t *testing.T) {
 		t.Fatal("low-confidence answer should retain semantic reflection")
 	}
 }
+
+func TestExtractClaimsSplitsDeclarativeSentences(t *testing.T) {
+	claims := extractClaims("T20 额定吸力为 6000Pa。[E1]\n它适合 80-120 平米家庭。[E2]\n需要我继续查价格吗？")
+	if len(claims) != 2 {
+		t.Fatalf("claims = %#v", claims)
+	}
+}

@@ -51,7 +51,7 @@ func TestRegistryGetReturnsCopy(t *testing.T) {
 	}
 }
 
-func TestDefaultTemplatesUseV2Content(t *testing.T) {
+func TestDefaultTemplatesUseV3Content(t *testing.T) {
 	registry := NewRegistry()
 	expectations := map[Scenario]string{
 		ScenarioSystem:           "# 输出前自检清单",
@@ -73,8 +73,8 @@ func TestDefaultTemplatesUseV2Content(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get(%q) error = %v", scenario, err)
 		}
-		if template.Version != "v2" {
-			t.Errorf("Get(%q).Version = %q, want v2", scenario, template.Version)
+		if template.Version != "v3" {
+			t.Errorf("Get(%q).Version = %q, want v3", scenario, template.Version)
 		}
 		if !strings.Contains(template.System, marker) {
 			t.Errorf("Get(%q).System does not contain %q", scenario, marker)
@@ -115,8 +115,25 @@ func TestDefaultTemplatesSatisfyPromptContract(t *testing.T) {
 				t.Errorf("%s missing prompt contract section %q", scenario, section)
 			}
 		}
-		if examples := strings.Count(template.System, "## 示例"); examples < 2 {
-			t.Errorf("%s has %d complete examples, want at least 2", scenario, examples)
+		if examples := strings.Count(template.System, "## 示例"); examples < 3 {
+			t.Errorf("%s has %d complete examples, want at least 3", scenario, examples)
+		}
+		for _, marker := range []string{"# 正反行为对照", "✅ 正确行为", "❌ 错误行为", "# v3 量化自检补充"} {
+			if !strings.Contains(template.System, marker) {
+				t.Errorf("%s missing v3 marker %q", scenario, marker)
+			}
+		}
+	}
+}
+
+func TestSystemPromptCoversCoreProductCatalog(t *testing.T) {
+	system := NewRegistry().MustGet(ScenarioSystem).System
+	for _, model := range []string{
+		"T20", "X20 Pro", "R10", "R20", "P400",
+		"P500", "W300", "W500", "H100", "H200",
+	} {
+		if !strings.Contains(system, model) {
+			t.Errorf("system prompt is missing core model %s", model)
 		}
 	}
 }

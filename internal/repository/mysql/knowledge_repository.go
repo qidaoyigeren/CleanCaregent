@@ -277,6 +277,129 @@ func (r *KnowledgeRepository) KeywordSearch(
 	return chunks, nil
 }
 
+// FulltextSearch uses the kb_chunks FULLTEXT index and preserves repository
+// filters. Callers should fall back to KeywordSearch when MySQL rejects the
+// boolean query or the index is unavailable.
+func (r *KnowledgeRepository) FulltextSearch(
+	ctx context.Context,
+	request repository.KnowledgeSearchRequest,
+) ([]model.KnowledgeChunk, error) {
+	if request.Limit <= 0 {
+		request.Limit = 20
+	}
+	booleanQuery := buildBooleanQuery(request.Query, request.Terms)
+	if booleanQuery == "" {
+		return nil, errors.New("全文检索查询词为空")
+	}
+
+	conditions := []string{
+		"d.status = 'active'",
+		"(d.effective_time IS NULL OR d.effective_time <= ?)",
+		"(d.expire_time IS NULL OR d.expire_time > ?)",
+		"MATCH(c.content) AGAINST (? IN BOOLEAN MODE)",
+	}
+	args := []any{request.EffectiveAt, request.EffectiveAt, booleanQuery}
+	addInCondition(&conditions, &args, "d.category", request.Categories)
+	addInCondition(&conditions, &args, "d.brand", request.Brands)
+	addInCondition(&conditions, &args, "d.doc_type", request.DocTypes)
+	if version := strings.TrimSpace(request.Version); version != "" {
+		conditions = append(conditions, "d.version = ?")
+		args = append(args, version)
+	}
+	if len(request.Models) > 0 {
+		addJSONMetadataAnyCondition(&conditions, &args, "model", "models", request.Models)
+	}
+	addJSONMetadataAnyCondition(&conditions, &args, "product_id", "product_ids", request.ProductIDs)
+	addJSONMetadataAnyCondition(&conditions, &args, "sku_id", "sku_ids", request.SKUIDs)
+	addJSONArrayAnyCondition(&conditions, &args, "c.intent_tags_json", request.IntentTags)
+	addJSONMetadataAnyCondition(&conditions, &args, "fault_node_id", "fault_node_ids", request.FaultNodeIDs)
+
+	args = append(args, booleanQuery, request.Limit)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			c.chunk_id, d.doc_id, d.title, c.section_path, c.content, c.token_count,
+			c.intent_tags_json, c.metadata_json, c.vector_point_id, c.content_hash,
+			MATCH(c.content) AGAINST (? IN BOOLEAN MODE) AS fulltext_score
+		FROM kb_chunks c
+		JOIN kb_documents d ON d.id = c.document_id
+		WHERE `+strings.Join(conditions, " AND ")+`
+		ORDER BY fulltext_score DESC, d.updated_at DESC
+		LIMIT ?
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("全文检索知识分块: %w", err)
+	}
+	defer rows.Close()
+
+	var chunks []model.KnowledgeChunk
+	for rows.Next() {
+		var (
+			chunk                      model.KnowledgeChunk
+			sectionPath                sql.NullString
+			intentTagsRaw, metadataRaw []byte
+			score                      float64
+		)
+		if err := rows.Scan(
+			&chunk.ChunkID,
+			&chunk.DocID,
+			&chunk.Title,
+			&sectionPath,
+			&chunk.Content,
+			&chunk.TokenCount,
+			&intentTagsRaw,
+			&metadataRaw,
+			&chunk.VectorPointID,
+			&chunk.ContentHash,
+			&score,
+		); err != nil {
+			return nil, fmt.Errorf("读取全文检索知识分块: %w", err)
+		}
+		if sectionPath.Valid {
+			chunk.SectionPath = sectionPath.String
+		}
+		if len(intentTagsRaw) > 0 {
+			if err := json.Unmarshal(intentTagsRaw, &chunk.IntentTags); err != nil {
+				return nil, fmt.Errorf("解析全文检索意图标签: %w", err)
+			}
+		}
+		if len(metadataRaw) > 0 {
+			if err := json.Unmarshal(metadataRaw, &chunk.Metadata); err != nil {
+				return nil, fmt.Errorf("解析全文检索元数据: %w", err)
+			}
+		}
+		if chunk.Metadata == nil {
+			chunk.Metadata = map[string]any{}
+		}
+		chunk.Metadata["fulltext_score"] = score
+		chunks = append(chunks, chunk)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历全文检索知识分块: %w", err)
+	}
+	return chunks, nil
+}
+
+func buildBooleanQuery(query string, terms []string) string {
+	terms = uniqueNonEmpty(append([]string{query}, terms...))
+	values := make([]string, 0, len(terms))
+	for _, term := range terms {
+		term = strings.Map(func(current rune) rune {
+			switch current {
+			case '+', '-', '<', '>', '(', ')', '~', '*', '"', '@':
+				return ' '
+			default:
+				return current
+			}
+		}, term)
+		for _, field := range strings.Fields(term) {
+			if len([]rune(field)) >= 2 {
+				values = append(values, "+"+field+"*")
+			}
+		}
+	}
+	return strings.Join(uniqueNonEmpty(values), " ")
+}
+
 func (r *KnowledgeRepository) FindActiveChunks(
 	ctx context.Context,
 	chunkIDs []string,

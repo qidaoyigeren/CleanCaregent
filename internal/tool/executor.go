@@ -7,19 +7,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"CleanCaregent/internal/observability"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
 
 var (
-	ErrToolNotFound     = errors.New("tool not found")
-	ErrToolNotAllowed   = errors.New("tool not allowed")
-	ErrRepeatedToolCall = errors.New("repeated tool call")
-	ErrInvalidArguments = errors.New("tool arguments do not match schema")
+	ErrToolNotFound         = errors.New("tool not found")
+	ErrToolNotAllowed       = errors.New("tool not allowed")
+	ErrRepeatedToolCall     = errors.New("repeated tool call")
+	ErrInvalidArguments     = errors.New("tool arguments do not match schema")
+	ErrConfirmationRequired = errors.New("状态变更工具需要用户明确确认")
+	ErrIdempotencyRequired  = errors.New("状态变更工具需要幂等键")
 )
 
 type Executor struct {
@@ -62,16 +66,33 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 		span.SetStatus(codes.Error, "tool not found")
 		return e.failAndLog(ctx, call, result, "TOOL_NOT_FOUND", ErrToolNotFound)
 	}
+	validationCtx, validationSpan := otel.Tracer("clean-care-agent/tool").Start(ctx, "tool.validate_arguments")
+	validationSpan.SetAttributes(attribute.String("tool.side_effect", string(EffectOf(value))))
 	if err := validateArguments(value.ParamsSchema(), call.Arguments); err != nil {
+		validationSpan.RecordError(err)
+		validationSpan.SetStatus(codes.Error, err.Error())
+		validationSpan.End()
 		span.SetStatus(codes.Error, "invalid tool arguments")
 		return e.failAndLog(
-			ctx,
+			validationCtx,
 			call,
 			result,
 			"INVALID_TOOL_ARGUMENTS",
 			fmt.Errorf("%w: %v", ErrInvalidArguments, err),
 		)
 	}
+	if err := validateStateChangePreconditions(value, call); err != nil {
+		validationSpan.RecordError(err)
+		validationSpan.SetStatus(codes.Error, err.Error())
+		validationSpan.End()
+		span.SetStatus(codes.Error, err.Error())
+		code := "TOOL_CONFIRMATION_REQUIRED"
+		if errors.Is(err, ErrIdempotencyRequired) {
+			code = "TOOL_IDEMPOTENCY_REQUIRED"
+		}
+		return e.failAndLog(validationCtx, call, result, code, err)
+	}
+	validationSpan.End()
 	signature := toolCallSignature(call)
 	e.mu.Lock()
 	now := time.Now()
@@ -92,7 +113,13 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 
 	runCtx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
-	executed, err := value.Execute(runCtx, call)
+	executeCtx, executeSpan := otel.Tracer("clean-care-agent/tool").Start(runCtx, "tool.execute")
+	executed, err := value.Execute(executeCtx, call)
+	if err != nil {
+		executeSpan.RecordError(err)
+		executeSpan.SetStatus(codes.Error, err.Error())
+	}
+	executeSpan.End()
 	if executed.CallID == "" {
 		executed.CallID = call.CallID
 	}
@@ -117,19 +144,38 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 		e.log(context.WithoutCancel(ctx), call, executed)
 		return executed, fmt.Errorf("execute tool %s: %w", call.Name, err)
 	}
+	resultCtx, resultSpan := otel.Tracer("clean-care-agent/tool").Start(ctx, "tool.validate_result")
 	if err := ValidateResult(call.Name, executed.Data); err != nil {
+		resultSpan.RecordError(err)
+		resultSpan.SetStatus(codes.Error, err.Error())
+		resultSpan.End()
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "invalid tool result")
 		executed.Success = false
 		executed.ErrorCode = "INVALID_TOOL_RESULT"
 		executed.Message = err.Error()
-		e.log(context.WithoutCancel(ctx), call, executed)
+		e.log(context.WithoutCancel(resultCtx), call, executed)
 		return executed, fmt.Errorf("validate tool %s result: %w", call.Name, err)
 	}
+	resultSpan.End()
 	executed.Success = true
 	span.SetAttributes(attribute.Int64("tool.latency_ms", executed.FinishedAt.Sub(executed.StartedAt).Milliseconds()))
 	e.log(context.WithoutCancel(ctx), call, executed)
 	return executed, nil
+}
+
+func validateStateChangePreconditions(value Tool, call Call) error {
+	if EffectOf(value) != SideEffectStateChange {
+		return nil
+	}
+	if strings.TrimSpace(call.IdempotencyKey) == "" {
+		return ErrIdempotencyRequired
+	}
+	confirmed, ok := call.Arguments["confirmed"].(bool)
+	if !ok || !confirmed {
+		return ErrConfirmationRequired
+	}
+	return nil
 }
 
 func (e *Executor) failAndLog(
@@ -148,6 +194,15 @@ func (e *Executor) failAndLog(
 }
 
 func (e *Executor) log(ctx context.Context, call Call, result Result) {
+	status := "success"
+	if !result.Success {
+		status = "failed"
+	}
+	observability.DefaultPrometheusMetrics.RecordToolDuration(
+		call.Name,
+		status,
+		result.FinishedAt.Sub(result.StartedAt),
+	)
 	if e.logStore == nil {
 		return
 	}
@@ -200,6 +255,10 @@ func validateArguments(raw json.RawMessage, arguments map[string]any) error {
 		}
 	}
 	return nil
+}
+
+func ValidateArguments(raw json.RawMessage, arguments map[string]any) error {
+	return validateArguments(raw, arguments)
 }
 
 func matchesJSONType(value any, expected string) bool {

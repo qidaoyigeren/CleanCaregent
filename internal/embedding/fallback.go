@@ -27,12 +27,40 @@ func (e *Fallback) Dimension() int {
 
 func (e *Fallback) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	vectors, err := e.primary.Embed(ctx, texts)
-	if err == nil {
+	if err == nil && validVectors(vectors, len(texts), e.Dimension()) {
 		return vectors, nil
+	}
+	if err == nil {
+		err = fmt.Errorf("primary embedding returned empty or invalid vectors")
 	}
 	fallbackVectors, fallbackErr := e.secondary.Embed(ctx, texts)
 	if fallbackErr != nil {
 		return nil, fmt.Errorf("primary embedding failed: %v; fallback embedding failed: %w", err, fallbackErr)
 	}
+	if !validVectors(fallbackVectors, len(texts), e.Dimension()) {
+		return nil, fmt.Errorf("primary embedding failed: %v; fallback embedding returned empty or invalid vectors", err)
+	}
 	return fallbackVectors, nil
+}
+
+func validVectors(vectors [][]float32, expectedCount, dimension int) bool {
+	if len(vectors) != expectedCount {
+		return false
+	}
+	for _, vector := range vectors {
+		if len(vector) != dimension {
+			return false
+		}
+		nonZero := false
+		for _, value := range vector {
+			if value != 0 {
+				nonZero = true
+				break
+			}
+		}
+		if !nonZero {
+			return false
+		}
+	}
+	return true
 }

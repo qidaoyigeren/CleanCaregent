@@ -14,6 +14,7 @@ const (
 	ActionRetrieve     ActionType = "retrieve"
 	ActionCallTool     ActionType = "call_tool"
 	ActionRunSkill     ActionType = "run_skill"
+	ActionParallel     ActionType = "parallel"
 	ActionClarify      ActionType = "clarify"
 	ActionReflect      ActionType = "reflect"
 	ActionFinish       ActionType = "finish"
@@ -52,6 +53,21 @@ type PlanStep struct {
 	Params     map[string]any
 	ReasonCode string
 	DependsOn  []string
+	SubSteps   []PlanStep
+}
+
+type PlanEvaluation struct {
+	Score    int
+	Warnings []string
+}
+
+type NextStepValidator interface {
+	ValidateNextStep(
+		ctx context.Context,
+		req PlanRequest,
+		candidate PlanStep,
+		recent []PlanStep,
+	) error
 }
 
 type Planner interface {

@@ -26,7 +26,7 @@ func TestKnowledgeServiceIngestsAndActivatesDocument(t *testing.T) {
 	result, err := service.Ingest(context.Background(), IngestDocumentRequest{
 		DocID:    "doc_t20_parameters",
 		Title:    "T20 参数",
-		Content:  "# 清洁能力\nT20 的额定吸力为 6000Pa。",
+		Content:  validKnowledgeContent("T20 的额定吸力为 6000Pa"),
 		Category: "robot_vacuum",
 		Brand:    "MockClean",
 		DocType:  "product_parameter",
@@ -63,7 +63,7 @@ func TestKnowledgeServiceMarksFailedWhenVectorIndexFails(t *testing.T) {
 	_, err := service.Ingest(context.Background(), IngestDocumentRequest{
 		DocID:    "doc_t20_parameters",
 		Title:    "T20 参数",
-		Content:  "T20 的额定吸力为 6000Pa。",
+		Content:  validKnowledgeContent("T20 的额定吸力为 6000Pa"),
 		Category: "robot_vacuum",
 		DocType:  "product_parameter",
 	})
@@ -127,6 +127,10 @@ type fakeVectorStore struct {
 	deleteErr  error
 }
 
+func validKnowledgeContent(prefix string) string {
+	return prefix + "。该文档同时说明导航方式、续航时间、适用面积、地毯能力、宠物毛发处理、噪声、尘盒、水箱和越障能力，供测试完整入库流程使用。"
+}
+
 func (s *fakeVectorStore) Upsert(_ context.Context, points []vectorstore.Point) error {
 	s.points = points
 	return s.upsertErr
@@ -157,7 +161,7 @@ func TestKnowledgeServiceDeletesSupersededVectors(t *testing.T) {
 	result, err := service.Ingest(context.Background(), IngestDocumentRequest{
 		DocID:    "doc_t20_parameters",
 		Title:    "T20 参数",
-		Content:  "T20 的额定吸力为 6500Pa。",
+		Content:  validKnowledgeContent("T20 的额定吸力为 6500Pa"),
 		Category: "robot_vacuum",
 		DocType:  "product_parameter",
 		Version:  "2.0",
@@ -186,7 +190,7 @@ func TestKnowledgeServiceReportsDeferredVectorCleanup(t *testing.T) {
 	result, err := service.Ingest(context.Background(), IngestDocumentRequest{
 		DocID:    "doc_t20_parameters",
 		Title:    "T20 参数",
-		Content:  "T20 的额定吸力为 6500Pa。",
+		Content:  validKnowledgeContent("T20 的额定吸力为 6500Pa"),
 		Category: "robot_vacuum",
 		DocType:  "product_parameter",
 		Version:  "2.0",

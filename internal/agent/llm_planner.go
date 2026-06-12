@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -22,13 +23,14 @@ type llmPlanAction struct {
 }
 
 type llmActionDetail struct {
-	ToolName        string         `json:"tool_name"`
-	ToolArgs        map[string]any `json:"tool_args"`
-	SkillName       string         `json:"skill_name"`
-	SearchQueries   []string       `json:"search_queries"`
-	DocTypes        []string       `json:"doc_types"`
-	ClarifyQuestion string         `json:"clarify_question"`
-	Reason          string         `json:"reason"`
+	ToolName        string                `json:"tool_name"`
+	ToolArgs        map[string]any        `json:"tool_args"`
+	SkillName       string                `json:"skill_name"`
+	SearchQueries   []string              `json:"search_queries"`
+	DocTypes        []string              `json:"doc_types"`
+	ClarifyQuestion string                `json:"clarify_question"`
+	Reason          string                `json:"reason"`
+	SubActions      []llmCompletePlanStep `json:"sub_actions"`
 }
 
 type llmCompletePlan struct {
@@ -37,14 +39,15 @@ type llmCompletePlan struct {
 }
 
 type llmCompletePlanStep struct {
-	Action        string         `json:"action"`
-	ToolName      string         `json:"tool_name"`
-	SkillName     string         `json:"skill_name"`
-	Query         string         `json:"query"`
-	SearchQueries []string       `json:"search_queries"`
-	DocTypes      []string       `json:"doc_types"`
-	Params        map[string]any `json:"params"`
-	Reason        string         `json:"reason"`
+	Action        string                `json:"action"`
+	ToolName      string                `json:"tool_name"`
+	SkillName     string                `json:"skill_name"`
+	Query         string                `json:"query"`
+	SearchQueries []string              `json:"search_queries"`
+	DocTypes      []string              `json:"doc_types"`
+	Params        map[string]any        `json:"params"`
+	Reason        string                `json:"reason"`
+	SubActions    []llmCompletePlanStep `json:"sub_actions"`
 }
 
 // LLMPlanner uses an LLM to dynamically decide the next action in a ReAct loop.
@@ -125,6 +128,10 @@ func (p *LLMPlanner) CompletePlan(ctx context.Context, request PlanRequest) (*Pl
 	if err != nil || len(plan.Steps) == 0 {
 		return fallback, nil
 	}
+	evaluation := evaluatePlan(request, plan)
+	if evaluation.Score < 4 {
+		return fallback, nil
+	}
 	return plan, nil
 }
 
@@ -146,6 +153,9 @@ func (p *LLMPlanner) RevisePlan(
 	}
 	plan, err := p.generateCompletePlan(ctx, request, string(evidenceRaw), causeText)
 	if err != nil || len(plan.Steps) == 0 {
+		return p.rule.RevisePlan(ctx, request, current, completed, evidences, cause)
+	}
+	if evaluation := evaluatePlan(request, plan); evaluation.Score < 4 {
 		return p.rule.RevisePlan(ctx, request, current, completed, evidences, cause)
 	}
 	return plan, nil
@@ -182,7 +192,7 @@ func (p *LLMPlanner) generateCompletePlan(
 你现在必须先输出完整计划，而不是只输出下一步。步骤总数不超过 5。
 已知复杂业务 Skill 应优先作为受控步骤；工具必须来自 allowed_tools。
 输出 JSON：
-{"confidence":0.0,"steps":[{"action":"retrieve|call_tool|run_skill|clarify|reflect|finish","tool_name":"","skill_name":"","query":"","search_queries":[],"doc_types":[],"params":{},"reason":""}]}`,
+{"confidence":0.0,"steps":[{"action":"retrieve|call_tool|run_skill|parallel|clarify|reflect|finish","tool_name":"","skill_name":"","query":"","search_queries":[],"doc_types":[],"params":{},"sub_actions":[],"reason":""}]}`,
 		},
 		{
 			"role":    "user",
@@ -254,6 +264,12 @@ func (p *LLMPlanner) validateCompleteSteps(
 					request.Intent.Secondary,
 				)
 			}
+		case ActionParallel:
+			subSteps, err := p.convertParallelActions(request, value.SubActions)
+			if err != nil {
+				return nil, err
+			}
+			step.SubSteps = subSteps
 		}
 		steps = append(steps, step)
 		if action == ActionFinish || action == ActionClarify {
@@ -349,16 +365,17 @@ func (p *LLMPlanner) NextStep(
 		content, calls, toolErr := p.llm.ChatWithTools(ctx, messages, definitions)
 		if toolErr == nil && len(calls) > 0 {
 			call := calls[0]
-			if !containsString(request.AllowedTools, call.Name) {
-				return nil, fmt.Errorf("llm selected non-whitelisted tool %q", call.Name)
-			}
-			return &PlanStep{
+			step := PlanStep{
 				StepID:     fmt.Sprintf("step_%02d", currentStep+1),
 				Action:     ActionCallTool,
 				ToolName:   call.Name,
 				Params:     call.Arguments,
 				ReasonCode: "llm_function_call",
-			}, nil
+			}
+			if err := p.ValidateNextStep(ctx, request, step, nil); err != nil {
+				return nil, err
+			}
+			return &step, nil
 		}
 		if toolErr == nil && content != "" && llm.DecodeJSON(content, &llmOut) == nil {
 			decoded = true
@@ -419,9 +436,69 @@ func (p *LLMPlanner) NextStep(
 		step.Params = map[string]any{"thought": llmOut.Thought}
 	case ActionReflect:
 		step.Params = map[string]any{"thought": llmOut.Thought}
+	case ActionParallel:
+		subSteps, err := p.convertParallelActions(request, llmOut.ActionDetail.SubActions)
+		if err != nil {
+			return nil, err
+		}
+		step.SubSteps = subSteps
+		step.Params = map[string]any{"thought": llmOut.Thought}
 	}
 
+	if err := p.ValidateNextStep(ctx, request, *step, nil); err != nil {
+		return nil, err
+	}
 	return step, nil
+}
+
+func (p *LLMPlanner) ValidateNextStep(
+	ctx context.Context,
+	request PlanRequest,
+	candidate PlanStep,
+	recent []PlanStep,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	switch candidate.Action {
+	case ActionRetrieve, ActionReflect, ActionClarify, ActionFinish:
+	case ActionCallTool:
+		if !containsString(request.AllowedTools, candidate.ToolName) {
+			return fmt.Errorf("下一步选择了非白名单工具 %q", candidate.ToolName)
+		}
+		if definition, ok := p.toolDefinitions[candidate.ToolName]; ok {
+			if err := tool.ValidateArguments(definition.ParamsSchema, candidate.Params); err != nil {
+				return fmt.Errorf("下一步工具参数不符合 Schema: %w", err)
+			}
+		}
+	case ActionRunSkill:
+		if !skillAllowedForIntent(request.Intent.Secondary, candidate.SkillName) {
+			return fmt.Errorf("下一步 Skill %q 与意图 %q 不兼容", candidate.SkillName, request.Intent.Secondary)
+		}
+	case ActionParallel:
+		if len(candidate.SubSteps) < 2 {
+			return errors.New("并行动作至少需要两个子步骤")
+		}
+		for _, subStep := range candidate.SubSteps {
+			if subStep.Action == ActionParallel || subStep.Action == ActionFinish ||
+				subStep.Action == ActionClarify || subStep.Action == ActionAnswerDirect {
+				return fmt.Errorf("并行动作包含不支持的子动作 %q", subStep.Action)
+			}
+			if err := p.ValidateNextStep(ctx, request, subStep, nil); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("不支持的下一步动作 %q", candidate.Action)
+	}
+	signature := actionSignature(candidate)
+	start := max(0, len(recent)-3)
+	for _, previous := range recent[start:] {
+		if actionSignature(previous) == signature {
+			return ErrRepeatedAction
+		}
+	}
+	return nil
 }
 
 func guardedSkillForIntent(intentType intent.Type) string {
@@ -499,6 +576,8 @@ func normalizeAction(raw string) ActionType {
 		return ActionCallTool
 	case "run_skill":
 		return ActionRunSkill
+	case "parallel":
+		return ActionParallel
 	case "clarify":
 		return ActionClarify
 	case "reflect":
@@ -508,6 +587,109 @@ func normalizeAction(raw string) ActionType {
 	default:
 		return ""
 	}
+}
+
+func (p *LLMPlanner) convertParallelActions(
+	request PlanRequest,
+	values []llmCompletePlanStep,
+) ([]PlanStep, error) {
+	if len(values) < 2 || len(values) > 4 {
+		return nil, fmt.Errorf("并行动作数量必须在 2 到 4 之间")
+	}
+	result := make([]PlanStep, 0, len(values))
+	for index, value := range values {
+		action := normalizeAction(value.Action)
+		step := PlanStep{
+			StepID: fmt.Sprintf("parallel_%02d", index+1),
+			Action: action, ToolName: strings.TrimSpace(value.ToolName),
+			SkillName: strings.TrimSpace(value.SkillName), Query: strings.TrimSpace(value.Query),
+			Params: cloneAnyMap(value.Params), ReasonCode: strings.TrimSpace(value.Reason),
+		}
+		if action == ActionRetrieve {
+			step.Params["search_queries"] = compactStrings(value.SearchQueries)
+			step.Params["doc_types"] = allowedDocTypes(value.DocTypes)
+		}
+		if err := p.ValidateNextStep(context.Background(), request, step, nil); err != nil {
+			return nil, err
+		}
+		result = append(result, step)
+	}
+	return result, nil
+}
+
+func evaluatePlan(request PlanRequest, plan *Plan) PlanEvaluation {
+	evaluation := PlanEvaluation{Score: 5}
+	if plan == nil || len(plan.Steps) == 0 {
+		return PlanEvaluation{Score: 1, Warnings: []string{"empty_plan"}}
+	}
+	if plan.Steps[0].Action == ActionFinish &&
+		request.Intent.Secondary != intent.Chitchat &&
+		request.Intent.Secondary != intent.OutOfScope {
+		evaluation.Score -= 2
+		evaluation.Warnings = append(evaluation.Warnings, "finish_as_first_action")
+	}
+	terminalIndex := -1
+	seenIDs := make(map[string]struct{}, len(plan.Steps))
+	for index, step := range plan.Steps {
+		if _, exists := seenIDs[step.StepID]; exists {
+			evaluation.Score -= 2
+			evaluation.Warnings = append(evaluation.Warnings, "duplicate_step_id")
+		}
+		seenIDs[step.StepID] = struct{}{}
+		if step.Action == ActionFinish || step.Action == ActionClarify {
+			if terminalIndex < 0 {
+				terminalIndex = index
+			}
+			continue
+		}
+		if terminalIndex >= 0 {
+			evaluation.Score -= 2
+			evaluation.Warnings = append(evaluation.Warnings, "action_after_terminal")
+		}
+	}
+	if terminalIndex < 0 {
+		evaluation.Score--
+		evaluation.Warnings = append(evaluation.Warnings, "missing_terminal_action")
+	}
+	if hasDependencyCycle(plan.Steps) {
+		evaluation.Score -= 2
+		evaluation.Warnings = append(evaluation.Warnings, "dependency_cycle")
+	}
+	if evaluation.Score < 1 {
+		evaluation.Score = 1
+	}
+	return evaluation
+}
+
+func hasDependencyCycle(steps []PlanStep) bool {
+	graph := make(map[string][]string, len(steps))
+	for _, step := range steps {
+		graph[step.StepID] = append([]string(nil), step.DependsOn...)
+	}
+	state := make(map[string]uint8, len(graph))
+	var visit func(string) bool
+	visit = func(node string) bool {
+		if state[node] == 1 {
+			return true
+		}
+		if state[node] == 2 {
+			return false
+		}
+		state[node] = 1
+		for _, dependency := range graph[node] {
+			if _, exists := graph[dependency]; exists && visit(dependency) {
+				return true
+			}
+		}
+		state[node] = 2
+		return false
+	}
+	for node := range graph {
+		if visit(node) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *LLMPlanner) allowedToolDefinitions(allowed []string) string {
@@ -593,3 +775,4 @@ func skillAllowedForIntent(intentType intent.Type, skillName string) bool {
 var _ Planner = (*LLMPlanner)(nil)
 var _ ReactivePlanner = (*LLMPlanner)(nil)
 var _ PlanAndExecutePlanner = (*LLMPlanner)(nil)
+var _ NextStepValidator = (*LLMPlanner)(nil)

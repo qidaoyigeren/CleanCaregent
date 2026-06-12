@@ -7,11 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"CleanCaregent/internal/observability"
 )
 
 // Client wraps an OpenAI-compatible chat completions endpoint.
@@ -70,7 +73,7 @@ func NewClient(
 	temperature float64,
 	timeout time.Duration,
 ) *Client {
-	return &Client{
+	client := &Client{
 		endpoint:          endpoint,
 		apiKey:            apiKey,
 		model:             model,
@@ -80,6 +83,8 @@ func NewClient(
 		breaker:           NewCircuitBreaker(5, time.Minute),
 		firstTokenTimeout: minDuration(5*time.Second, timeout),
 	}
+	DefaultCircuitManager.Register("chat:"+model, client.breaker)
+	return client
 }
 
 // Name returns the model identifier.
@@ -95,6 +100,7 @@ func (c *Client) WithFallbacks(fallbacks ...*Client) *Client {
 // WithCircuitBreaker configures provider-local failure isolation.
 func (c *Client) WithCircuitBreaker(failureThreshold int, openTimeout time.Duration) *Client {
 	c.breaker = NewCircuitBreaker(failureThreshold, openTimeout)
+	DefaultCircuitManager.Register("chat:"+c.model, c.breaker)
 	return c
 }
 
@@ -125,6 +131,11 @@ func (c *Client) WithModel(model string) *Client {
 	}).WithFallbacks(c.fallbacks...)
 }
 
+// UseModel creates a model-specific client while preserving provider fallbacks.
+func (c *Client) UseModel(model string) *Client {
+	return c.WithModel(model)
+}
+
 // ChatStream consumes an OpenAI-compatible SSE response. Fallback providers
 // are attempted only before any content has been emitted.
 func (c *Client) ChatStream(
@@ -153,6 +164,7 @@ func (c *Client) ChatStream(
 		return err
 	}
 	failures := []string{c.model + ": " + err.Error()}
+	observability.DefaultPrometheusMetrics.RecordFallback("chat_stream", fallbackReason(err))
 	for _, fallback := range c.fallbacks {
 		if fallback == nil {
 			continue
@@ -271,6 +283,12 @@ func (c *Client) streamSingle(
 				return firstContent, fmt.Errorf("decode streaming chat event: %w", err)
 			}
 			if chunk.Usage.TotalTokens > 0 {
+				chunk.Usage.Model = c.model
+				chunk.Usage.CostUSD = EstimateCostUSD(
+					c.model,
+					chunk.Usage.PromptTokens,
+					chunk.Usage.CompletionTokens,
+				)
 				collectUsage(ctx, chunk.Usage)
 			}
 			for _, choice := range chunk.Choices {
@@ -413,6 +431,7 @@ func (c *Client) complete(ctx context.Context, payload map[string]any) (completi
 		return response, nil
 	}
 	failures := []string{c.model + ": " + err.Error()}
+	observability.DefaultPrometheusMetrics.RecordFallback("chat", fallbackReason(err))
 	for _, fallback := range c.fallbacks {
 		if fallback == nil {
 			continue
@@ -431,6 +450,22 @@ func (c *Client) complete(ctx context.Context, payload map[string]any) (completi
 		failures = append(failures, fallback.model+": "+fallbackErr.Error())
 	}
 	return completionResponse{}, fmt.Errorf("all chat providers failed: %s", strings.Join(failures, "; "))
+}
+
+func fallbackReason(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, ErrCircuitOpen):
+		return "circuit_open"
+	case strings.Contains(strings.ToLower(err.Error()), "first token"):
+		return "first_token_timeout"
+	default:
+		return "provider_error"
+	}
 }
 
 func (c *Client) completeSingle(ctx context.Context, payload map[string]any) (completionResponse, error) {
@@ -473,11 +508,14 @@ func (c *Client) completeSingle(ctx context.Context, payload map[string]any) (co
 		return completionResponse{}, fmt.Errorf("decode chat response: %w", err)
 	}
 	success = true
-	collectUsage(ctx, Usage{
+	usage := Usage{
 		PromptTokens:     response.Usage.PromptTokens,
 		CompletionTokens: response.Usage.CompletionTokens,
 		TotalTokens:      response.Usage.TotalTokens,
-	})
+		Model:            c.model,
+	}
+	usage.CostUSD = EstimateCostUSD(c.model, usage.PromptTokens, usage.CompletionTokens)
+	collectUsage(ctx, usage)
 	return response, nil
 }
 

@@ -40,6 +40,12 @@ type Store interface {
 	Get(ctx context.Context, traceID string) (AgentTraceRecord, error)
 }
 
+type AnalysisStore interface {
+	Store
+	ListByTime(ctx context.Context, from, to time.Time, limit int) ([]AgentTraceRecord, error)
+	RequestionRate(ctx context.Context, from, to time.Time) (float64, error)
+}
+
 type AgentTraceRecord struct {
 	AgentTrace
 	Steps        []Step     `json:"steps"`

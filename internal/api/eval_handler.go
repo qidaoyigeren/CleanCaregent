@@ -50,8 +50,8 @@ func (h *EvalHandler) Run(c *gin.Context) {
 			return
 		}
 	}
-	if request.MaxCases < 0 || request.MaxCases > 100 {
-		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "max_cases must be between 0 and 100")
+	if request.MaxCases < 0 || request.MaxCases > 200 {
+		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "max_cases must be between 0 and 200")
 		return
 	}
 	run, err := h.runner.Start(c.Request.Context(), eval.RunRequest{
@@ -79,8 +79,8 @@ func (h *EvalHandler) Compare(c *gin.Context) {
 			return
 		}
 	}
-	if request.MaxCases < 0 || request.MaxCases > 100 {
-		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "max_cases must be between 0 and 100")
+	if request.MaxCases < 0 || request.MaxCases > 200 {
+		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "max_cases must be between 0 and 200")
 		return
 	}
 	run, err := h.comparison.Start(c.Request.Context(), eval.ComparisonRequest{

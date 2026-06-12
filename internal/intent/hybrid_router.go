@@ -12,13 +12,15 @@ import (
 
 // llmIntentResult mirrors the JSON structure the LLM returns for intent classification.
 type llmIntentResult struct {
-	Primary         string         `json:"primary"`
-	Secondary       string         `json:"secondary"`
-	Confidence      float64        `json:"confidence"`
-	Entities        map[string]any `json:"entities"`
-	NeedClarify     bool           `json:"need_clarify"`
-	ClarifyQuestion string         `json:"clarify_question"`
-	Reason          string         `json:"reason"`
+	Primary           string         `json:"primary"`
+	Secondary         string         `json:"secondary"`
+	SecondaryIntents  []string       `json:"secondary_intents"`
+	Confidence        float64        `json:"confidence"`
+	Entities          map[string]any `json:"entities"`
+	NeedClarify       bool           `json:"need_clarify"`
+	NeedDecomposition bool           `json:"need_decomposition"`
+	ClarifyQuestion   string         `json:"clarify_question"`
+	Reason            string         `json:"reason"`
 }
 
 // HybridRouter combines rule-based fast-path filtering with LLM deep classification.
@@ -106,9 +108,9 @@ func (r *HybridRouter) classifyWithLLM(ctx context.Context, request RouteRequest
 	if secondary == "" {
 		secondary = Clarification
 	}
-	primary := llmOut.Primary
+	primary := normalizePrimaryType(llmOut.Primary)
 	if primary == "" {
-		primary = "fallback"
+		primary = PrimaryFor(secondary)
 	}
 
 	entities := make(map[string]string)
@@ -156,13 +158,74 @@ func (r *HybridRouter) classifyWithLLM(ctx context.Context, request RouteRequest
 	if enoughEntitiesForIntent(secondary, entities) {
 		needClarify = false
 	}
+	secondaryIntents := normalizeIntentTypes(llmOut.SecondaryIntents, secondary)
+	if raw := flattenStringSlice(llmOut.Entities["sub_intents"]); raw != "" {
+		secondaryIntents = appendUniqueIntentTypes(
+			secondaryIntents,
+			normalizeIntentTypes(strings.Split(raw, ","), secondary)...,
+		)
+	}
 	return Result{
-		Primary:     primary,
-		Secondary:   secondary,
-		Confidence:  confidence,
-		Entities:    entities,
-		NeedClarify: needClarify,
+		Primary:           primary,
+		Secondary:         secondary,
+		SecondaryIntents:  secondaryIntents,
+		Confidence:        confidence,
+		Entities:          entities,
+		NeedClarify:       needClarify,
+		NeedDecomposition: llmOut.NeedDecomposition || len(secondaryIntents) > 0,
+		CompetitorMention: ruleResult.CompetitorMention,
+		Competitors:       ruleResult.Competitors,
+		CompetitorPolicy:  ruleResult.CompetitorPolicy,
+		RouteTrace: RouteTrace{
+			Source:          "llm",
+			MatchedKeywords: ruleResult.RouteTrace.MatchedKeywords,
+			Reasoning:       strings.TrimSpace(llmOut.Reason),
+			ConfidenceBasis: fmt.Sprintf("LLM 置信度 %.2f；规则置信度 %.2f", confidence, ruleResult.Confidence),
+		},
 	}, nil
+}
+
+func normalizePrimaryType(raw string) PrimaryType {
+	switch PrimaryType(strings.TrimSpace(strings.ToLower(raw))) {
+	case PrimaryPresales:
+		return PrimaryPresales
+	case PrimaryAftersales:
+		return PrimaryAftersales
+	case PrimaryDiagnosis:
+		return PrimaryDiagnosis
+	case PrimaryFallback:
+		return PrimaryFallback
+	default:
+		return ""
+	}
+}
+
+func normalizeIntentTypes(values []string, primary Type) []Type {
+	result := make([]Type, 0, len(values))
+	for _, value := range values {
+		normalized := normalizeIntentType(value)
+		if normalized == "" || normalized == primary {
+			continue
+		}
+		result = appendUniqueIntentTypes(result, normalized)
+	}
+	return result
+}
+
+func appendUniqueIntentTypes(values []Type, added ...Type) []Type {
+	for _, value := range added {
+		exists := false
+		for _, current := range values {
+			if current == value {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func normalizeIntentType(raw string) Type {

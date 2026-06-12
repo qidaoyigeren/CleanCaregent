@@ -18,16 +18,21 @@ type Case struct {
 }
 
 type AgentOutput struct {
-	Intent      string         `json:"intent"`
-	Documents   []string       `json:"documents"`
-	Contexts    []string       `json:"contexts,omitempty"`
-	Tools       []string       `json:"tools"`
-	ToolParams  map[string]any `json:"tool_params"`
-	Answer      string         `json:"answer"`
-	EvidenceIDs []string       `json:"evidence_ids"`
-	LatencyMS   int64          `json:"latency_ms"`
-	TokenCount  int            `json:"token_count"`
-	StepCount   int            `json:"step_count"`
+	Intent              string         `json:"intent"`
+	Documents           []string       `json:"documents"`
+	Contexts            []string       `json:"contexts,omitempty"`
+	Tools               []string       `json:"tools"`
+	ToolParams          map[string]any `json:"tool_params"`
+	ToolResults         []any          `json:"tool_results,omitempty"`
+	Answer              string         `json:"answer"`
+	EvidenceIDs         []string       `json:"evidence_ids"`
+	LatencyMS           int64          `json:"latency_ms"`
+	TokenCount          int            `json:"token_count"`
+	StepCount           int            `json:"step_count"`
+	SuccessfulToolCalls int            `json:"successful_tool_calls"`
+	ReflectionAttempts  int            `json:"reflection_attempts"`
+	ReflectionSucceeded bool           `json:"reflection_succeeded"`
+	PlanRevisions       int            `json:"plan_revisions"`
 }
 
 type MetricResult struct {

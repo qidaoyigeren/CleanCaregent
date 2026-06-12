@@ -18,10 +18,12 @@ func WithCircuitBreaker(
 	failureThreshold int,
 	openTimeout time.Duration,
 ) *CircuitBreakerEmbedder {
-	return &CircuitBreakerEmbedder{
+	value := &CircuitBreakerEmbedder{
 		next:    next,
 		breaker: llm.NewCircuitBreaker(failureThreshold, openTimeout),
 	}
+	llm.DefaultCircuitManager.Register("embedding:"+next.Name(), value.breaker)
+	return value
 }
 
 func (e *CircuitBreakerEmbedder) Name() string {

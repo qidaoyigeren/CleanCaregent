@@ -13,6 +13,12 @@ import (
 
 // llmReflectionResult mirrors the JSON structure returned by the LLM reflection check.
 type llmReflectionResult struct {
+	ClaimVerification []struct {
+		Claim       string   `json:"claim"`
+		Status      string   `json:"status"`
+		EvidenceIDs []string `json:"evidence_ids"`
+		Reason      string   `json:"reason"`
+	} `json:"claim_verification"`
 	RetrievalQuality struct {
 		Score      string `json:"score"`
 		NeedRerun  bool   `json:"need_rerun"`
@@ -164,6 +170,16 @@ func (r *LLMReflector) reviewWithLLM(
 		"tool_calls":       buildToolResultsSummary(request.Evidences),
 	}
 	messages := tmpl.BuildMessages(params)
+	claims := extractClaims(request.Answer)
+	claimsRaw, err := json.Marshal(claims)
+	if err != nil {
+		return llmReflectionResult{}, fmt.Errorf("编码待核验主张失败: %w", err)
+	}
+	if len(messages) > 0 {
+		messages[len(messages)-1]["content"] +=
+			"\n\n# 待逐条核验的 claims\n" + string(claimsRaw) +
+				"\n请在 claim_verification 中逐条返回 claim、status(supported|unsupported)、evidence_ids 和 reason。"
+	}
 
 	var llmOut llmReflectionResult
 	if err := r.llm.ChatJSON(ctx, messages, &llmOut); err != nil {
@@ -206,12 +222,21 @@ func (r *LLMReflector) mergeResults(
 	}
 
 	// Merge unsupported claims.
+	unsupportedBefore := len(result.UnsupportedClaims)
+	for _, verification := range llm.ClaimVerification {
+		if !strings.EqualFold(verification.Status, "unsupported") {
+			continue
+		}
+		if !containsStringInSlice(result.UnsupportedClaims, verification.Claim) {
+			result.UnsupportedClaims = append(result.UnsupportedClaims, verification.Claim)
+		}
+	}
 	for _, claim := range llm.FactualAccuracy.UnsupportedClaims {
 		if !containsStringInSlice(result.UnsupportedClaims, claim) {
 			result.UnsupportedClaims = append(result.UnsupportedClaims, claim)
 		}
 	}
-	if len(llm.FactualAccuracy.UnsupportedClaims) > 0 {
+	if len(result.UnsupportedClaims) > unsupportedBefore {
 		result.LowConfidence = true
 		if result.Action == "" {
 			result.Action = "regenerate"
@@ -232,6 +257,32 @@ func (r *LLMReflector) mergeResults(
 		result.Warnings = append(result.Warnings, "bare_claim:"+bare)
 	}
 
+	return result
+}
+
+func extractClaims(answer string) []string {
+	answer = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(answer)
+	parts := strings.FieldsFunc(answer, func(current rune) bool {
+		switch current {
+		case '。', '！', '？', '\n', ';', '；':
+			return true
+		default:
+			return false
+		}
+	})
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(strings.TrimLeft(part, "-*#0123456789. "))
+		if len([]rune(part)) < 6 || strings.HasSuffix(part, "吗") || strings.HasSuffix(part, "？") {
+			continue
+		}
+		if !containsStringInSlice(result, part) {
+			result = append(result, part)
+		}
+		if len(result) == 20 {
+			break
+		}
+	}
 	return result
 }
 

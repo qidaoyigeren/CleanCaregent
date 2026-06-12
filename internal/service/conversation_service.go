@@ -133,7 +133,7 @@ func (s *ConversationService) Ask(
 		return AskResult{}, err
 	}
 	conversationContext := memory.ConversationContext{ConversationID: conversationID}
-	memoryCtx, memorySpan := otel.Tracer("clean-care-agent/service").Start(ctx, "memory.load")
+	memoryCtx, memorySpan := otel.Tracer("clean-care-agent/service").Start(ctx, "memory.load_context")
 	var memoryLoadErr error
 	if s.memory != nil {
 		loaded, loadErr := s.memory.LoadContext(memoryCtx, conversationID, 10)
@@ -244,7 +244,8 @@ func (s *ConversationService) scheduleSummary(
 	if summarizeFrom >= summarizeUntil {
 		return
 	}
-	toSummarize := append([]model.Message(nil), messages[summarizeFrom:summarizeUntil]...)
+	batchEnd := min(summarizeFrom+5, summarizeUntil)
+	toSummarize := append([]model.Message(nil), messages[summarizeFrom:batchEnd]...)
 	throughMessageID := toSummarize[len(toSummarize)-1].ID
 
 	s.summaryMu.Lock()

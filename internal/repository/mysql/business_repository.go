@@ -237,12 +237,13 @@ func (r *BusinessRepository) GetOrder(ctx context.Context, userID, orderNo strin
 		SELECT o.order_no, o.status, p.product_code, p.name, p.model, s.sku_code,
 		       oi.quantity, oi.unit_price, o.paid_at, o.delivered_at, oi.id, oi.warranty_months
 		FROM orders o
+		JOIN users u ON u.id = o.user_id
 		JOIN order_items oi ON oi.order_id = o.id
 		JOIN products p ON p.id = oi.product_id
 		JOIN product_skus s ON s.id = oi.sku_id
-		WHERE o.order_no = ?
+		WHERE u.user_no = ? AND o.order_no = ?
 		ORDER BY oi.id
-	`, orderNo)
+	`, userID, orderNo)
 	if err != nil {
 		return model.OrderDetail{}, fmt.Errorf("list order items: %w", err)
 	}

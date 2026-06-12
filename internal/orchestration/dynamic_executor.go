@@ -12,6 +12,7 @@ import (
 	"CleanCaregent/internal/agent"
 	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/platform/id"
+	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/skill"
 	"CleanCaregent/internal/tool"
 )
@@ -23,12 +24,32 @@ var (
 )
 
 type DynamicExecutor struct {
-	tools  *tool.Executor
-	skills *skill.Registry
+	tools             *tool.Executor
+	skills            *skill.Registry
+	argumentExtractor ArgumentExtractor
+	retriever         rag.Retriever
 }
 
-func NewDynamicExecutor(tools *tool.Executor, skills *skill.Registry) *DynamicExecutor {
-	return &DynamicExecutor{tools: tools, skills: skills}
+type Option func(*DynamicExecutor)
+
+func WithArgumentExtractor(extractor ArgumentExtractor) Option {
+	return func(executor *DynamicExecutor) {
+		executor.argumentExtractor = extractor
+	}
+}
+
+func WithKnowledgeRetriever(retriever rag.Retriever) Option {
+	return func(executor *DynamicExecutor) {
+		executor.retriever = retriever
+	}
+}
+
+func NewDynamicExecutor(tools *tool.Executor, skills *skill.Registry, options ...Option) *DynamicExecutor {
+	executor := &DynamicExecutor{tools: tools, skills: skills}
+	for _, option := range options {
+		option(executor)
+	}
+	return executor
 }
 
 func (e *DynamicExecutor) Execute(
@@ -55,7 +76,7 @@ func (e *DynamicExecutor) executeTool(
 			Metadata: map[string]any{"degraded": true},
 		}, nil
 	}
-	arguments := buildArguments(request)
+	arguments := e.buildArguments(ctx, request)
 	call := tool.Call{
 		TraceID:        request.Request.TraceID,
 		CallID:         id.New("call"),
@@ -67,6 +88,9 @@ func (e *DynamicExecutor) executeTool(
 	}
 	result, err := e.tools.Execute(ctx, call, allowedTools(intent.Type(request.Intent)))
 	if err != nil {
+		if result.ErrorCode == "TOOL_TIMEOUT" || errors.Is(err, context.DeadlineExceeded) {
+			return e.degradeToKnowledge(ctx, request, call, result)
+		}
 		return agent.DynamicExecutionResult{
 			Answer: "实时数据查询失败，已保留本次调用记录。请核对型号或订单号后重试。",
 			Evidences: []agent.Evidence{{
@@ -79,7 +103,7 @@ func (e *DynamicExecutor) executeTool(
 			Metadata: map[string]any{"degraded": true},
 		}, nil
 	}
-	if validationErr := validateToolData(call.Name, result.Data); validationErr != nil {
+	if validationErr := tool.ValidateResult(call.Name, result.Data); validationErr != nil {
 		return agent.DynamicExecutionResult{
 			Answer: "实时业务数据返回异常，本次结果未用于回答。请稍后重试或联系人工客服核实。",
 			Evidences: []agent.Evidence{{
@@ -118,41 +142,76 @@ func (e *DynamicExecutor) executeSkill(
 	if e.skills == nil {
 		return agent.DynamicExecutionResult{}, ErrSkillNotFound
 	}
-	value, ok := e.skills.Get(request.Step.SkillName)
-	if !ok {
-		return agent.DynamicExecutionResult{}, fmt.Errorf("%w: %s", ErrSkillNotFound, request.Step.SkillName)
+	nextSkill := request.Step.SkillName
+	nextArgs := cloneMap(request.Step.Params)
+	visited := make(map[string]struct{}, 3)
+	var (
+		answer    string
+		evidences []agent.Evidence
+		metadata  = map[string]any{}
+	)
+	for chainIndex := 0; chainIndex < 3 && nextSkill != ""; chainIndex++ {
+		if _, exists := visited[nextSkill]; exists {
+			return agent.DynamicExecutionResult{}, fmt.Errorf("Skill 链路存在循环: %s", nextSkill)
+		}
+		visited[nextSkill] = struct{}{}
+		value, ok := e.skills.Get(nextSkill)
+		if !ok {
+			return agent.DynamicExecutionResult{}, fmt.Errorf("%w: %s", ErrSkillNotFound, nextSkill)
+		}
+		intentResult := intent.Result{
+			Secondary: intent.Type(request.Intent),
+			Entities:  stringMap(nextArgs),
+		}
+		result, err := value.Run(ctx, skill.Request{
+			TraceID:        request.Request.TraceID,
+			UserID:         request.Request.UserID,
+			ConversationID: request.Request.ConversationID,
+			Query:          request.Step.Query,
+			Intent:         intentResult,
+			Entities:       nextArgs,
+		})
+		if err != nil {
+			return agent.DynamicExecutionResult{}, err
+		}
+		evidences = append(evidences, result.Evidences...)
+		for key, value := range result.Metadata {
+			metadata[key] = value
+		}
+		metadata["skill_status"] = result.Status
+		metadata["skill_chain_length"] = chainIndex + 1
+		metadata["intentional_clarification"] =
+			result.Status == "clarify" && result.NextQuestion != ""
+		answer = result.AnswerDraft
+		if result.NextQuestion != "" {
+			answer = result.NextQuestion
+		}
+		if result.Status == "clarify" || result.NextSkill == "" {
+			nextSkill = ""
+			break
+		}
+		nextSkill = result.NextSkill
+		nextArgs = cloneMap(result.NextSkillArgs)
+		for key, value := range request.Step.Params {
+			if _, exists := nextArgs[key]; !exists {
+				nextArgs[key] = value
+			}
+		}
 	}
-	intentResult := intent.Result{
-		Secondary: intent.Type(request.Intent),
-		Entities:  stringMap(request.Step.Params),
+	if nextSkill != "" {
+		return agent.DynamicExecutionResult{}, errors.New("Skill 链路超过最大 3 步")
 	}
-	result, err := value.Run(ctx, skill.Request{
-		TraceID:        request.Request.TraceID,
-		UserID:         request.Request.UserID,
-		ConversationID: request.Request.ConversationID,
-		Query:          request.Step.Query,
-		Intent:         intentResult,
-		Entities:       request.Step.Params,
-	})
-	if err != nil {
-		return agent.DynamicExecutionResult{}, err
-	}
-	answer := result.AnswerDraft
-	if result.NextQuestion != "" {
-		answer = result.NextQuestion
-	}
-	metadata := cloneMap(result.Metadata)
-	metadata["skill_status"] = result.Status
-	metadata["intentional_clarification"] =
-		result.Status == "clarify" && result.NextQuestion != ""
 	return agent.DynamicExecutionResult{
 		Answer:    answer,
-		Evidences: result.Evidences,
+		Evidences: evidences,
 		Metadata:  metadata,
 	}, nil
 }
 
-func buildArguments(request agent.DynamicExecutionRequest) map[string]any {
+func (e *DynamicExecutor) buildArguments(
+	ctx context.Context,
+	request agent.DynamicExecutionRequest,
+) map[string]any {
 	arguments := cloneMap(request.Step.Params)
 	query := request.Request.Query
 	models := modelPattern.FindAllString(query, -1)
@@ -185,7 +244,66 @@ func buildArguments(request agent.DynamicExecutionRequest) map[string]any {
 		arguments["description"] = query
 		arguments["confirmed"] = containsAny(query, "确认", "创建", "报修", "申请维修", "提交工单")
 	}
-	return arguments
+	arguments = normalizeToolArguments(arguments)
+	if e.argumentExtractor != nil && needsArgumentExtraction(request.Step.ToolName, arguments) {
+		if extracted, err := e.argumentExtractor.Extract(ctx, request.Step.ToolName, query); err == nil {
+			for key, value := range normalizeExtractedArguments(extracted) {
+				if _, exists := arguments[key]; !exists || arguments[key] == "" {
+					arguments[key] = value
+				}
+			}
+		}
+	}
+	return normalizeToolArguments(arguments)
+}
+
+func (e *DynamicExecutor) degradeToKnowledge(
+	ctx context.Context,
+	request agent.DynamicExecutionRequest,
+	call tool.Call,
+	result tool.Result,
+) (agent.DynamicExecutionResult, error) {
+	if e.retriever == nil {
+		return agent.DynamicExecutionResult{
+			Answer: "实时服务超时，当前无法确认最新动态数据。请稍后重试。",
+			Evidences: []agent.Evidence{{
+				Kind: "tool_error", SourceID: call.CallID, Title: toolEvidenceTitle(call.Name),
+				Content: result.Message, Metadata: map[string]any{"error_code": result.ErrorCode},
+			}},
+			Metadata: map[string]any{"degraded": true, "degrade_strategy": "tool_timeout"},
+		}, nil
+	}
+	items, err := e.retriever.Search(ctx, rag.SearchRequest{
+		Query: request.Request.Query,
+		Mode:  rag.SearchHybrid,
+		Filter: rag.MetadataFilter{
+			Models:   stringSliceArgument(call.Arguments["product_refs"], call.Arguments["model"]),
+			DocTypes: fallbackDocTypes(call.Name),
+		},
+		DenseTopK: 8, KeywordTopK: 8, RerankTopK: 4, NeedRerank: true,
+	})
+	if err != nil {
+		return agent.DynamicExecutionResult{}, fmt.Errorf("实时工具和知识库降级均失败: %w", err)
+	}
+	evidences := make([]agent.Evidence, 0, len(items)+1)
+	evidences = append(evidences, agent.Evidence{
+		Kind: "tool_error", SourceID: call.CallID, Title: toolEvidenceTitle(call.Name),
+		Content: result.Message, Metadata: map[string]any{"error_code": result.ErrorCode},
+	})
+	for _, item := range items {
+		evidences = append(evidences, agent.Evidence{
+			Kind: "kb_chunk", SourceID: item.ChunkID, Title: item.Title, Content: item.Content,
+			Metadata: item.Metadata,
+		})
+	}
+	return agent.DynamicExecutionResult{
+		Answer:     "",
+		Evidences:  evidences,
+		SearchData: items,
+		Metadata: map[string]any{
+			"degraded": true, "degrade_strategy": "tool_timeout_to_kb",
+		},
+	}, nil
 }
 
 func formatToolAnswer(name string, data any) string {

@@ -8,7 +8,15 @@ import (
 
 type Type string
 
+// PrimaryType is the top-level business intent used for routing and metrics.
+type PrimaryType string
+
 const (
+	PrimaryPresales   PrimaryType = "presales"
+	PrimaryAftersales PrimaryType = "aftersales"
+	PrimaryDiagnosis  PrimaryType = "diagnosis"
+	PrimaryFallback   PrimaryType = "fallback"
+
 	ProductParameter       Type = "product_parameter"
 	ProductComparison      Type = "product_comparison"
 	PurchaseRecommendation Type = "purchase_recommendation"
@@ -26,20 +34,50 @@ const (
 	Chitchat               Type = "chitchat"
 )
 
+// RouteTrace explains why the router selected an intent.
+type RouteTrace struct {
+	Source          string   `json:"source"`
+	MatchedKeywords []string `json:"matched_keywords,omitempty"`
+	Reasoning       string   `json:"reasoning,omitempty"`
+	ConfidenceBasis string   `json:"confidence_basis,omitempty"`
+}
+
 type Result struct {
-	Primary     string            `json:"primary"`
-	Secondary   Type              `json:"secondary"`
-	Confidence  float64           `json:"confidence"`
-	Entities    map[string]string `json:"entities,omitempty"`
-	NeedClarify bool              `json:"need_clarify"`
+	Primary           PrimaryType       `json:"primary"`
+	Secondary         Type              `json:"secondary"`
+	SecondaryIntents  []Type            `json:"secondary_intents,omitempty"`
+	Confidence        float64           `json:"confidence"`
+	Entities          map[string]string `json:"entities,omitempty"`
+	NeedClarify       bool              `json:"need_clarify"`
+	NeedDecomposition bool              `json:"need_decomposition,omitempty"`
+	CompetitorMention bool              `json:"competitor_mention,omitempty"`
+	Competitors       []string          `json:"competitors,omitempty"`
+	CompetitorPolicy  string            `json:"competitor_policy,omitempty"`
+	RouteTrace        RouteTrace        `json:"route_trace"`
 }
 
 type RouteRequest struct {
 	Query          string
 	Summary        string
 	RecentMessages []model.Message
+	Primary        PrimaryType
 }
 
 type Router interface {
 	Route(ctx context.Context, request RouteRequest) (Result, error)
+}
+
+// PrimaryFor returns the top-level intent that owns a secondary intent.
+func PrimaryFor(value Type) PrimaryType {
+	switch value {
+	case ProductParameter, ProductComparison, PurchaseRecommendation,
+		AccessoryCompatibility, UsageInstruction, PriceQuery, InventoryQuery:
+		return PrimaryPresales
+	case OrderQuery, WarrantyQuery, ReturnEligibility, CreateAfterSalesTicket:
+		return PrimaryAftersales
+	case Troubleshooting:
+		return PrimaryDiagnosis
+	default:
+		return PrimaryFallback
+	}
 }

@@ -3,6 +3,8 @@ package memory
 import (
 	"context"
 	"encoding/json"
+	"regexp"
+	"sort"
 	"strings"
 
 	"CleanCaregent/internal/llm"
@@ -24,7 +26,7 @@ func NewLLMSummarizer(client *llm.Client, prompts *prompt.Registry) *LLMSummariz
 	return &LLMSummarizer{
 		client:   client,
 		prompts:  prompts,
-		fallback: NewExtractiveSummarizer(900),
+		fallback: NewExtractiveSummarizer(600),
 	}
 }
 
@@ -48,7 +50,14 @@ func (s *LLMSummarizer) Summarize(
 	if err != nil {
 		return s.fallback.Summarize(ctx, previous, messages)
 	}
-	return strings.TrimSpace(answer), nil
+	summary := strings.TrimSpace(answer)
+	if !summaryPreservesEntities(previous, messages, summary) {
+		summary, err = s.fallback.Summarize(ctx, previous, messages)
+		if err != nil {
+			return "", err
+		}
+	}
+	return enforceSummaryLimit(summary, 600), nil
 }
 
 type ExtractiveSummarizer struct {
@@ -90,4 +99,65 @@ func (s *ExtractiveSummarizer) Summarize(
 		runes = runes[len(runes)-s.maxRunes:]
 	}
 	return string(runes), nil
+}
+
+var memoryEntityPattern = regexp.MustCompile(
+	`(?i)\b(?:T20|X20\s*Pro|R10|R20|P400|P500|W300|W500|H100|H200|CC\d{8,})\b`,
+)
+
+func summaryPreservesEntities(previous string, messages []model.Message, summary string) bool {
+	var source strings.Builder
+	source.WriteString(previous)
+	for _, message := range messages {
+		source.WriteByte('\n')
+		source.WriteString(message.Content)
+	}
+	sourceText := source.String()
+	required := memoryEntityPattern.FindAllString(sourceText, -1)
+	for _, keyword := range []string{
+		"漏水", "焦味", "冒烟", "发热", "无法充电", "充不进电",
+		"指示灯不亮", "已换插座", "已清洁触点",
+	} {
+		if strings.Contains(sourceText, keyword) {
+			required = append(required, keyword)
+		}
+	}
+	for _, entity := range uniqueFolded(required) {
+		if !strings.Contains(strings.ToLower(summary), strings.ToLower(entity)) {
+			return false
+		}
+	}
+	return strings.TrimSpace(summary) != ""
+}
+
+func enforceSummaryLimit(summary string, maxRunes int) string {
+	runes := []rune(strings.TrimSpace(summary))
+	if maxRunes <= 0 || len(runes) <= maxRunes {
+		return string(runes)
+	}
+	return string(runes[len(runes)-maxRunes:])
+}
+
+func uniqueFolded(values []string) []string {
+	seen := make(map[string]string, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if _, exists := seen[key]; !exists {
+			seen[key] = value
+		}
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, seen[key])
+	}
+	return result
 }

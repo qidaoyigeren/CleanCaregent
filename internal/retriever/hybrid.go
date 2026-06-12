@@ -13,6 +13,7 @@ import (
 
 	"CleanCaregent/internal/embedding"
 	"CleanCaregent/internal/model"
+	"CleanCaregent/internal/observability"
 	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/repository"
 	"CleanCaregent/internal/reranker"
@@ -21,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Hybrid struct {
@@ -45,18 +47,66 @@ func NewHybrid(
 }
 
 func (h *Hybrid) Search(ctx context.Context, request rag.SearchRequest) ([]rag.SearchResult, error) {
+	startedAt := time.Now()
 	ctx, span := otel.Tracer("clean-care-agent/retriever").Start(ctx, "retriever.hybrid_search")
 	span.SetAttributes(
 		attribute.String("retrieval.mode", string(request.Mode)),
 		attribute.Int("retrieval.query_runes", len([]rune(request.Query))),
 	)
-	defer span.End()
+	defer func() {
+		observability.DefaultPrometheusMetrics.RecordRetrieval(time.Since(startedAt))
+		span.SetAttributes(attribute.Int64("retrieval.duration_ms", time.Since(startedAt).Milliseconds()))
+		span.End()
+	}()
 	request = normalizeSearchRequest(request)
 	if strings.TrimSpace(request.Query) == "" {
 		span.SetStatus(codes.Error, "empty query")
 		return nil, errors.New("search query is required")
 	}
 
+	results, err := h.searchOnce(ctx, request, span)
+	if err != nil {
+		return nil, err
+	}
+	qualityIssues := retrievalQualityIssues(request, results)
+	if len(qualityIssues) > 0 && hasBusinessFilter(request.Filter) {
+		broadRequest := request
+		broadRequest.Filter = rag.MetadataFilter{EffectiveAt: request.Filter.EffectiveAt}
+		broadResults, broadErr := h.searchOnce(ctx, broadRequest, span)
+		if broadErr == nil && (len(results) == 0 || betterRetrievalQuality(broadResults, results)) {
+			results = broadResults
+		}
+		for index := range results {
+			if results[index].Metadata == nil {
+				results[index].Metadata = map[string]any{}
+			}
+			results[index].Metadata["low_quality_retrieval"] = true
+			results[index].Metadata["retry_without_filter"] = true
+			results[index].Metadata["quality_issues"] = append([]string(nil), qualityIssues...)
+		}
+		span.SetAttributes(attribute.Bool("retrieval.retry_without_filter", true))
+	}
+	span.SetAttributes(
+		attribute.Bool("retrieval.low_quality", len(qualityIssues) > 0),
+		attribute.StringSlice("retrieval.quality_issues", qualityIssues),
+	)
+	return results, nil
+}
+
+// SearchWithFallbackEmbedder executes hybrid search. Empty or malformed
+// primary vectors are handled by embedding.Fallback before vector search.
+func (h *Hybrid) SearchWithFallbackEmbedder(
+	ctx context.Context,
+	request rag.SearchRequest,
+) ([]rag.SearchResult, error) {
+	return h.Search(ctx, request)
+}
+
+func (h *Hybrid) searchOnce(
+	ctx context.Context,
+	request rag.SearchRequest,
+	span trace.Span,
+) ([]rag.SearchResult, error) {
 	var (
 		denseResults   []rag.SearchResult
 		keywordResults []rag.SearchResult
@@ -92,7 +142,7 @@ func (h *Hybrid) Search(ctx context.Context, request rag.SearchRequest) ([]rag.S
 		return nil, keywordErr
 	}
 
-	fused := reciprocalRankFusion(denseResults, keywordResults, 60)
+	fused := reciprocalRankFusion(denseResults, keywordResults)
 	span.SetAttributes(
 		attribute.Int("retrieval.dense_results", len(denseResults)),
 		attribute.Int("retrieval.keyword_results", len(keywordResults)),
@@ -185,7 +235,7 @@ func (h *Hybrid) denseSearch(ctx context.Context, request rag.SearchRequest) ([]
 }
 
 func (h *Hybrid) keywordSearch(ctx context.Context, request rag.SearchRequest) ([]rag.SearchResult, error) {
-	chunks, err := h.repository.KeywordSearch(ctx, repository.KnowledgeSearchRequest{
+	searchRequest := repository.KnowledgeSearchRequest{
 		Query:        request.Query,
 		Terms:        queryTerms(request.Query),
 		ProductIDs:   request.Filter.ProductIDs,
@@ -199,16 +249,135 @@ func (h *Hybrid) keywordSearch(ctx context.Context, request rag.SearchRequest) (
 		FaultNodeIDs: request.Filter.FaultNodeIDs,
 		EffectiveAt:  effectiveAt(request.Filter.EffectiveAt),
 		Limit:        request.KeywordTopK,
-	})
-	if err != nil {
-		return nil, err
 	}
-	scored := bm25Candidates(chunks, queryTerms(request.Query))
-	results := make([]rag.SearchResult, len(scored))
-	for index, candidate := range scored {
-		results[index] = toSearchResult(candidate.chunk, 0, candidate.score)
+	var fulltextChunks []model.KnowledgeChunk
+	var fulltextErr error
+	if fulltext, ok := h.repository.(repository.FulltextKnowledgeRepository); ok {
+		fulltextChunks, fulltextErr = fulltext.FulltextSearch(ctx, searchRequest)
+	}
+	applicationChunks, applicationErr := h.repository.KeywordSearch(ctx, searchRequest)
+	if fulltextErr != nil && applicationErr != nil {
+		return nil, fmt.Errorf(
+			"fulltext search failed: %v; application keyword search failed: %v",
+			fulltextErr,
+			applicationErr,
+		)
+	}
+
+	resultsByChunk := make(map[string]rag.SearchResult, len(fulltextChunks)+len(applicationChunks))
+	if fulltextErr == nil {
+		for index, chunk := range fulltextChunks {
+			score, _ := chunk.Metadata["fulltext_score"].(float64)
+			if score <= 0 {
+				score = 1 / float64(index+1)
+			}
+			result := toSearchResult(chunk, 0, score)
+			result.Metadata["keyword_backend"] = "mysql_fulltext"
+			resultsByChunk[chunk.ChunkID] = result
+		}
+	}
+	if applicationErr == nil {
+		for _, candidate := range bm25Candidates(applicationChunks, queryTerms(request.Query)) {
+			current, exists := resultsByChunk[candidate.chunk.ChunkID]
+			if !exists {
+				current = toSearchResult(candidate.chunk, 0, candidate.score)
+				current.Metadata["keyword_backend"] = "application_bm25"
+			} else {
+				current.KeywordScore += candidate.score
+				current.Metadata["keyword_backend"] = "mysql_fulltext+application_bm25"
+			}
+			resultsByChunk[candidate.chunk.ChunkID] = current
+		}
+	}
+	results := make([]rag.SearchResult, 0, len(resultsByChunk))
+	for _, result := range resultsByChunk {
+		results = append(results, result)
+	}
+	normalizeKeywordScores(results)
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].KeywordScore > results[j].KeywordScore
+	})
+	if len(results) > request.KeywordTopK {
+		results = results[:request.KeywordTopK]
 	}
 	return results, nil
+}
+
+func lowQualityRetrieval(results []rag.SearchResult) bool {
+	if len(results) == 0 {
+		return true
+	}
+	for _, result := range results {
+		if result.RerankScore > 0.5 {
+			return false
+		}
+	}
+	return true
+}
+
+func retrievalQualityIssues(request rag.SearchRequest, results []rag.SearchResult) []string {
+	var issues []string
+	if len(results) == 0 {
+		return []string{"empty_results"}
+	}
+	if request.MinScore > 0 && effectiveResultScore(results[0]) < request.MinScore {
+		issues = append(issues, "top1_below_min_score")
+	}
+	if lowQualityRetrieval(results) {
+		issues = append(issues, "rerank_confidence_low")
+	}
+	if len(request.Filter.DocTypes) > 0 {
+		matched := 0
+		for _, result := range results {
+			if stringInSlice(resultDocType(result), request.Filter.DocTypes) {
+				matched++
+			}
+		}
+		if float64(matched)/float64(len(results)) < 0.30 {
+			issues = append(issues, "doc_type_fit_below_30_percent")
+		}
+	}
+	if len(request.Filter.Models) >= 2 {
+		coverage := make(map[string]int, len(request.Filter.Models))
+		for _, result := range results {
+			for _, modelName := range resultModels(result) {
+				if stringInSlice(modelName, request.Filter.Models) {
+					coverage[modelName]++
+				}
+			}
+		}
+		for _, modelName := range request.Filter.Models {
+			if coverage[modelName] < 2 {
+				issues = append(issues, "model_coverage_below_2:"+modelName)
+			}
+		}
+	}
+	return compactStrings(issues)
+}
+
+func hasBusinessFilter(filter rag.MetadataFilter) bool {
+	return len(filter.ProductIDs) > 0 ||
+		len(filter.SKUIDs) > 0 ||
+		len(filter.Categories) > 0 ||
+		len(filter.Brands) > 0 ||
+		len(filter.Models) > 0 ||
+		len(filter.DocTypes) > 0 ||
+		len(filter.IntentTags) > 0 ||
+		filter.Version != "" ||
+		len(filter.FaultNodeIDs) > 0
+}
+
+func betterRetrievalQuality(candidate, current []rag.SearchResult) bool {
+	best := func(values []rag.SearchResult) float64 {
+		score := 0.0
+		for _, value := range values {
+			if value.RerankScore > score {
+				score = value.RerankScore
+			}
+		}
+		return score
+	}
+	return len(candidate) > 0 && (best(candidate) > best(current) || len(current) == 0)
 }
 
 func normalizeSearchRequest(request rag.SearchRequest) rag.SearchRequest {
@@ -338,7 +507,7 @@ func bm25Candidates(chunks []model.KnowledgeChunk, terms []string) []bm25Candida
 	return result
 }
 
-func reciprocalRankFusion(dense, keyword []rag.SearchResult, rankConstant float64) []rag.SearchResult {
+func reciprocalRankFusion(dense, keyword []rag.SearchResult) []rag.SearchResult {
 	type item struct {
 		result rag.SearchResult
 		score  float64
@@ -351,7 +520,7 @@ func reciprocalRankFusion(dense, keyword []rag.SearchResult, rankConstant float6
 				current = &item{result: result}
 				items[result.ChunkID] = current
 			}
-			current.score += 1 / (rankConstant + float64(index+1))
+			current.score += 1 / (rrfRankConstant(result) + float64(index+1))
 			if denseList {
 				current.result.DenseScore = result.DenseScore
 			} else {
@@ -367,10 +536,22 @@ func reciprocalRankFusion(dense, keyword []rag.SearchResult, rankConstant float6
 		current.result.FusionScore = current.score
 		output = append(output, current.result)
 	}
+	normalizeFusionScores(output)
 	sort.SliceStable(output, func(i, j int) bool {
 		return output[i].FusionScore > output[j].FusionScore
 	})
 	return output
+}
+
+func rrfRankConstant(result rag.SearchResult) float64 {
+	switch resultDocType(result) {
+	case "product_parameter":
+		return 10
+	case "purchase_guide":
+		return 60
+	default:
+		return 40
+	}
 }
 
 func toSearchResult(chunk model.KnowledgeChunk, denseScore, keywordScore float64) rag.SearchResult {
@@ -386,6 +567,85 @@ func toSearchResult(chunk model.KnowledgeChunk, denseScore, keywordScore float64
 		KeywordScore: keywordScore,
 		Metadata:     metadata,
 	}
+}
+
+func normalizeKeywordScores(results []rag.SearchResult) {
+	maxScore := 0.0
+	for _, result := range results {
+		if result.KeywordScore > maxScore {
+			maxScore = result.KeywordScore
+		}
+	}
+	if maxScore <= 0 {
+		return
+	}
+	for index := range results {
+		results[index].KeywordScore /= maxScore
+	}
+}
+
+func normalizeFusionScores(results []rag.SearchResult) {
+	maxScore := 0.0
+	for _, result := range results {
+		if result.FusionScore > maxScore {
+			maxScore = result.FusionScore
+		}
+	}
+	if maxScore <= 0 {
+		return
+	}
+	for index := range results {
+		results[index].FusionScore /= maxScore
+	}
+}
+
+func effectiveResultScore(result rag.SearchResult) float64 {
+	for _, score := range []float64{
+		result.RerankScore,
+		result.FusionScore,
+		result.DenseScore,
+		result.KeywordScore,
+	} {
+		if score > 0 {
+			return score
+		}
+	}
+	return 0
+}
+
+func resultDocType(result rag.SearchResult) string {
+	value, _ := result.Metadata["doc_type"].(string)
+	return strings.TrimSpace(value)
+}
+
+func resultModels(result rag.SearchResult) []string {
+	if result.Metadata == nil {
+		return nil
+	}
+	var models []string
+	if value, ok := result.Metadata["model"].(string); ok {
+		models = append(models, value)
+	}
+	switch values := result.Metadata["models"].(type) {
+	case []string:
+		models = append(models, values...)
+	case []any:
+		for _, value := range values {
+			if text, ok := value.(string); ok {
+				models = append(models, text)
+			}
+		}
+	}
+	return compactStrings(models)
+}
+
+func stringInSlice(value string, values []string) bool {
+	for _, candidate := range values {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(candidate)) {
+			return true
+		}
+	}
+	return false
 }
 
 func queryTerms(query string) []string {

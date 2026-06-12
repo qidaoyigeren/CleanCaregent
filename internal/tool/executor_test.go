@@ -12,6 +12,7 @@ type fakeTool struct {
 	name   string
 	schema json.RawMessage
 	data   any
+	effect SideEffect
 }
 
 func (t fakeTool) Name() string        { return t.name }
@@ -37,6 +38,12 @@ func (t fakeTool) Execute(context.Context, Call) (Result, error) {
 		}}}}, nil
 	}
 	return Result{Data: map[string]any{"ok": true}}, nil
+}
+func (t fakeTool) SideEffect() SideEffect {
+	if t.effect == "" {
+		return SideEffectReadOnly
+	}
+	return t.effect
 }
 
 func TestExecutorValidatesArgumentsAgainstSchema(t *testing.T) {
@@ -111,5 +118,31 @@ func TestExecutorRejectsInvalidSuccessfulToolResult(t *testing.T) {
 	}
 	if result.Success || result.ErrorCode != "INVALID_TOOL_RESULT" {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestExecutorRequiresConfirmationAndIdempotencyForStateChange(t *testing.T) {
+	registry := NewRegistry()
+	_ = registry.Register(fakeTool{
+		name:   "state_change",
+		effect: SideEffectStateChange,
+		schema: json.RawMessage(`{"type":"object","required":["confirmed"],"properties":{"confirmed":{"type":"boolean"}}}`),
+	})
+	executor := NewExecutor(registry, nil, time.Second)
+
+	_, err := executor.Execute(context.Background(), Call{
+		TraceID: "tr_state", CallID: "call_state_1", Name: "state_change",
+		Arguments: map[string]any{"confirmed": false},
+	}, []string{"state_change"})
+	if !errors.Is(err, ErrIdempotencyRequired) {
+		t.Fatalf("error = %v, want ErrIdempotencyRequired", err)
+	}
+
+	_, err = executor.Execute(context.Background(), Call{
+		TraceID: "tr_state", CallID: "call_state_2", Name: "state_change",
+		Arguments: map[string]any{"confirmed": false}, IdempotencyKey: "idem-1",
+	}, []string{"state_change"})
+	if !errors.Is(err, ErrConfirmationRequired) {
+		t.Fatalf("error = %v, want ErrConfirmationRequired", err)
 	}
 }

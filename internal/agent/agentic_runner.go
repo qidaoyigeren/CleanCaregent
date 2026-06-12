@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"CleanCaregent/internal/embedding"
 	"CleanCaregent/internal/generator"
 	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/llm"
@@ -58,6 +61,7 @@ type AgenticRunner struct {
 	prompts         *prompt.Registry
 	config          AgenticConfig
 	metricsLogger   *zap.Logger
+	stepEmbedder    embedding.Embedder
 }
 
 // AgenticRunnerOption allows optional components to be injected.
@@ -95,6 +99,10 @@ func WithPromptRegistry(prompts *prompt.Registry) AgenticRunnerOption {
 
 func WithMetricsLogger(logger *zap.Logger) AgenticRunnerOption {
 	return func(r *AgenticRunner) { r.metricsLogger = logger }
+}
+
+func WithStepEmbedder(embedder embedding.Embedder) AgenticRunnerOption {
+	return func(r *AgenticRunner) { r.stepEmbedder = embedder }
 }
 
 // NewAgenticRunner creates an AgenticRunner with sensible defaults for missing dependencies.
@@ -163,8 +171,11 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		return Result{}, fmt.Errorf("route intent: %w", err)
 	}
 	routeSpan.SetAttributes(
+		attribute.String("intent.primary", string(route.Primary)),
 		attribute.String("intent.secondary", string(route.Secondary)),
+		attribute.String("intent.route_source", route.RouteTrace.Source),
 		attribute.Float64("intent.confidence", route.Confidence),
+		attribute.Bool("intent.need_decomposition", route.NeedDecomposition),
 	)
 	routeSpan.End()
 	route = continueDiagnosisRoute(route, request)
@@ -260,6 +271,21 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 
 	// ---- Trace start ----
 	r.startTrace(ctx, request, route, plan)
+	r.appendTraceStep(ctx, request.TraceID, PlanStep{
+		StepID:     "step_intent_route",
+		Action:     ActionReflect,
+		ReasonCode: "intent_route_explanation",
+	}, "success", startedAt, map[string]any{
+		"primary":            route.Primary,
+		"secondary":          route.Secondary,
+		"secondary_intents":  route.SecondaryIntents,
+		"need_decomposition": route.NeedDecomposition,
+		"source":             route.RouteTrace.Source,
+		"matched_keywords":   route.RouteTrace.MatchedKeywords,
+		"reasoning":          route.RouteTrace.Reasoning,
+		"confidence_basis":   route.RouteTrace.ConfidenceBasis,
+		"confidence":         route.Confidence,
+	})
 	var (
 		searchResults            []rag.SearchResult
 		evidences                []Evidence
@@ -267,6 +293,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		intentionalClarification bool
 		finalEvidenceIDs         []string
 		outputTokens             int
+		executedActions          int
 	)
 	inputTokens := estimateTokens(request.Query + "\n" + request.Context.Summary)
 	defer func() {
@@ -281,11 +308,21 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		if usage.CompletionTokens > 0 {
 			outputTokens = usage.CompletionTokens
 		}
-		metrics := observability.DefaultAgentMetrics.Record(
+		metrics := observability.DefaultAgentMetrics.RecordWithCost(
 			time.Since(startedAt),
 			inputTokens,
 			outputTokens,
+			usage.CostUSD,
 			runErr != nil,
+		)
+		observability.DefaultPrometheusMetrics.RecordRequest(
+			string(route.Secondary),
+			status,
+			time.Since(startedAt),
+			inputTokens,
+			outputTokens,
+			executedActions,
+			usage.CostUSD,
 		)
 		span.SetAttributes(
 			attribute.Int("agent.input_tokens", inputTokens),
@@ -301,6 +338,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 				zap.Int("total_tokens", inputTokens+outputTokens),
 				zap.Int64("latency_ms", time.Since(startedAt).Milliseconds()),
 				zap.Int64("p95_latency_ms", metrics.P95LatencyMS),
+				zap.Float64("cost_usd", usage.CostUSD),
 				zap.Bool("failed", runErr != nil),
 			)
 		}
@@ -334,9 +372,8 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 	completedStatuses := map[string]string{}
 	completedSteps := make([]PlanStep, 0, len(plan.Steps))
 	revisionCount := 0
-	executedActions := 0
 	reviseRemaining := func(index int, cause error) bool {
-		if !usePlanExecute || revisionCount >= 1 {
+		if !usePlanExecute || revisionCount >= 2 {
 			return false
 		}
 		revised, reviseErr := planExecutePlanner.RevisePlan(
@@ -365,6 +402,15 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		steps = rebasePlanSteps(steps, index+2, lastCompleted)
 		plan.Steps = append(plan.Steps[:index+1], steps...)
 		revisionCount++
+		r.appendTraceStep(ctx, request.TraceID, PlanStep{
+			StepID:     fmt.Sprintf("revision_%02d", revisionCount),
+			Action:     ActionReflect,
+			ReasonCode: "plan_revision",
+		}, "success", time.Now(), map[string]any{
+			"revision_count":  revisionCount,
+			"revision_reason": errorText(cause),
+			"remaining_steps": len(steps),
+		})
 		return true
 	}
 	for index := 0; index < len(plan.Steps); index++ {
@@ -382,6 +428,11 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 				evidences,
 			) >= plan.TokenBudget {
 			planStep = finishStep(index+1, "token_budget_reached")
+			plan.Steps[index] = planStep
+		}
+		if planStep.Action == ActionParallel &&
+			executedActions+len(planStep.SubSteps) > plan.MaxSteps {
+			planStep = finishStep(index+1, "parallel_step_budget_exceeded")
 			plan.Steps[index] = planStep
 		}
 		if err := ctx.Err(); err != nil {
@@ -405,14 +456,26 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		}
 		seenActions[signature] = struct{}{}
 		if planStep.Action != ActionFinish {
-			executedActions++
+			if planStep.Action == ActionParallel {
+				executedActions += len(planStep.SubSteps)
+			} else {
+				executedActions++
+			}
 		}
 
 		stepStartedAt := time.Now()
+		stepTokenBefore := runtimeTokenUsage(inputTokens, usageCollector.Snapshot(), searchResults, evidences)
 		stepStatus := "success"
 		stepMetadata := map[string]any{
 			"action":      planStep.Action,
 			"reason_code": planStep.ReasonCode,
+			"input": map[string]any{
+				"query":      planStep.Query,
+				"params":     planStep.Params,
+				"tool_name":  planStep.ToolName,
+				"skill_name": planStep.SkillName,
+			},
+			"token_before": stepTokenBefore,
 		}
 
 		switch planStep.Action {
@@ -423,6 +486,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			answer = r.generateClarification(ctx, route, request.Query, rewrite.Entities)
 
 		case ActionRetrieve:
+			beforeCount := len(searchResults)
 			items, retrieveErr := r.retrievePlanStep(ctx, planStep, rewrite)
 			if retrieveErr != nil {
 				stepStatus = "failed"
@@ -436,6 +500,8 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			searchResults = mergeSearchResults(searchResults, items)
 			searchResults = trimSearchResults(searchResults, max(800, plan.TokenBudget-inputTokens))
 			stepMetadata["result_count"] = len(items)
+			stepMetadata["redundant_information"] = len(searchResults)-beforeCount < len(items)
+			stepMetadata["output"] = map[string]any{"new_evidence_count": len(searchResults) - beforeCount}
 
 		case ActionCallTool, ActionRunSkill:
 			if planStep.Action == ActionCallTool && !containsString(toolWhitelist, planStep.ToolName) {
@@ -470,6 +536,36 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			}
 			if metadataBool(dynamicResult.Metadata, "intentional_clarification") {
 				intentionalClarification = true
+			}
+			stepMetadata["output"] = map[string]any{
+				"answer_present": dynamicResult.Answer != "",
+				"evidence_count": len(dynamicResult.Evidences),
+			}
+
+		case ActionParallel:
+			parallelResult, parallelErr := r.executeParallelStep(
+				ctx, request, route, rewrite, planStep, toolWhitelist,
+			)
+			if parallelErr != nil {
+				stepStatus = "failed"
+				r.appendTraceStep(ctx, request.TraceID, planStep, stepStatus, stepStartedAt, stepMetadata)
+				completedStatuses[planStep.StepID] = stepStatus
+				if reviseRemaining(index, parallelErr) {
+					continue
+				}
+				return Result{}, parallelErr
+			}
+			searchResults = mergeSearchResults(searchResults, parallelResult.SearchData)
+			evidences = append(evidences, parallelResult.Evidences...)
+			if parallelResult.Answer != "" {
+				answer = parallelResult.Answer
+			}
+			for key, value := range parallelResult.Metadata {
+				stepMetadata[key] = value
+			}
+			stepMetadata["output"] = map[string]any{
+				"evidence_count": len(parallelResult.Evidences) + len(parallelResult.SearchData),
+				"answer_present": parallelResult.Answer != "",
 			}
 
 		case ActionReflect:
@@ -509,6 +605,10 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 				answer = generated
 			}
 		}
+		stepTokenAfter := runtimeTokenUsage(inputTokens, usageCollector.Snapshot(), searchResults, evidences)
+		stepMetadata["token_after"] = stepTokenAfter
+		stepMetadata["token_consumed"] = max(0, stepTokenAfter-stepTokenBefore)
+		stepMetadata["status"] = stepStatus
 		r.appendTraceStep(ctx, request.TraceID, planStep, stepStatus, stepStartedAt, stepMetadata)
 		completedStatuses[planStep.StepID] = stepStatus
 		completedSteps = append(completedSteps, planStep)
@@ -552,6 +652,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 				plan.Steps = append(plan.Steps, finishStep(index+2, "llm_finish"))
 				continue
 			}
+			nextStep = r.validateOrFallbackNextStep(ctx, planRequest, *nextStep, completedSteps)
 			plan.Steps = append(plan.Steps, *nextStep)
 		}
 	}
@@ -587,64 +688,85 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		reflection = r.reviewAnswer(reflectionCtx, reflectionRequest)
 	}
 	if reflection.Action == "rerun_retrieval" {
-		recoveryStartedAt := time.Now()
-		rerunQuery := strings.TrimSpace(reflection.RerunQuery)
-		if rerunQuery == "" {
-			rerunQuery = rewrite.Rewritten
-		}
-		recovered, recoveryErr := r.retrievePlanStep(reflectionCtx, PlanStep{
-			StepID:     "step_reflection_retrieval",
-			Action:     ActionRetrieve,
-			Query:      rerunQuery,
-			Params:     map[string]any{},
-			ReasonCode: "llm_reflection_rerun",
-		}, rewrite)
-		recoveryStatus := "success"
-		if recoveryErr != nil || len(recovered) == 0 {
-			recoveryStatus = "failed"
-			reflection.LowConfidence = true
-			reflection.Warnings = append(reflection.Warnings, "reflection_retrieval_failed")
-		} else {
-			searchResults = mergeSearchResults(searchResults, recovered)
-			searchResults = trimSearchResults(
-				searchResults,
-				max(800, plan.TokenBudget-inputTokens),
-			)
-			evidences = mergeEvidences(evidences, searchResults)
-			regenerated, generateErr := r.generator.GenerateWithScenario(
-				reflectionCtx,
-				selectGenerateScenario(route.Secondary),
-				rewrite.Rewritten,
-				searchResults,
-				buildToolResultsSummary(evidences),
-				request.Context.Summary,
-				rewrite.Entities["models"],
-			)
-			if generateErr != nil {
+		for attempt := 1; attempt <= 3 && reflection.Action == "rerun_retrieval"; attempt++ {
+			recoveryStartedAt := time.Now()
+			rerunQuery := strings.TrimSpace(reflection.RerunQuery)
+			if rerunQuery == "" {
+				rerunQuery = rewrite.Rewritten
+			}
+			params := map[string]any{}
+			strategy := "same_query_and_filters"
+			switch attempt {
+			case 2:
+				params["disable_filters"] = true
+				strategy = "remove_metadata_filters"
+			case 3:
+				params["disable_filters"] = true
+				params["search_mode"] = string(rag.SearchKeyword)
+				strategy = "keyword_only"
+			}
+			recovered, recoveryErr := r.retrievePlanStep(reflectionCtx, PlanStep{
+				StepID:     fmt.Sprintf("step_reflection_retrieval_%02d", attempt),
+				Action:     ActionRetrieve,
+				Query:      rerunQuery,
+				Params:     params,
+				ReasonCode: "reflection_strategy_" + strategy,
+			}, rewrite)
+			recoveryStatus := "success"
+			if recoveryErr != nil || len(recovered) == 0 {
 				recoveryStatus = "failed"
 				reflection.LowConfidence = true
-				reflection.Warnings = append(reflection.Warnings, "reflection_regeneration_failed")
+				reflection.Warnings = append(
+					reflection.Warnings,
+					fmt.Sprintf("reflection_retrieval_failed_attempt_%d", attempt),
+				)
 			} else {
-				answer = regenerated
-				reflection = r.reviewAnswer(reflectionCtx, ReflectionRequest{
-					Query:                    request.Query,
-					Intent:                   route.Secondary,
-					Answer:                   answer,
-					Evidences:                evidences,
-					SubQuestions:             rewrite.SubQuestions,
-					IntentionalClarification: intentionalClarification,
-				})
+				searchResults = mergeSearchResults(searchResults, recovered)
+				searchResults = trimSearchResults(
+					searchResults,
+					max(800, plan.TokenBudget-inputTokens),
+				)
+				evidences = mergeEvidences(evidences, searchResults)
+				regenerated, generateErr := r.generator.GenerateWithScenario(
+					reflectionCtx,
+					selectGenerateScenario(route.Secondary),
+					rewrite.Rewritten,
+					searchResults,
+					buildToolResultsSummary(evidences),
+					request.Context.Summary,
+					rewrite.Entities["models"],
+				)
+				if generateErr != nil {
+					recoveryStatus = "failed"
+					reflection.LowConfidence = true
+					reflection.Warnings = append(
+						reflection.Warnings,
+						fmt.Sprintf("reflection_regeneration_failed_attempt_%d", attempt),
+					)
+				} else {
+					answer = regenerated
+					reflection = r.reviewAnswer(reflectionCtx, ReflectionRequest{
+						Query:                    request.Query,
+						Intent:                   route.Secondary,
+						Answer:                   answer,
+						Evidences:                evidences,
+						SubQuestions:             rewrite.SubQuestions,
+						IntentionalClarification: intentionalClarification,
+					})
+				}
 			}
+			r.appendTraceStep(ctx, request.TraceID, PlanStep{
+				StepID:     fmt.Sprintf("step_reflection_recovery_%02d", attempt),
+				Action:     ActionRetrieve,
+				Query:      rerunQuery,
+				ReasonCode: "reflection_strategy_" + strategy,
+			}, recoveryStatus, recoveryStartedAt, map[string]any{
+				"rerun_query":  rerunQuery,
+				"result_count": len(recovered),
+				"attempt":      attempt,
+				"strategy":     strategy,
+			})
 		}
-		r.appendTraceStep(ctx, request.TraceID, PlanStep{
-			StepID:     "step_reflection_recovery",
-			Action:     ActionRetrieve,
-			Query:      rerunQuery,
-			ReasonCode: "llm_reflection_recovery",
-		}, recoveryStatus, recoveryStartedAt, map[string]any{
-			"rerun_query":  rerunQuery,
-			"result_count": len(recovered),
-		})
 	} else if reflection.Action == "regenerate" {
 		if regenerated, generateErr := r.generator.GenerateWithScenario(
 			reflectionCtx,
@@ -689,6 +811,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		Action:     ActionReflect,
 		ReasonCode: "final_grounding_review",
 	}, reflectionStatus(reflection), reflectionStartedAt, map[string]any{
+		"action":             reflection.Action,
 		"low_confidence":     reflection.LowConfidence,
 		"should_transfer":    reflection.ShouldTransfer,
 		"warnings":           reflection.Warnings,
@@ -738,10 +861,20 @@ func (r *AgenticRunner) generateClarification(
 ) string {
 	missing := []string{}
 	if entities["models"] == "" && needsModelForIntent(route.Secondary) {
-		missing = append(missing, "产品型号")
+		if route.Secondary == intent.ProductComparison {
+			missing = append(missing, "比较型号")
+		} else {
+			missing = append(missing, "产品型号")
+		}
 	}
 	if entities["order_no"] == "" && needsOrderForIntent(route.Secondary) {
 		missing = append(missing, "订单号")
+	}
+	if route.Secondary == intent.Clarification && len(missing) == 0 {
+		missing = append(missing, "意图")
+	}
+	if strings.Contains(query, "够不够用") || strings.Contains(query, "够用不") {
+		missing = append(missing, "参数含义")
 	}
 	return r.clarifier.Clarify(ctx, query, route.Secondary, entities, missing)
 }
@@ -772,7 +905,7 @@ func continueDiagnosisRoute(route intent.Result, request Request) intent.Result 
 		!isDiagnosisFollowUp(request.Query, route.Secondary) {
 		return route
 	}
-	route.Primary = "diagnosis"
+	route.Primary = intent.PrimaryDiagnosis
 	route.Secondary = intent.Troubleshooting
 	route.NeedClarify = false
 	if route.Confidence < 0.98 {
@@ -881,29 +1014,65 @@ func (r *AgenticRunner) retrievePlanStep(
 	}
 	docTypes := stringSliceParam(step.Params["doc_types"])
 	effectiveAt := time.Now().UTC()
+	searchMode := rag.SearchHybrid
+	needRerank := true
+	if strings.EqualFold(strings.TrimSpace(fmt.Sprint(step.Params["search_mode"])), string(rag.SearchKeyword)) {
+		searchMode = rag.SearchKeyword
+		needRerank = false
+	}
+	models := splitCSV(rewrite.Entities["models"])
+	if boolParam(step.Params["disable_filters"]) {
+		models = nil
+		docTypes = nil
+	}
 
-	results := make([][]rag.SearchResult, len(queries))
-	errorsByQuery := make([]error, len(queries))
+	type retrievalTask struct {
+		query  string
+		filter rag.MetadataFilter
+		route  string
+	}
+	tasks := make([]retrievalTask, 0, len(queries)+1)
+	for _, query := range queries {
+		tasks = append(tasks, retrievalTask{
+			query: query,
+			filter: rag.MetadataFilter{
+				Models:      models,
+				DocTypes:    docTypes,
+				EffectiveAt: &effectiveAt,
+			},
+			route: "precision",
+		})
+	}
+	originalQuery := strings.TrimSpace(rewrite.Original)
+	if originalQuery != "" && !containsString(queries, originalQuery) {
+		tasks = append(tasks, retrievalTask{
+			query: originalQuery,
+			filter: rag.MetadataFilter{
+				EffectiveAt: &effectiveAt,
+			},
+			route: "recall",
+		})
+	}
+
+	results := make([][]rag.SearchResult, len(tasks))
+	errorsByQuery := make([]error, len(tasks))
 	var waitGroup sync.WaitGroup
-	for index, query := range queries {
-		index, query := index, query
+	for index, task := range tasks {
+		index, task := index, task
 		waitGroup.Add(1)
 		go func() {
 			defer waitGroup.Done()
 			results[index], errorsByQuery[index] = r.retriever.Search(ctx, rag.SearchRequest{
-				Query: query,
-				Mode:  rag.SearchHybrid,
-				Filter: rag.MetadataFilter{
-					Models:      splitCSV(rewrite.Entities["models"]),
-					DocTypes:    docTypes,
-					EffectiveAt: &effectiveAt,
-				},
+				Query:       task.query,
+				Mode:        searchMode,
+				Filter:      task.filter,
 				DenseTopK:   r.config.DenseTopK,
 				KeywordTopK: r.config.KeywordTopK,
 				RerankTopK:  r.config.RerankTopK,
 				MinScore:    r.config.MinDenseScore,
-				NeedRerank:  true,
+				NeedRerank:  needRerank,
 			})
+			tagRetrievalResults(results[index], task.route, 0)
 		}()
 	}
 	waitGroup.Wait()
@@ -921,13 +1090,284 @@ func (r *AgenticRunner) retrievePlanStep(
 		}
 		merged = mergeSearchResults(merged, results[index])
 	}
-	if failedCount == len(queries) {
+	if failedCount == len(tasks) {
 		return nil, lastErr
+	}
+
+	hopQueries := stringSliceParam(step.Params["hop_queries"])
+	if len(hopQueries) > 3 {
+		hopQueries = hopQueries[:3]
+	}
+	for index, hopQuery := range hopQueries {
+		hopQuery = expandHopQuery(hopQuery, merged)
+		if strings.TrimSpace(hopQuery) == "" {
+			continue
+		}
+		hopResults, hopErr := r.retriever.Search(ctx, rag.SearchRequest{
+			Query: hopQuery,
+			Mode:  searchMode,
+			Filter: rag.MetadataFilter{
+				Models:      models,
+				DocTypes:    docTypes,
+				EffectiveAt: &effectiveAt,
+			},
+			DenseTopK:   r.config.DenseTopK,
+			KeywordTopK: r.config.KeywordTopK,
+			RerankTopK:  r.config.RerankTopK,
+			MinScore:    r.config.MinDenseScore,
+			NeedRerank:  needRerank,
+		})
+		if hopErr != nil {
+			lastErr = hopErr
+			continue
+		}
+		tagRetrievalResults(hopResults, "multi_hop", index+1)
+		merged = mergeSearchResults(merged, hopResults)
 	}
 	if maxResults := intParam(step.Params["max_results"]); maxResults > 0 && len(merged) > maxResults {
 		merged = merged[:maxResults]
 	}
 	return merged, nil
+}
+
+func (r *AgenticRunner) executeParallelStep(
+	ctx context.Context,
+	request Request,
+	route intent.Result,
+	rewrite RewriteResult,
+	parent PlanStep,
+	toolWhitelist []string,
+) (DynamicExecutionResult, error) {
+	type subResult struct {
+		step      PlanStep
+		startedAt time.Time
+		result    DynamicExecutionResult
+		err       error
+	}
+	results := make([]subResult, len(parent.SubSteps))
+	var waitGroup sync.WaitGroup
+	for index, configured := range parent.SubSteps {
+		index, configured := index, configured
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			configured.StepID = fmt.Sprintf("%s.%02d", parent.StepID, index+1)
+			results[index].step = configured
+			results[index].startedAt = time.Now()
+			switch configured.Action {
+			case ActionRetrieve:
+				items, err := r.retrievePlanStep(ctx, configured, rewrite)
+				results[index].result.SearchData = items
+				results[index].err = err
+			case ActionCallTool, ActionRunSkill:
+				if configured.Action == ActionCallTool &&
+					!containsString(toolWhitelist, configured.ToolName) {
+					results[index].err = fmt.Errorf(
+						"并行工具 %s 不允许用于意图 %s",
+						configured.ToolName,
+						route.Secondary,
+					)
+					return
+				}
+				if r.dynamicExecutor == nil {
+					results[index].err = errors.New("动态执行器未配置")
+					return
+				}
+				results[index].result, results[index].err = r.dynamicExecutor.Execute(
+					ctx,
+					DynamicExecutionRequest{
+						Request: request,
+						Intent:  string(route.Secondary),
+						Step:    configured,
+					},
+				)
+			case ActionReflect:
+				results[index].result.Metadata = map[string]any{"reflected": true}
+			default:
+				results[index].err = fmt.Errorf("不支持的并行子动作 %s", configured.Action)
+			}
+		}()
+	}
+	waitGroup.Wait()
+
+	merged := DynamicExecutionResult{
+		Metadata: map[string]any{"parallel_substep_count": len(results)},
+	}
+	for _, current := range results {
+		status := "success"
+		metadata := map[string]any{
+			"parent_step_id": parent.StepID,
+			"reason_code":    current.step.ReasonCode,
+		}
+		if current.err != nil {
+			status = "failed"
+			metadata["error"] = current.err.Error()
+		}
+		r.appendTraceStep(
+			ctx,
+			request.TraceID,
+			current.step,
+			status,
+			current.startedAt,
+			metadata,
+		)
+		if current.err != nil {
+			return DynamicExecutionResult{}, current.err
+		}
+		merged.SearchData = mergeSearchResults(merged.SearchData, current.result.SearchData)
+		merged.Evidences = append(merged.Evidences, current.result.Evidences...)
+		if merged.Answer == "" && current.result.Answer != "" {
+			merged.Answer = current.result.Answer
+		}
+	}
+	return merged, nil
+}
+
+func (r *AgenticRunner) validateOrFallbackNextStep(
+	ctx context.Context,
+	request PlanRequest,
+	candidate PlanStep,
+	recent []PlanStep,
+) *PlanStep {
+	var validationErr error
+	if validator, ok := r.planner.(NextStepValidator); ok {
+		validationErr = validator.ValidateNextStep(ctx, request, candidate, recent)
+	}
+	if validationErr == nil {
+		var similar bool
+		similar, validationErr = r.isSemanticDuplicate(ctx, candidate, recent)
+		if validationErr == nil && similar {
+			validationErr = errors.New("下一步与最近三步语义重复度超过 0.85")
+		}
+	}
+	if validationErr == nil {
+		return &candidate
+	}
+	fallback, err := NewRulePlanner().Plan(ctx, request)
+	if err == nil && fallback != nil {
+		for _, step := range fallback.Steps {
+			duplicate := false
+			for _, previous := range recent {
+				if actionSignature(previous) == actionSignature(step) {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate && step.Action != ActionFinish {
+				step.StepID = fmt.Sprintf("step_%02d", len(recent)+1)
+				step.ReasonCode = "rule_fallback_after_invalid_llm_step:" + validationErr.Error()
+				return &step
+			}
+		}
+	}
+	step := finishStep(len(recent)+1, "invalid_llm_step_fallback_finish")
+	step.Params["validation_error"] = validationErr.Error()
+	return &step
+}
+
+func (r *AgenticRunner) isSemanticDuplicate(
+	ctx context.Context,
+	candidate PlanStep,
+	recent []PlanStep,
+) (bool, error) {
+	if r.stepEmbedder == nil || len(recent) == 0 {
+		return false, nil
+	}
+	start := max(0, len(recent)-3)
+	texts := []string{semanticStepText(candidate)}
+	for _, step := range recent[start:] {
+		texts = append(texts, semanticStepText(step))
+	}
+	vectors, err := r.stepEmbedder.Embed(ctx, texts)
+	if err != nil {
+		return false, err
+	}
+	if len(vectors) != len(texts) {
+		return false, errors.New("步骤语义向量数量不匹配")
+	}
+	for _, vector := range vectors[1:] {
+		if cosineSimilarity(vectors[0], vector) > 0.85 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func semanticStepText(step PlanStep) string {
+	raw, err := json.Marshal(step.Params)
+	if err != nil {
+		raw = []byte("{}")
+	}
+	return strings.Join([]string{
+		string(step.Action), step.ToolName, step.SkillName, step.Query, string(raw),
+	}, "\n")
+}
+
+func cosineSimilarity(left, right []float32) float64 {
+	if len(left) == 0 || len(left) != len(right) {
+		return 0
+	}
+	var dot, leftNorm, rightNorm float64
+	for index := range left {
+		l := float64(left[index])
+		r := float64(right[index])
+		dot += l * r
+		leftNorm += l * l
+		rightNorm += r * r
+	}
+	if leftNorm == 0 || rightNorm == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(leftNorm) * math.Sqrt(rightNorm))
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func tagRetrievalResults(results []rag.SearchResult, route string, hopIndex int) {
+	for index := range results {
+		if results[index].Metadata == nil {
+			results[index].Metadata = map[string]any{}
+		}
+		results[index].Metadata["retrieval_route"] = route
+		if hopIndex > 0 {
+			results[index].Metadata["hop_index"] = hopIndex
+		}
+	}
+}
+
+func expandHopQuery(query string, previous []rag.SearchResult) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return ""
+	}
+	entities := extractHopEntities(previous)
+	if strings.Contains(query, "{previous_entities}") {
+		return strings.ReplaceAll(query, "{previous_entities}", strings.Join(entities, " "))
+	}
+	if len(entities) > 0 {
+		return query + " " + strings.Join(entities, " ")
+	}
+	return query
+}
+
+var accessoryReferencePattern = regexp.MustCompile(`(?i)\b(?:F|DB|RB|C)[0-9]+\b`)
+
+func extractHopEntities(results []rag.SearchResult) []string {
+	var entities []string
+	for index, result := range results {
+		if index >= 5 {
+			break
+		}
+		text := result.Title + "\n" + result.Content
+		entities = append(entities, productModelPattern.FindAllString(text, -1)...)
+		entities = append(entities, accessoryReferencePattern.FindAllString(text, -1)...)
+	}
+	return uniqueStrings(entities)
 }
 
 // buildToolResultsSummary creates a summary string from tool result evidences.
@@ -1032,12 +1472,17 @@ func mergeEvidences(existing []Evidence, searchResults []rag.SearchResult) []Evi
 			continue
 		}
 		seen[item.ChunkID] = struct{}{}
+		metadata := cloneAnyMap(item.Metadata)
+		metadata["dense_score"] = item.DenseScore
+		metadata["keyword_score"] = item.KeywordScore
+		metadata["fusion_score"] = item.FusionScore
+		metadata["rerank_score"] = item.RerankScore
 		result = append(result, Evidence{
 			Kind:     "kb_chunk",
 			SourceID: item.ChunkID,
 			Title:    item.Title,
 			Content:  item.Content,
-			Metadata: item.Metadata,
+			Metadata: metadata,
 		})
 	}
 	for _, item := range existing {
@@ -1054,7 +1499,10 @@ func mergeEvidences(existing []Evidence, searchResults []rag.SearchResult) []Evi
 }
 
 func actionSignature(step PlanStep) string {
-	raw, _ := json.Marshal(step.Params)
+	raw, _ := json.Marshal(map[string]any{
+		"params":    step.Params,
+		"sub_steps": step.SubSteps,
+	})
 	return string(step.Action) + "|" + step.ToolName + "|" + step.SkillName + "|" + step.Query + "|" + string(raw)
 }
 
@@ -1248,6 +1696,17 @@ func intParam(value any) int {
 		return int(typed)
 	default:
 		return 0
+	}
+}
+
+func boolParam(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return false
 	}
 }
 

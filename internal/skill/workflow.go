@@ -21,6 +21,9 @@ import (
 	"CleanCaregent/internal/prompt"
 	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/tool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 const (
@@ -32,10 +35,10 @@ const (
 )
 
 type WorkflowConfig struct {
-	DenseTopK     int
-	KeywordTopK   int
-	RerankTopK    int
-	MinDenseScore float64
+	DenseTopK     int     `mapstructure:"dense_top_k"`
+	KeywordTopK   int     `mapstructure:"keyword_top_k"`
+	RerankTopK    int     `mapstructure:"rerank_top_k"`
+	MinDenseScore float64 `mapstructure:"min_dense_score"`
 }
 
 type Workflow struct {
@@ -48,6 +51,9 @@ type Workflow struct {
 	diagnosisStore  memory.Store
 	diagnosisEngine *diagnosis.Engine
 	compatibility   *compatibility.Matrix
+	docTypes        []string
+	nextSkill       string
+	nextSkillArgs   map[string]any
 }
 
 var accessoryModelPattern = regexp.MustCompile(`(?i)\b(?:F|DB|RB)[0-9]{2,}[A-Z0-9-]*\b`)
@@ -149,7 +155,17 @@ func (s *Workflow) CanHandle(intentType intent.Type) bool {
 }
 
 func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
-	docTypes := skillDocTypes(s.name)
+	ctx, span := otel.Tracer("clean-care-agent/skill").Start(ctx, "skill."+s.name)
+	span.SetAttributes(
+		attribute.String("skill.name", s.name),
+		attribute.String("agent.trace_id", request.TraceID),
+		attribute.String("intent.secondary", string(request.Intent.Secondary)),
+	)
+	defer span.End()
+	docTypes := s.docTypes
+	if len(docTypes) == 0 {
+		docTypes = skillDocTypes(s.name)
+	}
 	models := entityStrings(request.Intent.Entities["models"])
 	if s.name == FaultDiagnosisSkill && len(models) == 0 && s.diagnosisStore != nil {
 		if state, err := s.diagnosisStore.LoadDiagnosisState(ctx, request.ConversationID); err == nil &&
@@ -161,8 +177,11 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 	}
 	searchData, err := s.retrieveInitial(ctx, request, models, docTypes)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("run %s retrieval: %w", s.name, err)
 	}
+	span.SetAttributes(attribute.Int("skill.evidence_count", len(searchData)))
 
 	evidences := searchEvidences(searchData)
 	if s.name == FaultDiagnosisSkill {
@@ -315,8 +334,9 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 
 	answer := deterministicAnswer
 	if answer == "" {
+		generateCtx, generateSpan := otel.Tracer("clean-care-agent/skill").Start(ctx, "skill.generate")
 		answer, err = s.generator.GenerateWithScenario(
-			ctx,
+			generateCtx,
 			generationScenario(s.name),
 			request.Query,
 			searchData,
@@ -325,8 +345,13 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 			strings.Join(models, ", "),
 		)
 		if err != nil {
+			generateSpan.RecordError(err)
+			generateSpan.SetStatus(codes.Error, err.Error())
+			generateSpan.End()
 			return nil, fmt.Errorf("generate %s answer: %w", s.name, err)
 		}
+		generateSpan.SetAttributes(attribute.Int("skill.generation_evidence_count", len(searchData)))
+		generateSpan.End()
 	}
 	if answer == "" {
 		if len(dynamicNotes) > 0 {
@@ -335,15 +360,18 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 			answer = "当前证据不足，请补充具体型号、订单号或故障现象。"
 		}
 	}
-	return &Result{
-		Status:      "success",
-		AnswerDraft: answer,
-		Evidences:   evidences,
+	result := &Result{
+		Status:        "success",
+		AnswerDraft:   answer,
+		Evidences:     evidences,
+		NextSkill:     s.nextSkill,
+		NextSkillArgs: cloneAnyMap(s.nextSkillArgs),
 		Metadata: map[string]any{
 			"skill":              s.name,
 			"knowledge_evidence": len(searchData),
 		},
-	}, nil
+	}
+	return result, nil
 }
 
 func (s *Workflow) retrieveInitial(
@@ -352,6 +380,12 @@ func (s *Workflow) retrieveInitial(
 	models []string,
 	docTypes []string,
 ) ([]rag.SearchResult, error) {
+	ctx, span := otel.Tracer("clean-care-agent/skill").Start(ctx, "skill.retrieve")
+	span.SetAttributes(
+		attribute.String("skill.name", s.name),
+		attribute.Int("skill.route_count", 1),
+	)
+	defer span.End()
 	type route struct {
 		query    string
 		models   []string
@@ -387,6 +421,7 @@ func (s *Workflow) retrieveInitial(
 			},
 		}
 	}
+	span.SetAttributes(attribute.Int("skill.route_count", len(routes)))
 
 	results := make([][]rag.SearchResult, len(routes))
 	errs := make([]error, len(routes))
@@ -427,8 +462,16 @@ func (s *Workflow) retrieveInitial(
 		merged = mergeSearchData(merged, results[index])
 	}
 	if failedCount == len(routes) {
+		if lastErr != nil {
+			span.RecordError(lastErr)
+			span.SetStatus(codes.Error, lastErr.Error())
+		}
 		return nil, lastErr
 	}
+	span.SetAttributes(
+		attribute.Int("skill.retrieval_result_count", len(merged)),
+		attribute.Int("skill.retrieval_failed_routes", failedCount),
+	)
 	return merged, nil
 }
 
@@ -632,7 +675,13 @@ func (s *Workflow) callTool(
 	if s.tools == nil {
 		return tool.Result{}, fmt.Errorf("tool executor is unavailable")
 	}
-	return s.tools.Execute(ctx, tool.Call{
+	ctx, span := otel.Tracer("clean-care-agent/skill").Start(ctx, "skill.tool")
+	span.SetAttributes(
+		attribute.String("skill.name", s.name),
+		attribute.String("tool.name", name),
+	)
+	defer span.End()
+	result, err := s.tools.Execute(ctx, tool.Call{
 		TraceID:        request.TraceID,
 		CallID:         id.New("call"),
 		UserID:         request.UserID,
@@ -640,6 +689,11 @@ func (s *Workflow) callTool(
 		Name:           name,
 		Arguments:      arguments,
 	}, []string{name})
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	return result, err
 }
 
 func skillDocTypes(name string) []string {
@@ -675,13 +729,26 @@ func generationScenario(name string) prompt.Scenario {
 func searchEvidences(items []rag.SearchResult) []agent.Evidence {
 	result := make([]agent.Evidence, 0, len(items))
 	for _, item := range items {
+		metadata := cloneAnyMap(item.Metadata)
+		metadata["dense_score"] = item.DenseScore
+		metadata["keyword_score"] = item.KeywordScore
+		metadata["fusion_score"] = item.FusionScore
+		metadata["rerank_score"] = item.RerankScore
 		result = append(result, agent.Evidence{
 			Kind:     "kb_chunk",
 			SourceID: item.ChunkID,
 			Title:    item.Title,
 			Content:  item.Content,
-			Metadata: item.Metadata,
+			Metadata: metadata,
 		})
+	}
+	return result
+}
+
+func cloneAnyMap(source map[string]any) map[string]any {
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
 	}
 	return result
 }

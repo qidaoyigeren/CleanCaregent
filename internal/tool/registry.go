@@ -50,6 +50,7 @@ func (r *MemoryRegistry) ListAllowed(names []string) []Definition {
 			Name:         name,
 			Description:  value.Description(),
 			ParamsSchema: value.ParamsSchema(),
+			SideEffect:   EffectOf(value),
 		})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })

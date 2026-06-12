@@ -121,6 +121,9 @@ func (r *Runner) executeRun(
 	metricTotals := map[string]float64{}
 	metricCounts := map[string]int{}
 	failureTypes := map[string]int{}
+	intentGroups := map[string]*groupSummary{}
+	difficultyGroups := map[string]*groupSummary{}
+	pathGroups := map[string]*groupSummary{}
 	var latencies []int64
 	totalTokens, totalSteps, passed := 0, 0, 0
 	for _, evalCase := range cases {
@@ -140,6 +143,9 @@ func (r *Runner) executeRun(
 		} else {
 			failureTypes[caseResult.ErrorType]++
 		}
+		recordGroup(intentGroups, evalCase.Intent, caseResult.Passed)
+		recordGroup(difficultyGroups, evalCase.Difficulty, caseResult.Passed)
+		recordGroup(pathGroups, evaluationPath(evalCase.Tags), caseResult.Passed)
 		latencies = append(latencies, caseResult.LatencyMS)
 		totalTokens += caseResult.TokenCount
 		if steps := metricValue(caseResult.Metrics, "react_steps"); steps >= 0 {
@@ -161,6 +167,9 @@ func (r *Runner) executeRun(
 		"average_tokens":      ratio(totalTokens, len(cases)),
 		"average_react_steps": ratio(totalSteps, len(cases)),
 		"dataset_full_size":   len(DefaultCases()),
+		"by_intent":           renderGroups(intentGroups),
+		"by_difficulty":       renderGroups(difficultyGroups),
+		"by_path":             renderGroups(pathGroups),
 	}
 	finishedAt := time.Now().UTC()
 	if err := r.store.FinishRun(ctx, run.RunNo, "completed", summary, finishedAt); err != nil {
@@ -170,6 +179,46 @@ func (r *Runner) executeRun(
 	run.FinishedAt = &finishedAt
 	run.Summary = summary
 	return run, nil
+}
+
+type groupSummary struct {
+	Total  int
+	Passed int
+}
+
+func recordGroup(groups map[string]*groupSummary, key string, passed bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		key = "unknown"
+	}
+	if groups[key] == nil {
+		groups[key] = &groupSummary{}
+	}
+	groups[key].Total++
+	if passed {
+		groups[key].Passed++
+	}
+}
+
+func renderGroups(groups map[string]*groupSummary) map[string]map[string]any {
+	rendered := make(map[string]map[string]any, len(groups))
+	for key, group := range groups {
+		rendered[key] = map[string]any{
+			"total":     group.Total,
+			"passed":    group.Passed,
+			"pass_rate": ratio(group.Passed, group.Total),
+		}
+	}
+	return rendered
+}
+
+func evaluationPath(tags []string) string {
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, "eval_group:") {
+			return strings.TrimPrefix(tag, "eval_group:")
+		}
+	}
+	return "unknown"
 }
 
 func (r *Runner) runCase(ctx context.Context, userID string, evalCase Case) CaseResult {
@@ -205,6 +254,32 @@ func (r *Runner) runCase(ctx context.Context, userID string, evalCase Case) Case
 	for _, call := range traceRecord.ToolCalls {
 		output.Tools = append(output.Tools, call.ToolName)
 		output.ToolParams[call.ToolName] = call.Arguments
+		output.ToolResults = append(output.ToolResults, call.ResultSummary)
+		if call.Status != "failed" && call.ErrorCode == "" {
+			output.SuccessfulToolCalls++
+		}
+	}
+	for _, step := range traceRecord.Steps {
+		switch {
+		case strings.HasPrefix(step.StepID, "step_reflection_recovery_"):
+			output.ReflectionAttempts++
+			if step.Status != "failed" && step.Status != "blocked" {
+				output.ReflectionSucceeded = true
+			}
+		case strings.HasPrefix(step.StepID, "revision_"):
+			output.PlanRevisions++
+			if step.Status != "failed" && step.Status != "blocked" {
+				output.ReflectionSucceeded = true
+			}
+		case step.StepID == "step_grounding_review":
+			action, _ := step.Metadata["action"].(string)
+			if action != "" && action != "accept" {
+				output.ReflectionAttempts++
+				if step.Status != "failed" && step.Status != "blocked" {
+					output.ReflectionSucceeded = true
+				}
+			}
+		}
 	}
 	metrics, err := r.evaluator.Evaluate(ctx, evalCase, output)
 	if err != nil {
@@ -362,10 +437,21 @@ func classifyBadCase(metricName string) string {
 		return "tool_parameter_error"
 	case "answer_faithfulness":
 		return "hallucination_or_ungrounded"
-	case "answer_correctness", "multi_step_completion":
+	case "answer_grounding_rate":
+		return "hallucination_or_ungrounded"
+	case "answer_correctness", "multi_step_completion", "multi_step_completion_rate":
 		return "answer_incomplete_or_incorrect"
-	case "clarify_reject_accuracy":
+	case "self_correction_success_rate":
+		return "self_correction_failed"
+	case "clarify_reject_accuracy", "clarify_accuracy", "reject_accuracy",
+		"false_rejection_rate", "false_acceptance_rate":
 		return "clarification_or_rejection_error"
+	case "safety_compliance", "safety_violation_rate":
+		return "safety_violation"
+	case "tool_result_utilization":
+		return "tool_result_not_used"
+	case "efficiency_score":
+		return "inefficient_execution"
 	default:
 		return "metric:" + metricName
 	}

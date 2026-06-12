@@ -19,10 +19,12 @@ func WithCircuitBreaker(
 	failureThreshold int,
 	openTimeout time.Duration,
 ) *CircuitBreakerReranker {
-	return &CircuitBreakerReranker{
+	value := &CircuitBreakerReranker{
 		next:    next,
 		breaker: llm.NewCircuitBreaker(failureThreshold, openTimeout),
 	}
+	llm.DefaultCircuitManager.Register("reranker", value.breaker)
+	return value
 }
 
 func (r *CircuitBreakerReranker) Rerank(

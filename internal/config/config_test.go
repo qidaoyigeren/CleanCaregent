@@ -103,7 +103,7 @@ func TestLoadProvidesDocumentChunkProfiles(t *testing.T) {
 	if len(cfg.RAG.ChunkProfiles) != 9 {
 		t.Fatalf("chunk profile count = %d", len(cfg.RAG.ChunkProfiles))
 	}
-	if profile := cfg.RAG.ChunkProfiles["troubleshooting"]; profile.MaxChunkRunes != 900 || profile.ChunkOverlap != 0 {
+	if profile := cfg.RAG.ChunkProfiles["troubleshooting"]; profile.MaxChunkRunes != 600 || profile.ChunkOverlap != 0 {
 		t.Fatalf("troubleshooting profile = %#v", profile)
 	}
 }

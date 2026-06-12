@@ -17,11 +17,13 @@ type Request struct {
 }
 
 type Result struct {
-	Status       string
-	AnswerDraft  string
-	Evidences    []agent.Evidence
-	NextQuestion string
-	Metadata     map[string]any
+	Status        string
+	AnswerDraft   string
+	Evidences     []agent.Evidence
+	NextQuestion  string
+	NextSkill     string
+	NextSkillArgs map[string]any
+	Metadata      map[string]any
 }
 
 type Skill interface {

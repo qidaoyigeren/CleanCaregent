@@ -7,8 +7,10 @@ import (
 	"CleanCaregent/internal/eval"
 	"CleanCaregent/internal/health"
 	"CleanCaregent/internal/ingest"
+	"CleanCaregent/internal/llm"
 	"CleanCaregent/internal/middleware"
 	"CleanCaregent/internal/observability"
+	"CleanCaregent/internal/prompt"
 	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/service"
 	"CleanCaregent/internal/trace"
@@ -33,6 +35,9 @@ type Dependencies struct {
 	EvalStore           eval.Store
 	AgentMetrics        *observability.AgentMetrics
 	IngestPublisher     ingest.Publisher
+	CircuitManager      *llm.CircuitManager
+	PromptRegistry      *prompt.Registry
+	PromptEvaluator     prompt.VersionEvaluator
 }
 
 func NewRouter(deps Dependencies) http.Handler {
@@ -57,13 +62,15 @@ func NewRouter(deps Dependencies) http.Handler {
 		rateLimiter = middleware.NewRedisRateLimiter(deps.Config.RateLimit, deps.RedisClient)
 	}
 	v1 := router.Group("/api/v1")
-	v1.Use(rateLimiter.Middleware(), middleware.Auth(deps.Config.Auth))
+	v1.Use(rateLimiter.Middleware())
 
 	conversations := NewConversationHandler(deps.ConversationService)
-	v1.POST("/conversations", conversations.Create)
-	v1.GET("/conversations/:conversation_id/messages", conversations.ListMessages)
-	v1.POST("/conversations/:conversation_id/messages", conversations.Ask)
-	v1.POST("/conversations/:conversation_id/messages:stream", conversations.Stream)
+	userAPI := v1.Group("")
+	userAPI.Use(middleware.JWTAuth(deps.Config.Auth))
+	userAPI.POST("/conversations", conversations.Create)
+	userAPI.GET("/conversations/:conversation_id/messages", conversations.ListMessages)
+	userAPI.POST("/conversations/:conversation_id/messages", conversations.Ask)
+	userAPI.POST("/conversations/:conversation_id/messages:stream", conversations.Stream)
 
 	knowledge := NewKnowledgeHandler(
 		deps.KnowledgeService,
@@ -74,26 +81,39 @@ func NewRouter(deps Dependencies) http.Handler {
 		deps.Config.RAG.MinDenseScore,
 		WithKnowledgeIngestPublisher(deps.IngestPublisher),
 	)
-	v1.POST("/admin/kb/documents", knowledge.Ingest)
-	v1.POST("/admin/kb/search", knowledge.Search)
+	adminAPI := v1.Group("/admin")
+	adminAPI.Use(middleware.AdminAuth(deps.Config.Auth))
+	adminAPI.POST("/kb/documents", knowledge.Ingest)
+	adminAPI.POST("/kb/upload", knowledge.Upload)
+	adminAPI.POST("/kb/search", knowledge.Search)
 
 	traces := NewTraceHandler(deps.TraceStore)
-	v1.GET("/admin/traces/:trace_id", traces.Get)
+	adminAPI.GET("/traces/:trace_id", traces.Get)
 
 	business := NewBusinessHandler(deps.BusinessService)
-	v1.GET("/products", business.ListProducts)
-	v1.GET("/products/:product_code", business.GetProduct)
-	v1.GET("/orders/:order_no", business.GetOrder)
-	v1.POST("/after-sales/tickets", business.CreateAfterSales)
+	userAPI.GET("/products", business.ListProducts)
+	userAPI.GET("/products/:product_code", business.GetProduct)
+	userAPI.GET("/orders/:order_no", business.GetOrder)
+	userAPI.POST("/after-sales/tickets", business.CreateAfterSales)
 
 	evaluations := NewEvalHandler(deps.EvalRunner, deps.EvalComparison, deps.EvalStore)
-	v1.POST("/admin/eval/runs", evaluations.Run)
-	v1.POST("/admin/eval/comparisons", evaluations.Compare)
-	v1.GET("/admin/eval/comparisons/:comparison_id", evaluations.GetComparison)
-	v1.GET("/admin/eval/runs/:run_no", evaluations.Get)
+	adminAPI.POST("/eval/runs", evaluations.Run)
+	adminAPI.POST("/eval/comparisons", evaluations.Compare)
+	adminAPI.GET("/eval/comparisons/:comparison_id", evaluations.GetComparison)
+	adminAPI.GET("/eval/runs/:run_no", evaluations.Get)
 
 	metrics := NewMetricsHandler(deps.AgentMetrics)
-	v1.GET("/admin/metrics/agent", metrics.Agent)
+	adminAPI.GET("/metrics/agent", metrics.Agent)
+	adminAPI.GET("/metrics/prometheus", metrics.Prometheus)
+
+	circuits := NewCircuitHandler(deps.CircuitManager)
+	adminAPI.GET("/circuit-breakers/status", circuits.Status)
+	adminAPI.POST("/circuit-breakers/reset", circuits.Reset)
+
+	prompts := NewPromptHandler(deps.PromptRegistry, deps.PromptEvaluator)
+	adminAPI.GET("/prompts", prompts.List)
+	adminAPI.POST("/prompts/:scenario/activate", prompts.Activate)
+	adminAPI.POST("/prompts/eval", prompts.Compare)
 
 	return router
 }

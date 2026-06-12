@@ -41,7 +41,8 @@ func NewCreateAfterSalesTicket(repository repository.BusinessRepository) *Create
 	return &CreateAfterSalesTicket{repository: repository}
 }
 
-func (t *PriceQuery) Name() string { return "price_query" }
+func (t *PriceQuery) Name() string                { return "price_query" }
+func (t *PriceQuery) SideEffect() tool.SideEffect { return tool.SideEffectReadOnly }
 func (t *PriceQuery) Description() string {
 	return "查询商品 SKU 的 mock 实时价格及当前用户可用优惠券"
 }
@@ -57,7 +58,8 @@ func (t *PriceQuery) Execute(ctx context.Context, call tool.Call) (tool.Result, 
 	return result(call, map[string]any{"items": items, "as_of": time.Now().UTC()}), err
 }
 
-func (t *InventoryCheck) Name() string { return "inventory_check" }
+func (t *InventoryCheck) Name() string                { return "inventory_check" }
+func (t *InventoryCheck) SideEffect() tool.SideEffect { return tool.SideEffectReadOnly }
 func (t *InventoryCheck) Description() string {
 	return "查询商品 SKU 的 mock 可售库存和库存更新时间"
 }
@@ -73,7 +75,8 @@ func (t *InventoryCheck) Execute(ctx context.Context, call tool.Call) (tool.Resu
 	return result(call, map[string]any{"items": items}), err
 }
 
-func (t *UserPurchaseHistory) Name() string { return "user_purchase_history" }
+func (t *UserPurchaseHistory) Name() string                { return "user_purchase_history" }
+func (t *UserPurchaseHistory) SideEffect() tool.SideEffect { return tool.SideEffectReadOnly }
 func (t *UserPurchaseHistory) Description() string {
 	return "按用户、品类、型号和时间范围查询历史购买记录"
 }
@@ -100,7 +103,8 @@ func (t *UserPurchaseHistory) Execute(ctx context.Context, call tool.Call) (tool
 	return result(call, map[string]any{"items": items}), err
 }
 
-func (t *OrderLookup) Name() string { return "order_lookup" }
+func (t *OrderLookup) Name() string                { return "order_lookup" }
+func (t *OrderLookup) SideEffect() tool.SideEffect { return tool.SideEffectReadOnly }
 func (t *OrderLookup) Description() string {
 	return "根据当前用户和订单号查询订单状态、购买商品及时间"
 }
@@ -116,7 +120,8 @@ func (t *OrderLookup) Execute(ctx context.Context, call tool.Call) (tool.Result,
 	return result(call, order), err
 }
 
-func (t *WarrantyCheck) Name() string { return "warranty_check" }
+func (t *WarrantyCheck) Name() string                { return "warranty_check" }
+func (t *WarrantyCheck) SideEffect() tool.SideEffect { return tool.SideEffectReadOnly }
 func (t *WarrantyCheck) Description() string {
 	return "根据订单签收或支付时间及订单项保修月数判断是否在保"
 }
@@ -139,6 +144,9 @@ func (t *WarrantyCheck) Execute(ctx context.Context, call tool.Call) (tool.Resul
 }
 
 func (t *CreateAfterSalesTicket) Name() string { return "create_after_sales_ticket" }
+func (t *CreateAfterSalesTicket) SideEffect() tool.SideEffect {
+	return tool.SideEffectStateChange
+}
 func (t *CreateAfterSalesTicket) Description() string {
 	return "在用户明确确认后，为指定订单创建幂等的售后工单"
 }

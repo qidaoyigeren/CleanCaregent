@@ -7,5 +7,7 @@ bin/
 dist/
 coverage.out
 *.log
+*.exe
 configs/config.local.yaml
-
+clean-care-frontend/node_modules/
+clean-care-frontend/dist/

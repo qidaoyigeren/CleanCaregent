@@ -26,10 +26,19 @@ type Result struct {
 	FinishedAt time.Time
 }
 
+type SideEffect string
+
+const (
+	SideEffectNone        SideEffect = "none"
+	SideEffectReadOnly    SideEffect = "read_only"
+	SideEffectStateChange SideEffect = "state_change"
+)
+
 type Definition struct {
 	Name         string
 	Description  string
 	ParamsSchema json.RawMessage
+	SideEffect   SideEffect
 }
 
 type Tool interface {
@@ -37,6 +46,22 @@ type Tool interface {
 	Description() string
 	ParamsSchema() json.RawMessage
 	Execute(ctx context.Context, call Call) (Result, error)
+}
+
+// SideEffectTool lets tools declare mutation semantics without changing the
+// existing Tool interface implemented by external integrations.
+type SideEffectTool interface {
+	SideEffect() SideEffect
+}
+
+func EffectOf(value Tool) SideEffect {
+	if declared, ok := value.(SideEffectTool); ok {
+		switch declared.SideEffect() {
+		case SideEffectNone, SideEffectReadOnly, SideEffectStateChange:
+			return declared.SideEffect()
+		}
+	}
+	return SideEffectReadOnly
 }
 
 type Registry interface {

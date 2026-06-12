@@ -67,6 +67,15 @@ func (r *GroundingReflector) Review(
 
 	evidenceText := normalizeGroundingText(query + "\n" + joinEvidence(evidences))
 	toolEvidence, toolFailure := evidenceKinds(evidences)
+	if low, scores := lowEvidenceRelevance(evidences); low {
+		result.LowConfidence = true
+		result.Action = "rerun_retrieval"
+		result.RerunQuery = query
+		result.Warnings = append(
+			result.Warnings,
+			fmt.Sprintf("low_evidence_relevance_top3:%v", scores),
+		)
+	}
 	if requiresDynamicEvidence(intentType) && !toolEvidence {
 		result.LowConfidence = true
 		result.Warnings = append(result.Warnings, "missing_dynamic_tool_evidence")
@@ -111,6 +120,47 @@ func (r *GroundingReflector) Review(
 		result.ShouldTransfer = true
 	}
 	return result
+}
+
+func lowEvidenceRelevance(evidences []Evidence) (bool, []float64) {
+	scores := make([]float64, 0, 3)
+	for _, evidence := range evidences {
+		if evidence.Kind != "kb_chunk" || evidence.Metadata == nil {
+			continue
+		}
+		score, ok := numericMetadata(evidence.Metadata["rerank_score"])
+		if !ok {
+			continue
+		}
+		scores = append(scores, score)
+		if len(scores) == 3 {
+			break
+		}
+	}
+	if len(scores) == 0 {
+		return false, nil
+	}
+	for _, score := range scores {
+		if score >= 0.3 {
+			return false, scores
+		}
+	}
+	return true, scores
+}
+
+func numericMetadata(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
 }
 
 func numericClaimGrounded(

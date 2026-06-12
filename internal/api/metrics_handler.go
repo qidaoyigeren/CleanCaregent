@@ -24,3 +24,12 @@ func (h *MetricsHandler) Agent(c *gin.Context) {
 	}
 	response.OK(c, h.agent.Snapshot())
 }
+
+// Prometheus exposes the in-process metrics in Prometheus text format.
+func (h *MetricsHandler) Prometheus(c *gin.Context) {
+	c.Data(
+		http.StatusOK,
+		"text/plain; version=0.0.4; charset=utf-8",
+		[]byte(observability.DefaultPrometheusMetrics.Render()),
+	)
+}

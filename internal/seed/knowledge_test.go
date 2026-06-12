@@ -7,8 +7,8 @@ import (
 
 func TestDefaultKnowledgeDocuments(t *testing.T) {
 	documents := DefaultKnowledgeDocuments()
-	if len(documents) != 62 {
-		t.Fatalf("document count = %d, want 62", len(documents))
+	if len(documents) != 143 {
+		t.Fatalf("document count = %d, want 143", len(documents))
 	}
 	counts := map[string]int{}
 	ids := map[string]struct{}{}
@@ -21,6 +21,9 @@ func TestDefaultKnowledgeDocuments(t *testing.T) {
 		ids[document.DocID] = struct{}{}
 		if !strings.HasPrefix(document.Source, "mock://") {
 			t.Fatalf("%s source = %q, want mock:// prefix", document.DocID, document.Source)
+		}
+		if strings.TrimSpace(anyString(document.Metadata["structural_difficulty"])) == "" {
+			t.Fatalf("%s is missing structural_difficulty metadata", document.DocID)
 		}
 		if document.DocType == "product_parameter" {
 			model, _ := document.Metadata["model"].(string)
@@ -55,14 +58,14 @@ func TestDefaultKnowledgeDocuments(t *testing.T) {
 		}
 	}
 	expected := map[string]int{
-		"product_detail":          10,
+		"product_detail":          50,
 		"product_parameter":       10,
 		"product_comparison":      5,
-		"purchase_guide":          5,
+		"purchase_guide":          15,
 		"accessory_compatibility": 5,
-		"user_manual":             8,
-		"troubleshooting":         6,
-		"after_sales_policy":      5,
+		"user_manual":             25,
+		"troubleshooting":         10,
+		"after_sales_policy":      15,
 		"faq":                     8,
 	}
 	for docType, want := range expected {
@@ -71,8 +74,13 @@ func TestDefaultKnowledgeDocuments(t *testing.T) {
 		}
 	}
 	for _, product := range defaultProducts() {
-		if rows := productParameterRows[product.Model]; rows < 10 {
-			t.Fatalf("%s parameter rows = %d, want at least 10", product.Model, rows)
+		if rows := productParameterRows[product.Model]; rows < 15 {
+			t.Fatalf("%s parameter rows = %d, want at least 15", product.Model, rows)
 		}
 	}
+}
+
+func anyString(value any) string {
+	text, _ := value.(string)
+	return text
 }

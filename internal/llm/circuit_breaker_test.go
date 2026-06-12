@@ -42,4 +42,21 @@ func TestCircuitBreakerTransitionsClosedOpenHalfOpenClosed(t *testing.T) {
 	if breaker.State() != CircuitClosed {
 		t.Fatalf("state = %s, want closed", breaker.State())
 	}
+	if breaker.Snapshot().OpenTimeout != 2*time.Minute {
+		t.Fatalf("adaptive timeout = %s, want 2m", breaker.Snapshot().OpenTimeout)
+	}
+}
+
+func TestCircuitManagerStatusAndReset(t *testing.T) {
+	manager := NewCircuitManager()
+	breaker := NewCircuitBreaker(1, time.Minute)
+	manager.Register("chat:test", breaker)
+	breaker.Record(false)
+	statuses := manager.Status()
+	if len(statuses) != 1 || statuses[0].State != CircuitOpen {
+		t.Fatalf("statuses = %#v", statuses)
+	}
+	if reset := manager.ResetAll(); reset != 1 || breaker.State() != CircuitClosed {
+		t.Fatalf("reset = %d state = %s", reset, breaker.State())
+	}
 }

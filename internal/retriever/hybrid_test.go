@@ -129,6 +129,50 @@ func TestBM25CandidatesRewardRareExactTerm(t *testing.T) {
 	}
 }
 
+func TestReciprocalRankFusionUsesDocumentSpecificConstantsAndNormalization(t *testing.T) {
+	results := reciprocalRankFusion(
+		[]rag.SearchResult{
+			{ChunkID: "parameter", Metadata: map[string]any{"doc_type": "product_parameter"}},
+			{ChunkID: "guide", Metadata: map[string]any{"doc_type": "purchase_guide"}},
+		},
+		nil,
+	)
+	if len(results) != 2 {
+		t.Fatalf("results = %#v", results)
+	}
+	if results[0].ChunkID != "parameter" {
+		t.Fatalf("first result = %s, want parameter document", results[0].ChunkID)
+	}
+	if results[0].FusionScore != 1 {
+		t.Fatalf("top fusion score = %f, want normalized 1", results[0].FusionScore)
+	}
+	if results[1].FusionScore <= 0 || results[1].FusionScore >= 1 {
+		t.Fatalf("guide fusion score = %f, want (0,1)", results[1].FusionScore)
+	}
+}
+
+func TestRetrievalQualityChecksDocumentTypeAndModelCoverage(t *testing.T) {
+	request := rag.SearchRequest{
+		Filter: rag.MetadataFilter{
+			DocTypes: []string{"product_parameter"},
+			Models:   []string{"T20", "X20 Pro"},
+		},
+	}
+	results := []rag.SearchResult{
+		{RerankScore: 0.8, Metadata: map[string]any{"doc_type": "purchase_guide", "model": "T20"}},
+		{RerankScore: 0.7, Metadata: map[string]any{"doc_type": "product_parameter"}},
+		{RerankScore: 0.6, Metadata: map[string]any{"doc_type": "faq", "model": "X20 Pro"}},
+		{RerankScore: 0.6, Metadata: map[string]any{"doc_type": "faq", "model": "X20 Pro"}},
+	}
+	issues := retrievalQualityIssues(request, results)
+	if !stringInSlice("doc_type_fit_below_30_percent", issues) {
+		t.Fatalf("issues = %#v, want doc type issue", issues)
+	}
+	if !stringInSlice("model_coverage_below_2:T20", issues) {
+		t.Fatalf("issues = %#v, want T20 coverage issue", issues)
+	}
+}
+
 type hybridRepository struct {
 	active  []model.KnowledgeChunk
 	keyword []model.KnowledgeChunk
@@ -160,6 +204,7 @@ func (r *hybridRepository) FindActiveChunks(context.Context, []string, time.Time
 type hybridVectorStore struct {
 	request vectorstore.SearchRequest
 	results []vectorstore.SearchResult
+	calls   int
 }
 
 func (s *hybridVectorStore) Upsert(context.Context, []vectorstore.Point) error {
@@ -171,7 +216,42 @@ func (s *hybridVectorStore) Search(
 	request vectorstore.SearchRequest,
 ) ([]vectorstore.SearchResult, error) {
 	s.request = request
+	s.calls++
 	return s.results, nil
+}
+
+func TestHybridRetriesWithoutFilterForLowQualityResults(t *testing.T) {
+	repo := &hybridRepository{
+		active: []model.KnowledgeChunk{{
+			ChunkID: "dense",
+			DocID:   "doc1",
+			Title:   "无关标题",
+			Content: "完全不同的内容",
+		}},
+	}
+	vector := &hybridVectorStore{results: []vectorstore.SearchResult{{
+		Score:   0.1,
+		Payload: map[string]any{"chunk_id": "dense"},
+	}}}
+	value := NewHybrid(embedding.NewLocalHash(16), vector, repo, reranker.NewLocalLexical())
+	results, err := value.Search(context.Background(), rag.SearchRequest{
+		Query:       "T20 吸力",
+		Mode:        rag.SearchHybrid,
+		Filter:      rag.MetadataFilter{DocTypes: []string{"product_parameter"}},
+		DenseTopK:   5,
+		KeywordTopK: 5,
+		RerankTopK:  5,
+		NeedRerank:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vector.calls != 2 {
+		t.Fatalf("vector search calls = %d, want 2", vector.calls)
+	}
+	if len(results) == 0 || results[0].Metadata["retry_without_filter"] != true {
+		t.Fatalf("results = %#v, want retry metadata", results)
+	}
 }
 
 func (s *hybridVectorStore) Delete(context.Context, []string) error {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"CleanCaregent/internal/embedding"
 	"CleanCaregent/internal/model"
@@ -77,6 +78,9 @@ func (s *KnowledgeService) Ingest(ctx context.Context, request IngestDocumentReq
 	}
 
 	rawChunks := s.chunker.Split(request.DocType, request.Title, request.Content)
+	if contextual, ok := s.chunker.(rag.ContextChunker); ok {
+		rawChunks = contextual.SplitContext(ctx, request.DocType, request.Title, request.Content)
+	}
 	if len(rawChunks) == 0 {
 		return IngestDocumentResult{}, fmt.Errorf("%w: document produced no chunks", ErrInvalidKnowledgeDocument)
 	}
@@ -230,11 +234,41 @@ func validateIngestRequest(request IngestDocumentRequest) error {
 	if len([]rune(request.Content)) > 2_000_000 {
 		return fmt.Errorf("%w: document content is too large", ErrInvalidKnowledgeDocument)
 	}
+	if err := validateContentQuality(request.Content); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidKnowledgeDocument, err)
+	}
 	if !allowedDocType(request.DocType) {
 		return fmt.Errorf("%w: unsupported doc_type %q", ErrInvalidKnowledgeDocument, request.DocType)
 	}
 	if request.EffectiveTime != nil && request.ExpireTime != nil && !request.ExpireTime.After(*request.EffectiveTime) {
 		return fmt.Errorf("%w: expire_time must be after effective_time", ErrInvalidKnowledgeDocument)
+	}
+	return nil
+}
+
+func validateContentQuality(content string) error {
+	var (
+		effective []rune
+		counts    = make(map[rune]int)
+	)
+	for _, current := range []rune(content) {
+		if unicode.IsSpace(current) || unicode.IsPunct(current) || unicode.IsSymbol(current) {
+			continue
+		}
+		effective = append(effective, current)
+		counts[current]++
+	}
+	if len(effective) < 50 {
+		return errors.New("文档内容过短，有效正文必须不少于 50 个字符")
+	}
+	maxCount := 0
+	for _, count := range counts {
+		if count > maxCount {
+			maxCount = count
+		}
+	}
+	if len(effective) > 0 && float64(maxCount)/float64(len(effective)) > 0.8 {
+		return errors.New("文档包含超过 80% 的重复字符")
 	}
 	return nil
 }

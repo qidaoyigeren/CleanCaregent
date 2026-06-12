@@ -4,30 +4,42 @@ import "testing"
 
 func TestDefaultCasesDistribution(t *testing.T) {
 	cases := DefaultCases()
-	if len(cases) != 100 {
-		t.Fatalf("case count = %d, want 100", len(cases))
+	if len(cases) != 200 {
+		t.Fatalf("case count = %d, want 200", len(cases))
 	}
-	paths := map[string]int{}
+	groups := map[string]int{}
+	difficulties := map[string]int{}
 	ids := map[string]struct{}{}
 	for _, item := range cases {
 		if _, exists := ids[item.CaseID]; exists {
 			t.Fatalf("duplicate case id %s", item.CaseID)
 		}
 		ids[item.CaseID] = struct{}{}
-		if len(item.Tags) > 0 {
-			paths[item.Tags[0]]++
+		difficulties[item.Difficulty]++
+		for _, tag := range item.Tags {
+			if len(tag) > len("eval_group:") && tag[:len("eval_group:")] == "eval_group:" {
+				groups[tag]++
+			}
+		}
+		if item.CaseID >= "EVAL-101" && len(item.Tags) < 4 {
+			t.Fatalf("%s tags = %d, want at least 4 including eval group", item.CaseID, len(item.Tags))
 		}
 	}
 	expected := map[string]int{
-		"kb_single":            45,
-		"kb_multi":             20,
-		"kb_tool":              20,
-		"diagnosis_multi_turn": 10,
-		"reject_clarify":       5,
+		"eval_group:pure_kb":      100,
+		"eval_group:pure_tool":    40,
+		"eval_group:kb_tool":      40,
+		"eval_group:reject_guide": 20,
 	}
-	for path, want := range expected {
-		if paths[path] != want {
-			t.Fatalf("%s count = %d, want %d", path, paths[path], want)
+	for group, want := range expected {
+		if groups[group] != want {
+			t.Fatalf("%s count = %d, want %d", group, groups[group], want)
+		}
+	}
+	wantDifficulties := map[string]int{"simple": 80, "medium": 70, "hard": 50}
+	for difficulty, want := range wantDifficulties {
+		if difficulties[difficulty] != want {
+			t.Fatalf("%s difficulty count = %d, want %d", difficulty, difficulties[difficulty], want)
 		}
 	}
 	colloquial := 0
@@ -39,7 +51,7 @@ func TestDefaultCasesDistribution(t *testing.T) {
 			}
 		}
 	}
-	if colloquial < 30 {
-		t.Fatalf("colloquial cases = %d, want at least 30", colloquial)
+	if colloquial < 130 {
+		t.Fatalf("colloquial cases = %d, want at least 130", colloquial)
 	}
 }

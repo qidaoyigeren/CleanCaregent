@@ -36,3 +36,9 @@ type KnowledgeRepository interface {
 	KeywordSearch(ctx context.Context, request KnowledgeSearchRequest) ([]model.KnowledgeChunk, error)
 	FindActiveChunks(ctx context.Context, chunkIDs []string, effectiveAt time.Time) ([]model.KnowledgeChunk, error)
 }
+
+// FulltextKnowledgeRepository is an optional capability for repositories that
+// can execute indexed keyword search instead of scanning LIKE candidates.
+type FulltextKnowledgeRepository interface {
+	FulltextSearch(ctx context.Context, request KnowledgeSearchRequest) ([]model.KnowledgeChunk, error)
+}

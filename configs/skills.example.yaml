@@ -1,0 +1,26 @@
+skills:
+  - name: product_comparison
+    enabled: true
+    intents: [product_comparison]
+    doc_types: [product_detail, product_parameter, product_comparison, purchase_guide]
+    retrieval: {dense_top_k: 10, keyword_top_k: 10, rerank_top_k: 6, min_dense_score: 0.20}
+  - name: purchase_recommendation
+    enabled: true
+    intents: [purchase_recommendation]
+    doc_types: [product_detail, product_parameter, purchase_guide, product_comparison]
+    retrieval: {dense_top_k: 12, keyword_top_k: 12, rerank_top_k: 8, min_dense_score: 0.18}
+  - name: accessory_compatibility
+    enabled: true
+    intents: [accessory_compatibility]
+    doc_types: [accessory_compatibility, product_detail, faq]
+    retrieval: {dense_top_k: 8, keyword_top_k: 10, rerank_top_k: 5, min_dense_score: 0.20}
+  - name: fault_diagnosis
+    enabled: true
+    intents: [troubleshooting]
+    doc_types: [troubleshooting, user_manual, faq]
+    retrieval: {dense_top_k: 10, keyword_top_k: 12, rerank_top_k: 6, min_dense_score: 0.18}
+  - name: after_sales_judgement
+    enabled: true
+    intents: [return_eligibility, warranty_query]
+    doc_types: [after_sales_policy, faq]
+    retrieval: {dense_top_k: 8, keyword_top_k: 10, rerank_top_k: 6, min_dense_score: 0.20}

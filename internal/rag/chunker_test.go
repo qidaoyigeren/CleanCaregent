@@ -1,10 +1,27 @@
 package rag
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+type semanticTestEmbedder struct{}
+
+func (semanticTestEmbedder) Name() string   { return "semantic-test" }
+func (semanticTestEmbedder) Dimension() int { return 2 }
+func (semanticTestEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	vectors := make([][]float32, len(texts))
+	for index := range texts {
+		if index < 4 {
+			vectors[index] = []float32{1, 0}
+		} else {
+			vectors[index] = []float32{0, 1}
+		}
+	}
+	return vectors, nil
+}
 
 func TestStructureAwareChunkerPreservesTableHeader(t *testing.T) {
 	chunker := NewStructureAwareChunker(100, 10)
@@ -101,5 +118,25 @@ func TestStructureAwareChunkerUsesDocumentProfiles(t *testing.T) {
 		if utf8.RuneCountInString(chunk.Content) > 80 {
 			t.Fatalf("profile size was not applied: %d", utf8.RuneCountInString(chunk.Content))
 		}
+	}
+}
+
+func TestStructureAwareChunkerUsesSemanticBreakpoints(t *testing.T) {
+	chunker := NewSemanticProfiledStructureAwareChunker(500, 0, map[string]ChunkProfile{
+		"purchase_guide": {
+			MaxRunes:          500,
+			Overlap:           0,
+			SemanticThreshold: 0.5,
+		},
+	}, semanticTestEmbedder{})
+	content := strings.Repeat("养宠家庭要关注防缠绕。", 4) +
+		strings.Repeat("净水器安装前要核对水压。", 4)
+	chunks := chunker.SplitContext(context.Background(), "purchase_guide", "选购指南", content)
+	if len(chunks) != 2 {
+		t.Fatalf("semantic chunks = %#v, want 2", chunks)
+	}
+	if !strings.Contains(chunks[0].Content, "防缠绕") ||
+		!strings.Contains(chunks[1].Content, "水压") {
+		t.Fatalf("semantic breakpoint content = %#v", chunks)
 	}
 }

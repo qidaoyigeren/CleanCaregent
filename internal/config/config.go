@@ -54,8 +54,12 @@ type LogConfig struct {
 }
 
 type AuthConfig struct {
-	Enabled           bool   `mapstructure:"enabled"`
-	DevelopmentUserID string `mapstructure:"development_user_id"`
+	Enabled           bool          `mapstructure:"enabled"`
+	DevelopmentUserID string        `mapstructure:"development_user_id"`
+	JWTSecret         string        `mapstructure:"jwt_secret"`
+	JWTIssuer         string        `mapstructure:"jwt_issuer"`
+	JWTLeeway         time.Duration `mapstructure:"jwt_leeway"`
+	AdminAPIKey       string        `mapstructure:"admin_api_key"`
 }
 
 type RateLimitConfig struct {
@@ -66,11 +70,12 @@ type RateLimitConfig struct {
 }
 
 type AgentConfig struct {
-	Mode         string        `mapstructure:"mode"`
-	PlanningMode string        `mapstructure:"planning_mode"`
-	MaxSteps     int           `mapstructure:"max_steps"`
-	TokenBudget  int           `mapstructure:"token_budget"`
-	Timeout      time.Duration `mapstructure:"timeout"`
+	Mode            string        `mapstructure:"mode"`
+	PlanningMode    string        `mapstructure:"planning_mode"`
+	SkillConfigPath string        `mapstructure:"skill_config_path"`
+	MaxSteps        int           `mapstructure:"max_steps"`
+	TokenBudget     int           `mapstructure:"token_budget"`
+	Timeout         time.Duration `mapstructure:"timeout"`
 }
 
 type StorageConfig struct {
@@ -147,19 +152,21 @@ type EmbeddingFallbackConfig struct {
 }
 
 type RAGConfig struct {
-	DenseTopK      int                           `mapstructure:"dense_top_k"`
-	KeywordTopK    int                           `mapstructure:"keyword_top_k"`
-	RerankTopK     int                           `mapstructure:"rerank_top_k"`
-	MinDenseScore  float64                       `mapstructure:"min_dense_score"`
-	MaxChunkRunes  int                           `mapstructure:"max_chunk_runes"`
-	ChunkOverlap   int                           `mapstructure:"chunk_overlap"`
-	ChunkProfiles  map[string]ChunkProfileConfig `mapstructure:"chunk_profiles"`
-	MaxAnswerRunes int                           `mapstructure:"max_answer_runes"`
+	DenseTopK         int                           `mapstructure:"dense_top_k"`
+	KeywordTopK       int                           `mapstructure:"keyword_top_k"`
+	RerankTopK        int                           `mapstructure:"rerank_top_k"`
+	MinDenseScore     float64                       `mapstructure:"min_dense_score"`
+	MaxChunkRunes     int                           `mapstructure:"max_chunk_runes"`
+	ChunkOverlap      int                           `mapstructure:"chunk_overlap"`
+	ChunkProfiles     map[string]ChunkProfileConfig `mapstructure:"chunk_profiles"`
+	MaxAnswerRunes    int                           `mapstructure:"max_answer_runes"`
+	RetrievalCacheTTL time.Duration                 `mapstructure:"retrieval_cache_ttl"`
 }
 
 type ChunkProfileConfig struct {
-	MaxChunkRunes int `mapstructure:"max_chunk_runes"`
-	ChunkOverlap  int `mapstructure:"chunk_overlap"`
+	MaxChunkRunes     int     `mapstructure:"max_chunk_runes"`
+	ChunkOverlap      int     `mapstructure:"chunk_overlap"`
+	SemanticThreshold float64 `mapstructure:"semantic_threshold"`
 }
 
 type RerankerConfig struct {
@@ -192,6 +199,18 @@ type LLMConfig struct {
 	FailureThreshold  int                 `mapstructure:"failure_threshold"`
 	OpenTimeout       time.Duration       `mapstructure:"open_timeout"`
 	Fallbacks         []LLMFallbackConfig `mapstructure:"fallbacks"`
+	Providers         []LLMProviderConfig `mapstructure:"providers"`
+}
+
+type LLMProviderConfig struct {
+	Name           string        `mapstructure:"name"`
+	Endpoint       string        `mapstructure:"endpoint"`
+	APIKey         string        `mapstructure:"api_key"`
+	Model          string        `mapstructure:"model"`
+	Priority       int           `mapstructure:"priority"`
+	RequestTimeout time.Duration `mapstructure:"request_timeout"`
+	MaxTokens      int           `mapstructure:"max_tokens"`
+	Temperature    float64       `mapstructure:"temperature"`
 }
 
 type LLMFallbackConfig struct {
@@ -224,6 +243,13 @@ type PromptConfig struct {
 	// IntentClassifierModel overrides the main LLM model for intent classification
 	// (empty = use llm.model).
 	IntentClassifierModel string `mapstructure:"intent_classifier_model"`
+	QueryRewriteModel     string `mapstructure:"query_rewrite_model"`
+	PlannerModel          string `mapstructure:"planner_model"`
+	ReflectionModel       string `mapstructure:"reflection_model"`
+	ClarifierModel        string `mapstructure:"clarifier_model"`
+	GenerationModel       string `mapstructure:"generation_model"`
+	SummarizerModel       string `mapstructure:"summarizer_model"`
+	EvalJudgeModel        string `mapstructure:"eval_judge_model"`
 }
 
 func Load(path string) (Config, error) {
@@ -279,6 +305,17 @@ func (c Config) Validate() error {
 	}
 	if c.RateLimit.Backend == "redis" && !c.Redis.Enabled {
 		return errors.New("redis must be enabled when rate_limit.backend=redis")
+	}
+	if c.Auth.Enabled {
+		if len(strings.TrimSpace(c.Auth.JWTSecret)) < 32 {
+			return errors.New("auth.jwt_secret must contain at least 32 characters when auth is enabled")
+		}
+		if strings.TrimSpace(c.Auth.AdminAPIKey) == "" {
+			return errors.New("auth.admin_api_key is required when auth is enabled")
+		}
+		if c.Auth.JWTLeeway < 0 {
+			return errors.New("auth.jwt_leeway must not be negative")
+		}
 	}
 	if c.Agent.MaxSteps < 1 || c.Agent.MaxSteps > 5 {
 		return errors.New("agent.max_steps must be between 1 and 5")
@@ -414,7 +451,9 @@ func (c Config) Validate() error {
 		}
 		if profile.MaxChunkRunes < 100 ||
 			profile.ChunkOverlap < 0 ||
-			profile.ChunkOverlap >= profile.MaxChunkRunes {
+			profile.ChunkOverlap >= profile.MaxChunkRunes ||
+			profile.SemanticThreshold < 0 ||
+			profile.SemanticThreshold >= 1 {
 			return fmt.Errorf("rag.chunk_profiles.%s settings are invalid", docType)
 		}
 	}
@@ -444,7 +483,8 @@ func (c Config) Validate() error {
 	switch c.LLM.Provider {
 	case "extractive":
 	case "openai_compatible":
-		if strings.TrimSpace(c.LLM.Endpoint) == "" || strings.TrimSpace(c.LLM.Model) == "" {
+		if len(c.LLM.Providers) == 0 &&
+			(strings.TrimSpace(c.LLM.Endpoint) == "" || strings.TrimSpace(c.LLM.Model) == "") {
 			return errors.New("llm endpoint and model are required for openai_compatible provider")
 		}
 	default:
@@ -467,6 +507,21 @@ func (c Config) Validate() error {
 			fallback.Temperature < 0 || fallback.Temperature > 2 {
 			return fmt.Errorf("llm.fallbacks[%d] settings are invalid", index)
 		}
+	}
+	seenPriorities := make(map[int]struct{}, len(c.LLM.Providers))
+	for index, provider := range c.LLM.Providers {
+		if strings.TrimSpace(provider.Name) == "" ||
+			strings.TrimSpace(provider.Endpoint) == "" ||
+			strings.TrimSpace(provider.Model) == "" {
+			return fmt.Errorf("llm.providers[%d] name, endpoint and model are required", index)
+		}
+		if provider.Priority < 1 {
+			return fmt.Errorf("llm.providers[%d] priority must be positive", index)
+		}
+		if _, exists := seenPriorities[provider.Priority]; exists {
+			return fmt.Errorf("llm.providers[%d] priority must be unique", index)
+		}
+		seenPriorities[provider.Priority] = struct{}{}
 	}
 	if c.Tool.Timeout <= 0 {
 		return errors.New("tool.timeout must be positive")
@@ -510,12 +565,17 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log.development", true)
 	v.SetDefault("auth.enabled", false)
 	v.SetDefault("auth.development_user_id", "demo-user")
+	v.SetDefault("auth.jwt_secret", "")
+	v.SetDefault("auth.jwt_issuer", "clean-care-agent")
+	v.SetDefault("auth.jwt_leeway", "30s")
+	v.SetDefault("auth.admin_api_key", "")
 	v.SetDefault("rate_limit.enabled", true)
 	v.SetDefault("rate_limit.backend", "local")
 	v.SetDefault("rate_limit.requests_per_second", 20)
 	v.SetDefault("rate_limit.burst", 40)
 	v.SetDefault("agent.mode", "bootstrap")
 	v.SetDefault("agent.planning_mode", "auto")
+	v.SetDefault("agent.skill_config_path", "")
 	v.SetDefault("agent.max_steps", 5)
 	v.SetDefault("agent.token_budget", 6000)
 	v.SetDefault("agent.timeout", "20s")
@@ -573,23 +633,26 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("rag.chunk_overlap", 120)
 	v.SetDefault("rag.chunk_profiles.product_detail.max_chunk_runes", 1400)
 	v.SetDefault("rag.chunk_profiles.product_detail.chunk_overlap", 120)
-	v.SetDefault("rag.chunk_profiles.product_parameter.max_chunk_runes", 2200)
+	v.SetDefault("rag.chunk_profiles.product_detail.semantic_threshold", 0.68)
+	v.SetDefault("rag.chunk_profiles.product_parameter.max_chunk_runes", 1200)
 	v.SetDefault("rag.chunk_profiles.product_parameter.chunk_overlap", 0)
 	v.SetDefault("rag.chunk_profiles.product_comparison.max_chunk_runes", 2000)
 	v.SetDefault("rag.chunk_profiles.product_comparison.chunk_overlap", 0)
 	v.SetDefault("rag.chunk_profiles.purchase_guide.max_chunk_runes", 1400)
 	v.SetDefault("rag.chunk_profiles.purchase_guide.chunk_overlap", 120)
+	v.SetDefault("rag.chunk_profiles.purchase_guide.semantic_threshold", 0.72)
 	v.SetDefault("rag.chunk_profiles.accessory_compatibility.max_chunk_runes", 1600)
 	v.SetDefault("rag.chunk_profiles.accessory_compatibility.chunk_overlap", 0)
 	v.SetDefault("rag.chunk_profiles.user_manual.max_chunk_runes", 1600)
 	v.SetDefault("rag.chunk_profiles.user_manual.chunk_overlap", 80)
-	v.SetDefault("rag.chunk_profiles.troubleshooting.max_chunk_runes", 900)
+	v.SetDefault("rag.chunk_profiles.troubleshooting.max_chunk_runes", 600)
 	v.SetDefault("rag.chunk_profiles.troubleshooting.chunk_overlap", 0)
-	v.SetDefault("rag.chunk_profiles.after_sales_policy.max_chunk_runes", 1200)
+	v.SetDefault("rag.chunk_profiles.after_sales_policy.max_chunk_runes", 800)
 	v.SetDefault("rag.chunk_profiles.after_sales_policy.chunk_overlap", 0)
-	v.SetDefault("rag.chunk_profiles.faq.max_chunk_runes", 800)
+	v.SetDefault("rag.chunk_profiles.faq.max_chunk_runes", 400)
 	v.SetDefault("rag.chunk_profiles.faq.chunk_overlap", 0)
 	v.SetDefault("rag.max_answer_runes", 900)
+	v.SetDefault("rag.retrieval_cache_ttl", "5m")
 	v.SetDefault("reranker.provider", "local_lexical")
 	v.SetDefault("reranker.endpoint", "")
 	v.SetDefault("reranker.api_key", "")
@@ -603,11 +666,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.api_key", "")
 	v.SetDefault("llm.model", "")
 	v.SetDefault("llm.request_timeout", "30s")
-	v.SetDefault("llm.first_token_timeout", "5s")
+	v.SetDefault("llm.first_token_timeout", "3s")
 	v.SetDefault("llm.max_tokens", 800)
 	v.SetDefault("llm.temperature", 0.1)
 	v.SetDefault("llm.failure_threshold", 5)
 	v.SetDefault("llm.open_timeout", "1m")
+	v.SetDefault("llm.fallbacks", []map[string]any{})
+	v.SetDefault("llm.providers", []map[string]any{})
 	v.SetDefault("tool.timeout", "3s")
 	v.SetDefault("tracing.enabled", false)
 	v.SetDefault("tracing.service_name", "clean-care-agent")
@@ -617,4 +682,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("tracing.sample_ratio", 1.0)
 	v.SetDefault("prompt.enable_llm_components", false)
 	v.SetDefault("prompt.intent_classifier_model", "")
+	v.SetDefault("prompt.query_rewrite_model", "")
+	v.SetDefault("prompt.planner_model", "")
+	v.SetDefault("prompt.reflection_model", "")
+	v.SetDefault("prompt.clarifier_model", "")
+	v.SetDefault("prompt.generation_model", "")
+	v.SetDefault("prompt.summarizer_model", "")
+	v.SetDefault("prompt.eval_judge_model", "")
 }
