@@ -69,9 +69,9 @@ func (h *Hybrid) Search(ctx context.Context, request rag.SearchRequest) ([]rag.S
 		return nil, err
 	}
 	qualityIssues := retrievalQualityIssues(request, results)
-	if len(qualityIssues) > 0 && hasBusinessFilter(request.Filter) {
+	if broadFilter, relaxed := relaxBusinessFilter(request.Filter); len(qualityIssues) > 0 && relaxed {
 		broadRequest := request
-		broadRequest.Filter = rag.MetadataFilter{EffectiveAt: request.Filter.EffectiveAt}
+		broadRequest.Filter = broadFilter
 		broadResults, broadErr := h.searchOnce(ctx, broadRequest, span)
 		if broadErr == nil && (len(results) == 0 || betterRetrievalQuality(broadResults, results)) {
 			results = broadResults
@@ -81,10 +81,10 @@ func (h *Hybrid) Search(ctx context.Context, request rag.SearchRequest) ([]rag.S
 				results[index].Metadata = map[string]any{}
 			}
 			results[index].Metadata["low_quality_retrieval"] = true
-			results[index].Metadata["retry_without_filter"] = true
+			results[index].Metadata["retry_with_relaxed_filter"] = true
 			results[index].Metadata["quality_issues"] = append([]string(nil), qualityIssues...)
 		}
-		span.SetAttributes(attribute.Bool("retrieval.retry_without_filter", true))
+		span.SetAttributes(attribute.Bool("retrieval.retry_with_relaxed_filter", true))
 	}
 	span.SetAttributes(
 		attribute.Bool("retrieval.low_quality", len(qualityIssues) > 0),
@@ -355,16 +355,19 @@ func retrievalQualityIssues(request rag.SearchRequest, results []rag.SearchResul
 	return compactStrings(issues)
 }
 
-func hasBusinessFilter(filter rag.MetadataFilter) bool {
-	return len(filter.ProductIDs) > 0 ||
+func relaxBusinessFilter(filter rag.MetadataFilter) (rag.MetadataFilter, bool) {
+	relaxed := filter
+	changed := len(filter.ProductIDs) > 0 ||
 		len(filter.SKUIDs) > 0 ||
-		len(filter.Categories) > 0 ||
 		len(filter.Brands) > 0 ||
 		len(filter.Models) > 0 ||
-		len(filter.DocTypes) > 0 ||
-		len(filter.IntentTags) > 0 ||
-		filter.Version != "" ||
 		len(filter.FaultNodeIDs) > 0
+	relaxed.ProductIDs = nil
+	relaxed.SKUIDs = nil
+	relaxed.Brands = nil
+	relaxed.Models = nil
+	relaxed.FaultNodeIDs = nil
+	return relaxed, changed
 }
 
 func betterRetrievalQuality(candidate, current []rag.SearchResult) bool {

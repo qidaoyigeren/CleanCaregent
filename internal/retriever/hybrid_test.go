@@ -2,6 +2,7 @@ package retriever
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -220,7 +221,7 @@ func (s *hybridVectorStore) Search(
 	return s.results, nil
 }
 
-func TestHybridRetriesWithoutFilterForLowQualityResults(t *testing.T) {
+func TestHybridRelaxesIdentityFiltersButPreservesCategoryAndDocType(t *testing.T) {
 	repo := &hybridRepository{
 		active: []model.KnowledgeChunk{{
 			ChunkID: "dense",
@@ -235,9 +236,13 @@ func TestHybridRetriesWithoutFilterForLowQualityResults(t *testing.T) {
 	}}}
 	value := NewHybrid(embedding.NewLocalHash(16), vector, repo, reranker.NewLocalLexical())
 	results, err := value.Search(context.Background(), rag.SearchRequest{
-		Query:       "T20 吸力",
-		Mode:        rag.SearchHybrid,
-		Filter:      rag.MetadataFilter{DocTypes: []string{"product_parameter"}},
+		Query: "T20 吸力",
+		Mode:  rag.SearchHybrid,
+		Filter: rag.MetadataFilter{
+			Categories: []string{"robot_vacuum"},
+			Models:     []string{"T20"},
+			DocTypes:   []string{"product_parameter"},
+		},
 		DenseTopK:   5,
 		KeywordTopK: 5,
 		RerankTopK:  5,
@@ -249,7 +254,14 @@ func TestHybridRetriesWithoutFilterForLowQualityResults(t *testing.T) {
 	if vector.calls != 2 {
 		t.Fatalf("vector search calls = %d, want 2", vector.calls)
 	}
-	if len(results) == 0 || results[0].Metadata["retry_without_filter"] != true {
+	filterRaw, _ := json.Marshal(vector.request.Filter)
+	filterJSON := string(filterRaw)
+	if strings.Contains(filterJSON, "T20") ||
+		!strings.Contains(filterJSON, "robot_vacuum") ||
+		!strings.Contains(filterJSON, "product_parameter") {
+		t.Fatalf("relaxed filter = %s", filterJSON)
+	}
+	if len(results) == 0 || results[0].Metadata["retry_with_relaxed_filter"] != true {
 		t.Fatalf("results = %#v, want retry metadata", results)
 	}
 }

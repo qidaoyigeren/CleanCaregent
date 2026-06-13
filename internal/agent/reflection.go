@@ -43,8 +43,8 @@ type GroundingReflector struct{}
 
 var (
 	citationPattern     = regexp.MustCompile(`\[E([0-9]+)\]`)
-	numericClaimPattern = regexp.MustCompile(`(?i)\b[0-9]+(?:\.[0-9]+)?\s*(?:pa|w|㎡|m²|平米|元|个月|天|%)`)
-	numericPartsPattern = regexp.MustCompile(`(?i)\b([0-9]+(?:\.[0-9]+)?)\s*(pa|w|㎡|m²|平米|元|个月|天|%)`)
+	numericClaimPattern = regexp.MustCompile(`(?i)\b(?:[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s*(?:pa|w|㎡|m²|平米|元|个月|天|%)`)
+	numericPartsPattern = regexp.MustCompile(`(?i)\b([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)\s*(pa|w|㎡|m²|平米|元|个月|天|%)`)
 )
 
 func NewGroundingReflector() *GroundingReflector {
@@ -67,14 +67,16 @@ func (r *GroundingReflector) Review(
 
 	evidenceText := normalizeGroundingText(query + "\n" + joinEvidence(evidences))
 	toolEvidence, toolFailure := evidenceKinds(evidences)
-	if low, scores := lowEvidenceRelevance(evidences); low {
-		result.LowConfidence = true
-		result.Action = "rerun_retrieval"
-		result.RerunQuery = query
-		result.Warnings = append(
-			result.Warnings,
-			fmt.Sprintf("low_evidence_relevance_top3:%v", scores),
-		)
+	if !(intentType == intent.CreateAfterSalesTicket && toolEvidence) {
+		if low, scores := lowEvidenceRelevance(evidences); low {
+			result.LowConfidence = true
+			result.Action = "rerun_retrieval"
+			result.RerunQuery = query
+			result.Warnings = append(
+				result.Warnings,
+				fmt.Sprintf("low_evidence_relevance_top3:%v", scores),
+			)
+		}
 	}
 	if requiresDynamicEvidence(intentType) && !toolEvidence {
 		result.LowConfidence = true
@@ -93,15 +95,23 @@ func (r *GroundingReflector) Review(
 		}
 	}
 	for _, claim := range numericClaimPattern.FindAllString(result.Answer, -1) {
-		if !numericClaimGrounded(claim, evidenceText, evidences) {
+		if !numericClaimGrounded(claim, evidenceText, evidences) &&
+			!numericClaimMentionedInQuery(claim, query) {
 			result.UnsupportedClaims = appendUnique(result.UnsupportedClaims, claim)
 		}
 	}
 	if len(result.UnsupportedClaims) > 0 {
-		result.Answer = "当前回答包含无法从知识库或工具结果确认的数值，已停止输出该结论。请补充型号或由人工客服复核。"
 		result.LowConfidence = true
-		result.ShouldTransfer = isHighRiskIntent(intentType)
 		result.Warnings = append(result.Warnings, "unsupported_numeric_claim")
+		if isHighRiskIntent(intentType) {
+			result.Answer = "当前回答包含无法从知识库或工具结果确认的数值，已停止输出该结论。请补充型号或由人工客服复核。"
+			result.ShouldTransfer = true
+			result.Action = "transfer_human"
+		} else {
+			// Low-risk product answers can be repaired deterministically by
+			// removing only the affected Markdown line.
+			result.Action = "remove_unsupported"
+		}
 		return result
 	}
 
@@ -122,11 +132,38 @@ func (r *GroundingReflector) Review(
 	return result
 }
 
+func numericClaimMentionedInQuery(claim, query string) bool {
+	parts := numericPartsPattern.FindStringSubmatch(claim)
+	if len(parts) != 3 {
+		return false
+	}
+	number := normalizeGroundingText(parts[1])
+	unit := normalizeGroundingText(parts[2])
+	normalizedQuery := normalizeGroundingText(query)
+	if !strings.Contains(normalizedQuery, number) {
+		return false
+	}
+	switch unit {
+	case "元":
+		return strings.Contains(normalizedQuery, number+"元") ||
+			strings.Contains(normalizedQuery, "预算"+number)
+	case "平米":
+		return strings.Contains(normalizedQuery, number+"平") ||
+			strings.Contains(normalizedQuery, "面积"+number)
+	default:
+		return strings.Contains(normalizedQuery, number+unit)
+	}
+}
+
 func lowEvidenceRelevance(evidences []Evidence) (bool, []float64) {
 	scores := make([]float64, 0, 3)
+	threshold := 0.3
 	for _, evidence := range evidences {
 		if evidence.Kind != "kb_chunk" || evidence.Metadata == nil {
 			continue
+		}
+		if provider, _ := evidence.Metadata["rerank_provider"].(string); strings.TrimSpace(provider) != "" {
+			threshold = 0.1
 		}
 		score, ok := numericMetadata(evidence.Metadata["rerank_score"])
 		if !ok {
@@ -141,7 +178,7 @@ func lowEvidenceRelevance(evidences []Evidence) (bool, []float64) {
 		return false, nil
 	}
 	for _, score := range scores {
-		if score >= 0.3 {
+		if score >= threshold {
 			return false, scores
 		}
 	}
@@ -178,6 +215,19 @@ func numericClaimGrounded(
 	}
 	number := normalizeGroundingText(parts[1])
 	unit := normalizeGroundingText(parts[2])
+	switch unit {
+	case "元":
+		if yuanClaimGrounded(number, normalizedSources, evidences) {
+			return true
+		}
+	case "个月":
+		return strings.Contains(normalizedSources, number+"个月") ||
+			strings.Contains(normalizedSources, `"warranty_months":`+number) ||
+			strings.Contains(normalizedSources, `"replacement_months":`+number)
+	case "天":
+		return strings.Contains(normalizedSources, number+"天") ||
+			strings.Contains(normalizedSources, `"elapsed_days":`+number)
+	}
 	if !strings.Contains(normalizedSources, number) {
 		return false
 	}
@@ -187,6 +237,7 @@ func numericClaimGrounded(
 		return hasTool || strings.Contains(normalizedSources, number+"元")
 	case "平米":
 		return strings.Contains(normalizedSources, "平米") ||
+			strings.Contains(normalizedSources, number+"平") ||
 			strings.Contains(normalizedSources, "area_m2")
 	case "pa":
 		return strings.Contains(normalizedSources, "pa") ||
@@ -196,11 +247,28 @@ func numericClaimGrounded(
 	}
 }
 
+func yuanClaimGrounded(number, normalizedSources string, evidences []Evidence) bool {
+	if strings.Contains(normalizedSources, number+"元") {
+		return true
+	}
+	value, err := strconv.ParseFloat(number, 64)
+	if err != nil {
+		return false
+	}
+	cents := strconv.FormatInt(int64(value*100+0.5), 10)
+	if strings.Contains(normalizedSources, cents) {
+		hasTool, _ := evidenceKinds(evidences)
+		return hasTool
+	}
+	return false
+}
+
 func normalizeGroundingText(value string) string {
 	value = strings.ToLower(value)
 	value = strings.NewReplacer(
 		"m²", "平米",
 		"㎡", "平米",
+		",", "",
 	).Replace(value)
 	return strings.Map(func(current rune) rune {
 		if unicode.IsSpace(current) {

@@ -381,7 +381,10 @@ func (r *BusinessRepository) CreateAfterSalesTicket(
 
 func (r *BusinessRepository) SaveToolCall(ctx context.Context, call tool.Call, result tool.Result) error {
 	argsRaw, _ := json.Marshal(maskToolArguments(call.Arguments))
-	resultRaw, _ := json.Marshal(result.Data)
+	resultRaw, _ := json.Marshal(map[string]any{
+		"data_scope": result.DataScope,
+		"data":       result.Data,
+	})
 	status := "success"
 	if !result.Success {
 		status = "failed"

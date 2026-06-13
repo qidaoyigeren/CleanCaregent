@@ -45,9 +45,11 @@ type Runner interface {
 }
 
 type DynamicExecutionRequest struct {
-	Request Request
-	Intent  string
-	Step    PlanStep
+	Request          Request
+	Intent           string
+	SecondaryIntents []string
+	AllowedTools     []string
+	Step             PlanStep
 }
 
 type DynamicExecutionResult struct {

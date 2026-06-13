@@ -56,7 +56,10 @@ type Workflow struct {
 	nextSkillArgs   map[string]any
 }
 
-var accessoryModelPattern = regexp.MustCompile(`(?i)\b(?:F|DB|RB)[0-9]{2,}[A-Z0-9-]*\b`)
+var (
+	accessoryModelPattern = regexp.MustCompile(`(?i)\b(?:F|DB|RB)[0-9]{2,}[A-Z0-9-]*\b`)
+	coreModelPattern      = regexp.MustCompile(`(?i)\b(?:T20|X20\s+Pro|R10|R20|P400|P500|W300|W500|H100|H200)\b`)
+)
 
 func NewProductComparison(
 	retriever rag.Retriever,
@@ -167,6 +170,7 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 		docTypes = skillDocTypes(s.name)
 	}
 	models := entityStrings(request.Intent.Entities["models"])
+	models = compactValues(append(models, queryModels(request.Query)...))
 	if s.name == FaultDiagnosisSkill && len(models) == 0 && s.diagnosisStore != nil {
 		if state, err := s.diagnosisStore.LoadDiagnosisState(ctx, request.ConversationID); err == nil &&
 			state != nil &&
@@ -218,7 +222,7 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 			models = candidateModels(searchData)
 		}
 		if len(models) > 0 {
-			for _, toolName := range []string{"price_query", "inventory_check"} {
+			for _, toolName := range requestedRecommendationTools(request) {
 				value, executeErr := s.callTool(ctx, request, toolName, map[string]any{"product_refs": models})
 				if executeErr != nil {
 					dynamicNotes = append(dynamicNotes, toolName+" 暂时不可用")
@@ -227,7 +231,12 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 				evidences = append(evidences, toolEvidence(toolName, value))
 				dynamicNotes = append(
 					dynamicNotes,
-					toolResultSummary(toolName, value.Data, evidenceCitation(len(evidences))),
+					toolResultSummary(
+						toolName,
+						value.Data,
+						evidenceCitation(len(evidences)),
+						value.DataScope,
+					),
 				)
 			}
 		}
@@ -244,10 +253,11 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 		if request.Intent.Secondary == intent.WarrantyQuery {
 			toolName = "warranty_check"
 		}
-		value, executeErr := s.callTool(ctx, request, toolName, map[string]any{
-			"order_no": orderNo,
-			"model":    first(models),
-		})
+		toolArguments := map[string]any{"order_no": orderNo}
+		if toolName != "warranty_check" {
+			toolArguments["model"] = first(models)
+		}
+		value, executeErr := s.callTool(ctx, request, toolName, toolArguments)
 		if executeErr != nil {
 			dynamicNotes = append(dynamicNotes, "订单动态数据暂时不可用，当前只能说明政策条件")
 		} else {
@@ -255,7 +265,7 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 			citation := evidenceCitation(len(evidences))
 			dynamicNotes = append(
 				dynamicNotes,
-				toolResultSummary(toolName, value.Data, citation),
+				toolResultSummary(toolName, value.Data, citation, value.DataScope),
 			)
 			switch toolName {
 			case "order_lookup":
@@ -280,10 +290,22 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 				var payload warrantyToolPayload
 				if decodeToolData(value.Data, &payload) == nil && len(payload.Items) > 0 {
 					deterministicAnswer = buildWarrantyAnswer(payload, searchData, citation)
+					if note := warrantyModelMismatchNote(first(models), payload, citation); note != "" {
+						deterministicAnswer = note + "\n\n" + deterministicAnswer
+					}
 				}
 			}
 		}
 	case AccessoryCompatibilitySkill:
+		if len(models) > 0 && !requestsAccessoryDynamicData(request) {
+			if accessoryRefs := accessoryModels(searchData); len(accessoryRefs) > 0 {
+				deterministicAnswer = buildAccessoryLookupAnswer(
+					first(models),
+					accessoryRefs,
+					searchData,
+				)
+			}
+		}
 		if len(models) == 0 && refersToPurchase(request.Query) {
 			value, executeErr := s.callTool(ctx, request, "user_purchase_history", map[string]any{
 				"category": "air_purifier",
@@ -327,7 +349,12 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 			evidences = append(evidences, toolEvidence("price_query", price))
 			dynamicNotes = append(
 				dynamicNotes,
-				toolResultSummary("price_query", price.Data, evidenceCitation(len(evidences))),
+				toolResultSummary(
+					"price_query",
+					price.Data,
+					evidenceCitation(len(evidences)),
+					price.DataScope,
+				),
 			)
 		}
 	}
@@ -374,6 +401,79 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 	return result, nil
 }
 
+func requestsAccessoryDynamicData(request Request) bool {
+	for _, intentType := range request.Intent.SecondaryIntents {
+		if intentType == intent.PriceQuery || intentType == intent.InventoryQuery {
+			return true
+		}
+	}
+	return containsAny(
+		strings.ToLower(request.Query),
+		"价格", "多少钱", "售价", "到手价", "库存", "有货", "现货",
+	)
+}
+
+func buildAccessoryLookupAnswer(
+	hostModel string,
+	accessoryRefs []string,
+	searchData []rag.SearchResult,
+) string {
+	hostModel = strings.TrimSpace(hostModel)
+	accessoryRefs = compactValues(accessoryRefs)
+	if hostModel == "" || len(accessoryRefs) == 0 {
+		return ""
+	}
+	citations := make([]string, 0, len(accessoryRefs))
+	for _, accessoryRef := range accessoryRefs {
+		for index, item := range searchData {
+			if strings.Contains(strings.ToUpper(item.Title+"\n"+item.Content), strings.ToUpper(accessoryRef)) {
+				citations = append(citations, evidenceCitation(index+1))
+				break
+			}
+		}
+	}
+	citations = compactValues(citations)
+	citationText := strings.Join(citations, "")
+	return fmt.Sprintf(
+		"**兼容结论**\n%s 应选购配件型号 %s。购买时请核对主机型号和配件完整型号，不要仅凭外观判断。%s",
+		hostModel,
+		strings.Join(accessoryRefs, "、"),
+		citationText,
+	)
+}
+
+func requestedRecommendationTools(request Request) []string {
+	result := make([]string, 0, 2)
+	seen := make(map[string]struct{}, 2)
+	add := func(name string) {
+		if _, exists := seen[name]; exists {
+			return
+		}
+		seen[name] = struct{}{}
+		result = append(result, name)
+	}
+	for _, intentType := range request.Intent.SecondaryIntents {
+		switch intentType {
+		case intent.PriceQuery:
+			add("price_query")
+		case intent.InventoryQuery:
+			add("inventory_check")
+		}
+	}
+	query := strings.ToLower(request.Query)
+	if containsAny(
+		query,
+		"价格", "多少钱", "到手价", "查价", "实时报价", "今天价格",
+		"实时价", "总价", "哪个便宜",
+	) {
+		add("price_query")
+	}
+	if containsAny(query, "库存", "有货", "现货", "没货", "几台") {
+		add("inventory_check")
+	}
+	return result
+}
+
 func (s *Workflow) retrieveInitial(
 	ctx context.Context,
 	request Request,
@@ -387,39 +487,78 @@ func (s *Workflow) retrieveInitial(
 	)
 	defer span.End()
 	type route struct {
-		query    string
-		models   []string
-		docTypes []string
+		query      string
+		models     []string
+		categories []string
+		docTypes   []string
+		topK       int
 	}
-	routes := []route{{query: request.Query, models: models, docTypes: docTypes}}
+	categories := compactValues(strings.Split(
+		strings.Join([]string{
+			request.Intent.Entities["category"],
+			request.Intent.Entities["categories"],
+		}, ","),
+		",",
+	))
+	if len(categories) == 0 {
+		categories = categoriesForModels(models)
+	}
+	if len(categories) == 0 {
+		categories = categoriesForQuery(request.Query)
+	}
+	routes := []route{{
+		query: request.Query, models: models, categories: categories, docTypes: docTypes,
+		topK: s.config.RerankTopK,
+	}}
 	switch s.name {
 	case ProductComparisonSkill:
-		routes = routes[:0]
+		routes = []route{{
+			query: request.Query + " 使用场景 选购取舍 " +
+				scenarioGuideQueryExpansion(request.Query),
+			categories: categories,
+			docTypes:   []string{"product_comparison", "purchase_guide"},
+			topK:       min(s.config.RerankTopK, 4),
+		}}
 		for _, modelName := range compactValues(models) {
 			routes = append(routes, route{
-				query:    modelName + " " + request.Query,
-				models:   []string{modelName},
-				docTypes: []string{"product_detail", "product_parameter"},
+				query:      modelName + " " + request.Query,
+				models:     []string{modelName},
+				categories: categories,
+				docTypes:   []string{"product_detail", "product_parameter"},
+				topK:       min(s.config.RerankTopK, 3),
 			})
 		}
-		routes = append(routes, route{
-			query:    request.Query + " 使用场景 选购取舍",
-			models:   models,
-			docTypes: []string{"product_comparison", "purchase_guide"},
-		})
 	case PurchaseRecommendationSkill:
+		candidateModels := models
+		if len(candidateModels) == 0 {
+			candidateModels = recommendationCandidateModels(request.Query, categories)
+		}
 		routes = []route{
 			{
-				query:    request.Query + " 候选产品 参数",
-				models:   models,
-				docTypes: []string{"product_detail", "product_parameter"},
+				query: request.Query + " 选购场景 硬约束 " +
+					scenarioGuideQueryExpansion(request.Query),
+				// Scenario guides describe candidate sets and store them in
+				// candidate_models, not the single-model metadata field.
+				// Applying a model filter here silently removes the guide.
+				models:     nil,
+				categories: categories,
+				docTypes:   []string{"purchase_guide", "product_comparison"},
+				topK:       min(s.config.RerankTopK, 4),
 			},
 			{
-				query:    request.Query + " 选购场景 硬约束",
-				models:   models,
-				docTypes: []string{"purchase_guide", "product_comparison"},
+				query:      request.Query + " 候选产品 参数 " + recommendationQueryExpansion(request.Query),
+				models:     candidateModels,
+				categories: categories,
+				docTypes:   []string{"product_detail", "product_parameter"},
+				topK:       min(s.config.RerankTopK, 4),
 			},
 		}
+	case AfterSalesJudgementSkill:
+		routes = []route{{
+			query:    afterSalesPolicyQuery(request.Intent.Secondary, request.Query),
+			docTypes: []string{"after_sales_policy", "faq"},
+			topK:     min(s.config.RerankTopK, 6),
+		}}
 	}
 	span.SetAttributes(attribute.Int("skill.route_count", len(routes)))
 
@@ -435,12 +574,13 @@ func (s *Workflow) retrieveInitial(
 				Query: current.query,
 				Mode:  rag.SearchHybrid,
 				Filter: rag.MetadataFilter{
-					Models:   current.models,
-					DocTypes: current.docTypes,
+					Models:     current.models,
+					Categories: current.categories,
+					DocTypes:   current.docTypes,
 				},
 				DenseTopK:   s.config.DenseTopK,
 				KeywordTopK: s.config.KeywordTopK,
-				RerankTopK:  s.config.RerankTopK,
+				RerankTopK:  current.topK,
 				MinScore:    s.config.MinDenseScore,
 				NeedRerank:  true,
 			})
@@ -703,7 +843,7 @@ func skillDocTypes(name string) []string {
 	case PurchaseRecommendationSkill:
 		return []string{"product_detail", "product_parameter", "purchase_guide", "product_comparison"}
 	case AccessoryCompatibilitySkill:
-		return []string{"accessory_compatibility", "product_detail", "faq"}
+		return []string{"accessory_compatibility"}
 	case FaultDiagnosisSkill:
 		return []string{"troubleshooting", "user_manual", "faq"}
 	case AfterSalesJudgementSkill:
@@ -763,13 +903,15 @@ func toolEvidence(name string, value tool.Result) agent.Evidence {
 		Metadata: map[string]any{
 			"tool_name":   name,
 			"success":     value.Success,
+			"data_scope":  value.DataScope,
 			"finished_at": value.FinishedAt.Format(time.RFC3339Nano),
 		},
 	}
 }
 
-func toolResultSummary(name string, data any, citation string) string {
+func toolResultSummary(name string, data any, citation string, dataScope ...string) string {
 	raw, _ := json.Marshal(data)
+	label := dynamicDataLabel(first(dataScope))
 	switch name {
 	case "price_query":
 		var payload struct {
@@ -787,7 +929,8 @@ func toolResultSummary(name string, data any, citation string) string {
 				))
 			}
 			return fmt.Sprintf(
-				"实时价格（查询时间 %s）：%s %s",
+				"%s价格（查询时间 %s）：%s %s",
+				label,
 				formatFactTime(payload.AsOf),
 				strings.Join(parts, "；"),
 				citation,
@@ -802,7 +945,7 @@ func toolResultSummary(name string, data any, citation string) string {
 			for _, item := range payload.Items {
 				parts = append(parts, fmt.Sprintf("%s 可售库存 %d 台", item.Model, item.AvailableStock))
 			}
-			return "实时库存：" + strings.Join(parts, "；") + " " + citation
+			return label + "库存：" + strings.Join(parts, "；") + " " + citation
 		}
 	case "user_purchase_history":
 		var payload struct {
@@ -1046,6 +1189,36 @@ func buildWarrantyAnswer(
 	return builder.String()
 }
 
+func warrantyModelMismatchNote(
+	requestedModel string,
+	payload warrantyToolPayload,
+	toolCitation string,
+) string {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" || len(payload.Items) == 0 {
+		return ""
+	}
+	actualModels := make([]string, 0, len(payload.Items))
+	for _, item := range payload.Items {
+		if strings.EqualFold(strings.TrimSpace(item.Model), requestedModel) {
+			return ""
+		}
+		if modelName := strings.TrimSpace(item.Model); modelName != "" {
+			actualModels = append(actualModels, modelName)
+		}
+	}
+	actualModels = compactValues(actualModels)
+	if len(actualModels) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"**型号核对**\n您口述的型号是 %s，但该订单记录的商品型号是 %s；以下保修判断以订单记录为准。%s",
+		requestedModel,
+		strings.Join(actualModels, "、"),
+		toolCitation,
+	)
+}
+
 func evidenceCitationByDocument(searchData []rag.SearchResult, documentID string) string {
 	for index, item := range searchData {
 		if item.DocumentID == documentID {
@@ -1106,6 +1279,144 @@ func entityStrings(value string) []string {
 	return result
 }
 
+func queryModels(query string) []string {
+	matches := coreModelPattern.FindAllString(query, -1)
+	result := make([]string, 0, len(matches))
+	for _, match := range matches {
+		result = append(result, canonicalModel(match))
+	}
+	return result
+}
+
+func canonicalModel(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if strings.EqualFold(value, "X20 Pro") {
+		return "X20 Pro"
+	}
+	return strings.ToUpper(value)
+}
+
+func categoriesForModels(models []string) []string {
+	categories := make([]string, 0, len(models))
+	for _, modelName := range models {
+		switch canonicalModel(modelName) {
+		case "T20", "X20 Pro", "R10", "R20":
+			categories = append(categories, "robot_vacuum")
+		case "P400", "P500":
+			categories = append(categories, "air_purifier")
+		case "W300", "W500":
+			categories = append(categories, "water_purifier")
+		case "H100", "H200":
+			categories = append(categories, "humidifier")
+		}
+	}
+	return compactValues(categories)
+}
+
+func categoriesForQuery(query string) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	switch {
+	case containsAny(query, "扫地机", "扫地机器人", "扫拖", "地毯", "猫毛", "宠物毛", "倒尘盒", "基站"):
+		return []string{"robot_vacuum"}
+	case containsAny(query, "空气净化", "净化器", "cadr", "过敏", "花粉", "pm2.5"):
+		return []string{"air_purifier"}
+	case containsAny(query, "净水器", "通量", "出水", "用水高峰"):
+		return []string{"water_purifier"}
+	case containsAny(query, "加湿器", "加湿量", "湿度", "雾化"):
+		return []string{"humidifier"}
+	default:
+		return nil
+	}
+}
+
+func recommendationQueryExpansion(query string) string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	terms := make([]string, 0, 6)
+	if containsAny(query, "倒尘盒", "倒垃圾", "少维护", "不想天天倒") {
+		terms = append(terms, "自动集尘")
+	}
+	if containsAny(query, "猫毛", "宠物毛", "养猫", "养狗") {
+		terms = append(terms, "养宠 防缠绕")
+	}
+	if strings.Contains(query, "地毯") {
+		terms = append(terms, "地毯识别 自动增压 拖布抬升")
+	}
+	return strings.Join(terms, " ")
+}
+
+func scenarioGuideQueryExpansion(query string) string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	terms := make([]string, 0, 8)
+	if containsAny(query, "小户型", "六十平", "60平", "没地毯", "无地毯") {
+		terms = append(terms, "小户型 40-80平 硬质地板 预算优先")
+	}
+	if containsAny(query, "两只猫", "养猫", "宠物", "猫毛") {
+		terms = append(terms, "养宠 大户型 防缠绕 地毯")
+	}
+	if containsAny(query, "新房", "刚装完", "新装修") {
+		terms = append(terms, "新装修 颗粒物 气态污染物 VOC 持续监测")
+	}
+	if containsAny(query, "花粉", "鼻子难受", "过敏") {
+		terms = append(terms, "过敏 花粉 卧室 夜间低噪")
+	}
+	if containsAny(query, "大客厅", "五十多平", "50平") {
+		terms = append(terms, "大客厅 45-70平 持续净化")
+	}
+	if containsAny(query, "租房", "租住", "安装限制", "安装改造") {
+		terms = append(terms, "租住家庭 厨下空间 安装改造 进水排水电源")
+	}
+	if containsAny(query, "五口", "大家庭", "用水高峰", "连续接水") {
+		terms = append(terms, "五口以上 大家庭 早晚高峰 连续用水")
+	}
+	if containsAny(query, "婴儿房", "儿童房") {
+		terms = append(terms, "婴儿房 夜间安静 易清洁")
+		if containsAny(query, "净化加湿", "净化和加湿", "净化、加湿") {
+			terms = append(terms, "过敏 花粉 卧室 夜间低噪 空气净化")
+		}
+	}
+	if containsAny(query, "北方", "供暖季", "少加水", "客厅") {
+		terms = append(terms, "北方供暖季 客厅 长时间运行 减少加水")
+	}
+	return strings.Join(compactValues(terms), " ")
+}
+
+func recommendationCandidateModels(query string, categories []string) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	category := first(categories)
+	switch category {
+	case "robot_vacuum":
+		switch {
+		case containsAny(query, "倒尘盒", "自动集尘", "不想天天倒", "少维护"):
+			return []string{"X20 Pro", "R20"}
+		case containsAny(query, "猫毛", "宠物毛", "养猫", "养狗", "地毯", "复式", "大户型", "150平"):
+			return []string{"X20 Pro", "R20"}
+		case containsAny(query, "手动倒尘", "2500", "两千五"):
+			return []string{"T20", "R10"}
+		default:
+			return []string{"T20", "X20 Pro"}
+		}
+	case "air_purifier":
+		return []string{"P400", "P500"}
+	case "water_purifier":
+		return []string{"W300", "W500"}
+	case "humidifier":
+		return []string{"H100", "H200"}
+	default:
+		return nil
+	}
+}
+
+func afterSalesPolicyQuery(intentType intent.Type, query string) string {
+	switch intentType {
+	case intent.WarrantyQuery:
+		return query + " 清洁电器保修政策 保修起算时间 订单保修月数 延保适用条件"
+	case intent.ReturnEligibility:
+		return query + " 七天无理由退货政策 质量问题换货政策 耗材退换 条件与例外"
+	default:
+		return query + " 售后政策 适用条件 例外"
+	}
+}
+
 func first(values []string) string {
 	if len(values) == 0 {
 		return ""
@@ -1164,22 +1475,78 @@ func accessoryModels(items []rag.SearchResult) []string {
 func candidateModels(items []rag.SearchResult) []string {
 	seen := make(map[string]struct{})
 	result := make([]string, 0, 4)
-	for _, item := range items {
-		modelName, _ := item.Metadata["model"].(string)
-		modelName = strings.TrimSpace(modelName)
+	add := func(modelName string) bool {
+		modelName = canonicalModel(modelName)
 		if modelName == "" {
-			continue
+			return false
 		}
 		if _, ok := seen[modelName]; ok {
-			continue
+			return false
 		}
 		seen[modelName] = struct{}{}
 		result = append(result, modelName)
+		return len(result) == 4
+	}
+	for _, item := range items {
+		if modelName, ok := item.Metadata["model"].(string); ok && add(modelName) {
+			break
+		}
+		for _, modelName := range stringValues(item.Metadata["models"]) {
+			if add(modelName) {
+				break
+			}
+		}
+		for _, modelName := range splitModelCandidates(item.Metadata["candidate_models"]) {
+			if add(modelName) {
+				break
+			}
+		}
+		for _, modelName := range coreModelPattern.FindAllString(item.Title+"\n"+item.Content, -1) {
+			if add(modelName) {
+				break
+			}
+		}
 		if len(result) == 4 {
 			break
 		}
 	}
 	return result
+}
+
+func splitModelCandidates(value any) []string {
+	text, _ := value.(string)
+	text = strings.NewReplacer("、", ",", "，", ",", "/", ",").Replace(text)
+	return compactValues(strings.Split(text, ","))
+}
+
+func stringValues(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				result = append(result, text)
+			}
+		}
+		return result
+	case string:
+		return strings.Split(typed, ",")
+	default:
+		return nil
+	}
+}
+
+func dynamicDataLabel(dataScope string) string {
+	switch strings.ToLower(strings.TrimSpace(dataScope)) {
+	case "external":
+		return "实时"
+	case "sandbox":
+		return "沙箱动态"
+	default:
+		return "模拟动态"
+	}
 }
 
 func mergeSearchData(existing, added []rag.SearchResult) []rag.SearchResult {

@@ -11,6 +11,7 @@ import (
 
 	"CleanCaregent/internal/agent"
 	"CleanCaregent/internal/intent"
+	"CleanCaregent/internal/model"
 	"CleanCaregent/internal/platform/id"
 	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/skill"
@@ -86,7 +87,11 @@ func (e *DynamicExecutor) executeTool(
 		Arguments:      arguments,
 		IdempotencyKey: request.Request.TraceID + ":" + request.Step.ToolName,
 	}
-	result, err := e.tools.Execute(ctx, call, allowedTools(intent.Type(request.Intent)))
+	whitelist := request.AllowedTools
+	if len(whitelist) == 0 {
+		whitelist = allowedTools(intent.Type(request.Intent))
+	}
+	result, err := e.tools.Execute(ctx, call, whitelist)
 	if err != nil {
 		if result.ErrorCode == "TOOL_TIMEOUT" || errors.Is(err, context.DeadlineExceeded) {
 			return e.degradeToKnowledge(ctx, request, call, result)
@@ -118,9 +123,7 @@ func (e *DynamicExecutor) executeTool(
 	}
 	raw, _ := json.Marshal(result.Data)
 	return agent.DynamicExecutionResult{
-		// A successful tool result is an observation, not a user-facing answer.
-		// The answer generator consumes this evidence at the finish step.
-		Answer: "",
+		Answer: formatToolAnswer(call.Name, result.Data, result.DataScope),
 		Evidences: []agent.Evidence{{
 			Kind:     "tool_result",
 			SourceID: call.CallID,
@@ -128,11 +131,120 @@ func (e *DynamicExecutor) executeTool(
 			Content:  string(raw),
 			Metadata: map[string]any{
 				"tool_name":   call.Name,
+				"data_scope":  result.DataScope,
 				"finished_at": result.FinishedAt,
 			},
 		}},
-		Metadata: map[string]any{"tool_name": call.Name},
+		Metadata: map[string]any{"tool_name": call.Name, "data_scope": result.DataScope},
 	}, nil
+}
+
+func formatToolAnswer(name string, data any, dataScope ...string) string {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return ""
+	}
+	label := dynamicDataLabel(firstString(dataScope))
+	switch name {
+	case "price_query":
+		var payload struct {
+			Items []model.PriceQuote `json:"items"`
+		}
+		if json.Unmarshal(raw, &payload) != nil || len(payload.Items) == 0 {
+			return ""
+		}
+		var builder strings.Builder
+		fmt.Fprintf(&builder, "**%s价格**\n", label)
+		for _, item := range payload.Items {
+			fmt.Fprintf(
+				&builder,
+				"- %s（%s）：当前价 %s 元，优惠后预估 %s 元，库存 %d 件。\n",
+				item.ProductName,
+				item.SKUName,
+				formatCents(item.CurrentPriceCents),
+				formatCents(item.EstimatedFinalPriceCents),
+				item.AvailableStock,
+			)
+		}
+		return strings.TrimSpace(builder.String())
+	case "inventory_check":
+		var payload struct {
+			Items []model.ProductSKU `json:"items"`
+		}
+		if json.Unmarshal(raw, &payload) != nil || len(payload.Items) == 0 {
+			return ""
+		}
+		var builder strings.Builder
+		fmt.Fprintf(&builder, "**%s库存**\n", label)
+		for _, item := range payload.Items {
+			fmt.Fprintf(
+				&builder,
+				"- %s（%s）：可售库存 %d 件，当前价 %s 元。\n",
+				item.ProductName,
+				item.SKUName,
+				item.AvailableStock,
+				formatCents(item.CurrentPriceCents),
+			)
+		}
+		return strings.TrimSpace(builder.String())
+	case "order_lookup":
+		var order model.OrderDetail
+		if json.Unmarshal(raw, &order) != nil || order.OrderNo == "" {
+			return ""
+		}
+		productNames := make([]string, 0, len(order.Items))
+		for _, item := range order.Items {
+			productNames = append(productNames, item.ProductName)
+		}
+		return fmt.Sprintf(
+			"**订单状态**\n订单 %s 当前状态：%s；商品：%s；订单金额：%s 元。",
+			order.OrderNo,
+			order.Status,
+			strings.Join(productNames, "、"),
+			formatCents(order.TotalAmountCents),
+		)
+	case "create_after_sales_ticket":
+		var ticket model.AfterSalesTicket
+		if json.Unmarshal(raw, &ticket) != nil || ticket.TicketNo == "" {
+			return ""
+		}
+		return fmt.Sprintf(
+			"**%s售后工单**\n已按您的明确确认创建售后工单。订单号：%s；工单号：%s；当前状态：%s。本次提交已使用幂等键防止重复建单。",
+			label,
+			ticket.OrderNo,
+			ticket.TicketNo,
+			ticket.Status,
+		)
+	default:
+		return ""
+	}
+}
+
+func dynamicDataLabel(dataScope string) string {
+	switch strings.ToLower(strings.TrimSpace(dataScope)) {
+	case "external":
+		return "实时"
+	case "sandbox":
+		return "沙箱动态"
+	default:
+		return "模拟动态"
+	}
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func formatCents(value int64) string {
+	sign := ""
+	if value < 0 {
+		sign = "-"
+		value = -value
+	}
+	return fmt.Sprintf("%s%d.%02d", sign, value/100, value%100)
 }
 
 func (e *DynamicExecutor) executeSkill(
@@ -159,9 +271,23 @@ func (e *DynamicExecutor) executeSkill(
 		if !ok {
 			return agent.DynamicExecutionResult{}, fmt.Errorf("%w: %s", ErrSkillNotFound, nextSkill)
 		}
+		targetIntent := intent.Type(request.Intent)
+		rawTarget, _ := nextArgs["target_intent"].(string)
+		if rawTarget = strings.TrimSpace(rawTarget); rawTarget != "" {
+			targetIntent = intent.Type(rawTarget)
+		}
+		secondaryIntents := make([]intent.Type, 0, len(request.SecondaryIntents))
+		for _, value := range request.SecondaryIntents {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				secondaryIntents = append(secondaryIntents, intent.Type(trimmed))
+			}
+		}
+		entities := stringMap(nextArgs)
+		delete(entities, "target_intent")
 		intentResult := intent.Result{
-			Secondary: intent.Type(request.Intent),
-			Entities:  stringMap(nextArgs),
+			Secondary:        targetIntent,
+			SecondaryIntents: secondaryIntents,
+			Entities:         entities,
 		}
 		result, err := value.Run(ctx, skill.Request{
 			TraceID:        request.Request.TraceID,
@@ -242,7 +368,7 @@ func (e *DynamicExecutor) buildArguments(
 	case "create_after_sales_ticket":
 		arguments["issue_type"] = "repair"
 		arguments["description"] = query
-		arguments["confirmed"] = containsAny(query, "确认", "创建", "报修", "申请维修", "提交工单")
+		arguments["confirmed"] = ticketConfirmationPresent(query)
 	}
 	arguments = normalizeToolArguments(arguments)
 	if e.argumentExtractor != nil && needsArgumentExtraction(request.Step.ToolName, arguments) {
@@ -255,6 +381,13 @@ func (e *DynamicExecutor) buildArguments(
 		}
 	}
 	return normalizeToolArguments(arguments)
+}
+
+func ticketConfirmationPresent(query string) bool {
+	if containsAny(query, "没确认", "未确认", "没有确认", "不确认", "不要创建") {
+		return false
+	}
+	return containsAny(query, "我确认", "确认创建", "确认提交", "确认给", "确认了")
 }
 
 func (e *DynamicExecutor) degradeToKnowledge(
@@ -304,26 +437,6 @@ func (e *DynamicExecutor) degradeToKnowledge(
 			"degraded": true, "degrade_strategy": "tool_timeout_to_kb",
 		},
 	}, nil
-}
-
-func formatToolAnswer(name string, data any) string {
-	raw, _ := json.MarshalIndent(data, "", "  ")
-	switch name {
-	case "price_query":
-		return "实时价格与可用优惠如下：\n```json\n" + string(raw) + "\n```"
-	case "inventory_check":
-		return "当前 mock 库存如下：\n```json\n" + string(raw) + "\n```"
-	case "user_purchase_history":
-		return "查询到的购买记录如下：\n```json\n" + string(raw) + "\n```"
-	case "order_lookup":
-		return "订单信息如下：\n```json\n" + string(raw) + "\n```"
-	case "warranty_check":
-		return "保修判断如下：\n```json\n" + string(raw) + "\n```"
-	case "create_after_sales_ticket":
-		return "售后工单已创建：\n```json\n" + string(raw) + "\n```"
-	default:
-		return string(raw)
-	}
 }
 
 func validateToolData(name string, data any) error {

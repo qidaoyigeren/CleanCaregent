@@ -109,6 +109,9 @@ func (r *LLMReflector) ReviewContext(
 	if groundResult.ShouldTransfer {
 		return groundResult
 	}
+	if groundResult.Action == "remove_unsupported" {
+		return groundResult
+	}
 	// A diagnosis Skill deliberately asks one discriminating question per turn.
 	// Do not let the semantic reviewer misclassify that controlled intermediate
 	// response as an incomplete final answer.
@@ -131,7 +134,7 @@ func (r *LLMReflector) ReviewContext(
 	}
 
 	// Merge LLM findings with rule-based result.
-	return r.mergeResults(groundResult, llmResult)
+	return r.mergeResults(groundResult, llmResult, request.Intent)
 }
 
 func shouldUseGroundingOnly(intentType intent.Type, ground ReflectionResult) bool {
@@ -139,7 +142,11 @@ func shouldUseGroundingOnly(intentType intent.Type, ground ReflectionResult) boo
 		return false
 	}
 	switch intentType {
-	case intent.ProductParameter, intent.UsageInstruction,
+	case intent.ProductParameter, intent.AccessoryCompatibility,
+		intent.ProductComparison, intent.PurchaseRecommendation,
+		intent.UsageInstruction,
+		intent.PriceQuery, intent.InventoryQuery, intent.OrderQuery,
+		intent.WarrantyQuery, intent.ReturnEligibility, intent.CreateAfterSalesTicket,
 		intent.Chitchat, intent.OutOfScope, intent.Clarification:
 		return true
 	default:
@@ -191,8 +198,10 @@ func (r *LLMReflector) reviewWithLLM(
 func (r *LLMReflector) mergeResults(
 	ground ReflectionResult,
 	llm llmReflectionResult,
+	intentType intent.Type,
 ) ReflectionResult {
 	result := ground
+	diagnosisAdvisory := intentType == intent.Troubleshooting
 
 	// If LLM found the answer is a fail, escalate.
 	if llm.OverallVerdict == "fail" {
@@ -211,8 +220,12 @@ func (r *LLMReflector) mergeResults(
 			result.Warnings = append(result.Warnings, "llm_clarify_needed")
 			result.Action = "clarify"
 		case "regenerate":
-			result.Warnings = append(result.Warnings, "llm_regenerate_needed")
-			result.Action = "regenerate"
+			if diagnosisAdvisory {
+				result.Warnings = append(result.Warnings, "llm_regenerate_advisory")
+			} else {
+				result.Warnings = append(result.Warnings, "llm_regenerate_needed")
+				result.Action = "regenerate"
+			}
 		}
 	}
 
@@ -227,11 +240,19 @@ func (r *LLMReflector) mergeResults(
 		if !strings.EqualFold(verification.Status, "unsupported") {
 			continue
 		}
+		if diagnosisAdvisory {
+			result.Warnings = append(result.Warnings, "llm_unsupported_advisory:"+verification.Claim)
+			continue
+		}
 		if !containsStringInSlice(result.UnsupportedClaims, verification.Claim) {
 			result.UnsupportedClaims = append(result.UnsupportedClaims, verification.Claim)
 		}
 	}
 	for _, claim := range llm.FactualAccuracy.UnsupportedClaims {
+		if diagnosisAdvisory {
+			result.Warnings = append(result.Warnings, "llm_unsupported_advisory:"+claim)
+			continue
+		}
 		if !containsStringInSlice(result.UnsupportedClaims, claim) {
 			result.UnsupportedClaims = append(result.UnsupportedClaims, claim)
 		}
@@ -288,15 +309,26 @@ func extractClaims(answer string) []string {
 
 func buildEvidenceContextForReflection(evidences []Evidence) string {
 	var builder strings.Builder
+	if len(evidences) > 8 {
+		evidences = evidences[:8]
+	}
 	for _, item := range evidences {
 		fmt.Fprintf(&builder, "[%s] 类型：%s\n标题：%s\n内容：%s\n\n",
-			item.ID, item.Kind, item.Title, item.Content,
+			item.ID, item.Kind, item.Title, truncateReflectionEvidence(item.Content, 800),
 		)
 	}
 	if builder.Len() == 0 {
 		return "(无证据)"
 	}
 	return builder.String()
+}
+
+func truncateReflectionEvidence(value string, maxRunes int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if maxRunes <= 0 || len(runes) <= maxRunes {
+		return string(runes)
+	}
+	return string(runes[:maxRunes]) + "..."
 }
 
 func containsStringInSlice(slice []string, target string) bool {

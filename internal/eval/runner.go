@@ -26,6 +26,7 @@ type RunRequest struct {
 	DatasetVersion string
 	SystemVersion  string
 	MaxCases       int
+	CaseIDs        []string
 }
 
 func NewRunner(
@@ -91,11 +92,15 @@ func (r *Runner) prepareRun(
 	if request.SystemVersion == "" {
 		request.SystemVersion = "agentic-local"
 	}
-	cases := DefaultCases()
+	allCases := DefaultCases()
+	cases, err := selectCases(allCases, request.CaseIDs)
+	if err != nil {
+		return Run{}, nil, request, err
+	}
 	if request.MaxCases > 0 && request.MaxCases < len(cases) {
 		cases = cases[:request.MaxCases]
 	}
-	if err := r.store.UpsertCases(ctx, request.DatasetVersion, DefaultCases()); err != nil {
+	if err := r.store.UpsertCases(ctx, request.DatasetVersion, allCases); err != nil {
 		return Run{}, nil, request, fmt.Errorf("upsert eval cases: %w", err)
 	}
 	now := time.Now().UTC()
@@ -110,6 +115,42 @@ func (r *Runner) prepareRun(
 		return Run{}, nil, request, err
 	}
 	return run, cases, request, nil
+}
+
+func selectCases(cases []Case, caseIDs []string) ([]Case, error) {
+	if len(caseIDs) == 0 {
+		return cases, nil
+	}
+	selected := make(map[string]struct{}, len(caseIDs))
+	for _, caseID := range caseIDs {
+		caseID = strings.TrimSpace(caseID)
+		if caseID != "" {
+			selected[caseID] = struct{}{}
+		}
+	}
+	result := make([]Case, 0, len(selected))
+	found := make(map[string]struct{}, len(selected))
+	for _, evalCase := range cases {
+		if _, ok := selected[evalCase.CaseID]; !ok {
+			continue
+		}
+		result = append(result, evalCase)
+		found[evalCase.CaseID] = struct{}{}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("none of the requested case_ids exist")
+	}
+	if len(found) != len(selected) {
+		missing := make([]string, 0, len(selected)-len(found))
+		for caseID := range selected {
+			if _, ok := found[caseID]; !ok {
+				missing = append(missing, caseID)
+			}
+		}
+		sort.Strings(missing)
+		return nil, fmt.Errorf("unknown case_ids: %s", strings.Join(missing, ", "))
+	}
+	return result, nil
 }
 
 func (r *Runner) executeRun(
@@ -245,11 +286,15 @@ func (r *Runner) runCase(ctx context.Context, userID string, evalCase Case) Case
 		ToolParams:  map[string]any{},
 	}
 	for _, evidence := range askResult.Result.Evidences {
-		if evidence.Kind != "kb_chunk" {
-			continue
+		if strings.TrimSpace(evidence.Content) != "" {
+			output.Contexts = append(
+				output.Contexts,
+				strings.TrimSpace(evidence.Title+"\n"+evidence.Content),
+			)
 		}
-		output.Documents = append(output.Documents, documentID(evidence.SourceID))
-		output.Contexts = append(output.Contexts, evidence.Content)
+		if evidence.Kind == "kb_chunk" {
+			output.Documents = append(output.Documents, documentID(evidence.SourceID))
+		}
 	}
 	for _, call := range traceRecord.ToolCalls {
 		output.Tools = append(output.Tools, call.ToolName)
@@ -293,7 +338,7 @@ func (r *Runner) runCase(ctx context.Context, userID string, evalCase Case) Case
 	passed := true
 	errorType := ""
 	for _, metric := range metrics {
-		if metric.Name == "latency_ms" || metric.Name == "token_count" || metric.Name == "react_steps" {
+		if nonBlockingMetric(metric.Name) {
 			continue
 		}
 		if !metric.Pass {
@@ -339,7 +384,10 @@ func (r *Runner) runCaseWithoutTrace(
 		output.EvidenceIDs = append(output.EvidenceIDs, evidence.ID)
 		if evidence.Kind == "kb_chunk" {
 			output.Documents = append(output.Documents, documentID(evidence.SourceID))
-			output.Contexts = append(output.Contexts, evidence.Content)
+			output.Contexts = append(
+				output.Contexts,
+				strings.TrimSpace(evidence.Title+"\n"+evidence.Content),
+			)
 		}
 	}
 	metrics, err := r.evaluator.Evaluate(ctx, evalCase, output)
@@ -354,7 +402,7 @@ func (r *Runner) runCaseWithoutTrace(
 	passed := true
 	errorType := ""
 	for _, metric := range metrics {
-		if metric.Name == "latency_ms" || metric.Name == "token_count" || metric.Name == "react_steps" {
+		if nonBlockingMetric(metric.Name) {
 			continue
 		}
 		if !metric.Pass {
@@ -373,6 +421,15 @@ func (r *Runner) runCaseWithoutTrace(
 		ErrorType:    errorType,
 		LatencyMS:    output.LatencyMS,
 		TokenCount:   output.TokenCount,
+	}
+}
+
+func nonBlockingMetric(name string) bool {
+	switch name {
+	case "latency_ms", "token_count", "react_steps", "efficiency_score":
+		return true
+	default:
+		return false
 	}
 }
 

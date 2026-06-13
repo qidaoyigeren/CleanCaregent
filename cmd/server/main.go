@@ -211,7 +211,11 @@ func main() {
 				logger.Fatal("register tool", zap.String("tool", value.Name()), zap.Error(registerErr))
 			}
 		}
-		toolExecutor := tool.NewExecutor(toolRegistry, toolLogStore, cfg.Tool.Timeout)
+		toolExecutor := tool.NewExecutor(
+			toolRegistry,
+			toolLogStore,
+			cfg.Tool.Timeout,
+		).WithDataScope(cfg.Tool.DataScope)
 		skillRegistry := skill.NewRegistry()
 		skillConfig := skill.WorkflowConfig{
 			DenseTopK:     cfg.RAG.DenseTopK,

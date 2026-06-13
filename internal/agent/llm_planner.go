@@ -124,6 +124,9 @@ func (p *LLMPlanner) CompletePlan(ctx context.Context, request PlanRequest) (*Pl
 	if p.llm == nil || p.prompts == nil || fallback.Mode != "plan_execute" {
 		return fallback, nil
 	}
+	if preferRuleCompletePlan(request.Intent.Secondary) {
+		return fallback, nil
+	}
 	plan, err := p.generateCompletePlan(ctx, request, "", "")
 	if err != nil || len(plan.Steps) == 0 {
 		return fallback, nil
@@ -133,6 +136,21 @@ func (p *LLMPlanner) CompletePlan(ctx context.Context, request PlanRequest) (*Pl
 		return fallback, nil
 	}
 	return plan, nil
+}
+
+func preferRuleCompletePlan(intentType intent.Type) bool {
+	switch intentType {
+	case intent.ProductComparison,
+		intent.PurchaseRecommendation,
+		intent.AccessoryCompatibility,
+		intent.Troubleshooting,
+		intent.WarrantyQuery,
+		intent.ReturnEligibility,
+		intent.CreateAfterSalesTicket:
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *LLMPlanner) RevisePlan(
@@ -256,6 +274,12 @@ func (p *LLMPlanner) validateCompleteSteps(
 			if !containsString(request.AllowedTools, step.ToolName) {
 				return nil, fmt.Errorf("complete plan selected non-whitelisted tool %q", step.ToolName)
 			}
+			if !toolRequestedForPlan(request, step.ToolName) {
+				return nil, fmt.Errorf("complete plan selected unrequested tool %q", step.ToolName)
+			}
+			if err := validateKnownProductRefs(step.Params); err != nil {
+				return nil, err
+			}
 		case ActionRunSkill:
 			if !skillAllowedForIntent(request.Intent.Secondary, step.SkillName) {
 				return nil, fmt.Errorf(
@@ -281,8 +305,82 @@ func (p *LLMPlanner) validateCompleteSteps(
 		steps[len(steps)-1].Action != ActionClarify {
 		steps = append(steps, finishStep(len(steps)+1, "complete_plan_finish"))
 	}
+	if steps[len(steps)-1].Action != ActionFinish &&
+		steps[len(steps)-1].Action != ActionClarify {
+		return nil, errors.New("complete plan has no terminal step")
+	}
 	addSequentialDependencies(steps)
 	return steps, nil
+}
+
+func toolRequestedForPlan(request PlanRequest, toolName string) bool {
+	switch toolName {
+	case "price_query":
+		return request.Intent.Secondary == intent.PriceQuery ||
+			containsIntent(request.Intent.SecondaryIntents, intent.PriceQuery) ||
+			containsAnyFold(request.Query, "价格", "多少钱", "售价", "到手价", "查价", "报价")
+	case "inventory_check":
+		return request.Intent.Secondary == intent.InventoryQuery ||
+			containsIntent(request.Intent.SecondaryIntents, intent.InventoryQuery) ||
+			containsAnyFold(request.Query, "库存", "有货", "现货", "没货", "几台")
+	default:
+		return true
+	}
+}
+
+func validateKnownProductRefs(params map[string]any) error {
+	raw, exists := params["product_refs"]
+	if !exists {
+		return nil
+	}
+	refs := stringSliceValue(raw)
+	known := map[string]struct{}{
+		"T20": {}, "X20 PRO": {}, "R10": {}, "R20": {}, "P400": {},
+		"P500": {}, "W300": {}, "W500": {}, "H100": {}, "H200": {},
+	}
+	for _, ref := range refs {
+		normalized := strings.ToUpper(strings.Join(strings.Fields(ref), " "))
+		if _, ok := known[normalized]; !ok {
+			return fmt.Errorf("complete plan selected unknown product ref %q", ref)
+		}
+	}
+	return nil
+}
+
+func containsIntent(values []intent.Type, expected intent.Type) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAnyFold(value string, candidates ...string) bool {
+	value = strings.ToLower(value)
+	for _, candidate := range candidates {
+		if strings.Contains(value, strings.ToLower(candidate)) {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSliceValue(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				result = append(result, text)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
 }
 
 func cloneAnyMap(source map[string]any) map[string]any {
@@ -321,6 +419,16 @@ func (p *LLMPlanner) NextStep(
 				Query:      request.Query,
 				Params:     stringMapToAny(request.Intent.Entities),
 				ReasonCode: "guarded_skill_entry",
+			}, nil
+		}
+		if toolName := guardedToolForIntent(request.Intent); toolName != "" {
+			return &PlanStep{
+				StepID:     "step_01",
+				Action:     ActionCallTool,
+				ToolName:   toolName,
+				Query:      request.Query,
+				Params:     stringMapToAny(request.Intent.Entities),
+				ReasonCode: "guarded_tool_entry",
 			}, nil
 		}
 	}
@@ -518,6 +626,22 @@ func guardedSkillForIntent(intentType intent.Type) string {
 	}
 }
 
+func guardedToolForIntent(result intent.Result) string {
+	switch result.Secondary {
+	case intent.PriceQuery:
+		return "price_query"
+	case intent.InventoryQuery:
+		return "inventory_check"
+	case intent.OrderQuery:
+		if result.Entities["order_no"] == "" {
+			return "user_purchase_history"
+		}
+		return "order_lookup"
+	default:
+		return ""
+	}
+}
+
 func (p *LLMPlanner) enhancePlan(ctx context.Context, request PlanRequest, plan *Plan) (*Plan, error) {
 	// Use the LLM to generate better search queries for the first retrieve step.
 	tmpl, err := p.prompts.Get(prompt.ScenarioPlan)
@@ -648,7 +772,7 @@ func evaluatePlan(request PlanRequest, plan *Plan) PlanEvaluation {
 		}
 	}
 	if terminalIndex < 0 {
-		evaluation.Score--
+		evaluation.Score -= 2
 		evaluation.Warnings = append(evaluation.Warnings, "missing_terminal_action")
 	}
 	if hasDependencyCycle(plan.Steps) {

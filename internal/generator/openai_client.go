@@ -112,13 +112,24 @@ func (c *OpenAIClient) GenerateWithScenario(
 // buildEvidenceContext formats search results into the [EN] evidence format.
 func buildEvidenceContext(evidence []rag.SearchResult) string {
 	var builder strings.Builder
+	if len(evidence) > 10 {
+		evidence = evidence[:10]
+	}
 	for index, item := range evidence {
 		fmt.Fprintf(&builder, "[E%d] 标题：%s\n文档：%s\n内容：%s\n\n",
 			index+1,
 			item.Title,
 			item.DocumentID,
-			item.Content,
+			truncateEvidence(item.Content, 900),
 		)
 	}
 	return builder.String()
+}
+
+func truncateEvidence(value string, maxRunes int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if maxRunes <= 0 || len(runes) <= maxRunes {
+		return string(runes)
+	}
+	return string(runes[:maxRunes]) + "..."
 }

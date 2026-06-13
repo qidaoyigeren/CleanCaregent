@@ -12,12 +12,13 @@
 - Evidence ID、LLM Reflection、确定性 Grounding Review、检索重试和转人工策略。
 - Prompt 模板注册、场景化生成、版本历史、切换和回滚。
 - 143 篇 mock 文档、200 条评估集、异步 Eval Runner、LLM Judge 和 bad case 分类。
+- 真实模型完整 200 条严格通过率 71.5%，对比 82.4%，推荐 80.8%。
 
 ## 进阶增强已完成
 
 - OpenAI-compatible LLM 多供应商顺序 fallback、模型级路由和三态熔断器。
 - OpenAI-compatible Embedding fallback 到本地哈希向量。
-- BGE/GTE 兼容 Rerank 客户端，失败时回退本地词法排序/RRF 并记录 metadata。
+- 已启用 SiliconFlow BGE Reranker，失败时回退本地词法排序/RRF 并记录 metadata。
 - 知识文档版本原子激活，旧版本标记为 superseded，并清理旧 Qdrant point。
 - 实际 LLM token usage 纳入 Agent token 预算和 Trace。
 - Redis 分布式限流，Redis 异常时回退进程内限流。
@@ -37,7 +38,7 @@
 - Prompt 版本当前由进程内 Registry 管理，尚无数据库持久化和管理 UI。
 - 尚未实现超过 5 轮后的异步 LLM 摘要压缩与长期用户画像。
 - Cross-Encoder Reranker 依赖外部兼容服务，仓库不内置模型推理服务。
-- 旧实验报告是本地替代模型基线；当前外部模型配置下尚未重跑完整 200 条回归。
+- 已完成真实外部模型完整 200 条回归，但结果是单机串行评测，不代表并发 SLA。
 - 评估集与 143 篇知识文档是项目 mock 数据，不是企业真实客服数据。
 - 未进行大规模生产压测、真实支付/物流联调或生产 SLA 验证。
 

@@ -17,6 +17,12 @@ func TestGroundingReflectorRejectsUnsupportedNumber(t *testing.T) {
 	if !result.LowConfidence || len(result.UnsupportedClaims) == 0 {
 		t.Fatalf("result = %#v", result)
 	}
+	if result.Action != "remove_unsupported" {
+		t.Fatalf("action = %q", result.Action)
+	}
+	if result.Answer != "T20 吸力为 9000Pa。" {
+		t.Fatalf("low-risk answer should be preserved for local repair: %q", result.Answer)
+	}
 }
 
 func TestGroundingReflectorAcceptsToolBackedWarranty(t *testing.T) {
@@ -28,6 +34,36 @@ func TestGroundingReflectorAcceptsToolBackedWarranty(t *testing.T) {
 		[]Evidence{{ID: "E1", Kind: "tool_result", Content: `{"in_warranty":true}`}},
 	)
 	if result.LowConfidence {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestGroundingReflectorTrustsValidatedTicketToolOverWeakKnowledgeScores(t *testing.T) {
+	reflector := NewGroundingReflector()
+	result := reflector.Review(
+		"我确认创建售后工单",
+		intent.CreateAfterSalesTicket,
+		"已按您的明确确认创建售后工单，工单号 AS_TEST_001，本次提交使用幂等键防重复。",
+		[]Evidence{
+			{
+				ID:      "E1",
+				Kind:    "kb_chunk",
+				Content: "售后政策",
+				Metadata: map[string]any{
+					"rerank_score": 0.01,
+				},
+			},
+			{
+				ID:      "E2",
+				Kind:    "tool_result",
+				Content: `{"ticket_no":"AS_TEST_001","status":"created"}`,
+				Metadata: map[string]any{
+					"tool_name": "create_after_sales_ticket",
+				},
+			},
+		},
+	)
+	if result.LowConfidence || result.Action == "rerun_retrieval" || result.ShouldTransfer {
 		t.Fatalf("result = %#v", result)
 	}
 }
@@ -82,6 +118,43 @@ func TestGroundingReflectorAcceptsUserBudgetAndToolPrice(t *testing.T) {
 	}
 }
 
+func TestGroundingReflectorAcceptsThousandsPriceAndWarrantyMonths(t *testing.T) {
+	reflector := NewGroundingReflector()
+	result := reflector.Review(
+		"查订单状态",
+		intent.OrderQuery,
+		"订单商品价格为 2,099.00元，整机保修 12个月。[E1]",
+		[]Evidence{{
+			ID:   "E1",
+			Kind: "tool_result",
+			Content: `{
+				"unit_price_cents": 209900,
+				"warranty_months": 12
+			}`,
+		}},
+	)
+	if len(result.UnsupportedClaims) > 0 {
+		t.Fatalf("unsupported claims = %v", result.UnsupportedClaims)
+	}
+}
+
+func TestGroundingReflectorAcceptsUserAreaAndBudgetWithoutRepeatedUnits(t *testing.T) {
+	reflector := NewGroundingReflector()
+	result := reflector.Review(
+		"120平两只猫预算5000，推荐扫地机器人",
+		intent.PurchaseRecommendation,
+		"按 120㎡ 和 5000元预算筛选。[E1]",
+		[]Evidence{{
+			ID:      "E1",
+			Kind:    "kb_chunk",
+			Content: "养宠家庭应关注防缠绕、续航和地毯策略。",
+		}},
+	)
+	if len(result.UnsupportedClaims) > 0 {
+		t.Fatalf("unsupported claims = %v", result.UnsupportedClaims)
+	}
+}
+
 func TestGroundingReflectorRerunsWhenTopEvidenceIsIrrelevant(t *testing.T) {
 	reflector := NewGroundingReflector()
 	result := reflector.Review(
@@ -95,6 +168,25 @@ func TestGroundingReflectorRerunsWhenTopEvidenceIsIrrelevant(t *testing.T) {
 		},
 	)
 	if result.Action != "rerun_retrieval" || !result.LowConfidence {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestGroundingReflectorUsesRemoteRerankerScoreCalibration(t *testing.T) {
+	reflector := NewGroundingReflector()
+	result := reflector.Review(
+		"猫毛多怎么选",
+		intent.PurchaseRecommendation,
+		"优先考虑防缠绕和自动集尘。[E1]",
+		[]Evidence{{
+			ID: "E1", Kind: "kb_chunk", Content: "养宠家庭选购指南",
+			Metadata: map[string]any{
+				"rerank_score":    0.15,
+				"rerank_provider": "BAAI/bge-reranker-v2-m3",
+			},
+		}},
+	)
+	if result.LowConfidence || result.Action == "rerun_retrieval" {
 		t.Fatalf("result = %#v", result)
 	}
 }

@@ -106,6 +106,9 @@ func (c *Clarifier) clarifyWithRules(
 	if containsMissing(missingInfo, "意图") {
 		return "您是想查产品参数、比较型号、获取选购推荐，还是处理故障或售后问题？请告诉我最想先解决的一项。"
 	}
+	if containsMissing(missingInfo, "用户确认") {
+		return "创建售后工单会写入一条新的售后记录。请核对订单号和问题描述后，明确回复“确认创建售后工单”；未确认前我不会执行创建。"
+	}
 	if containsMissing(missingInfo, "产品型号") {
 		if containsAmbiguousReference(query) {
 			return "您提到的“那款/这台”具体是哪款产品？例如扫地机器人是 T20 还是 X20 Pro，净化器是 P400 还是 P500。型号不同，参数和配件不能混用。"
@@ -137,6 +140,12 @@ func (c *Clarifier) clarifyWithRules(
 
 	case intent.OrderQuery:
 		return "我需要确认一下：\n1. 您的订单号是多少？（可以在 APP 的'我的订单'里找到）\n2. 或者您可以告诉我大概什么时候购买的、是什么产品，我帮您查一下记录。"
+
+	case intent.CreateAfterSalesTicket:
+		if !hasOrder {
+			return "创建售后工单前请提供订单号和具体问题描述。信息核对完成后，还需要您明确确认创建。"
+		}
+		return "请核对订单号和问题描述后，明确回复“确认创建售后工单”；未确认前我不会执行创建。"
 
 	default:
 		return "请补充具体型号、品类或您希望查询的内容，这样我才能更好地为您服务。"

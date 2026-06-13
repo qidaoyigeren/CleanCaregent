@@ -52,6 +52,8 @@ embedding:
 
 # Rerank: local_lexical is the no-network default. Configure an
 # OpenAI-compatible BGE/GTE rerank endpoint for semantic reranking.
+# A blank reranker key reuses embedding.api_key only when both endpoint
+# hostnames are identical.
 reranker:
   provider: local_lexical
   endpoint: ""
@@ -88,6 +90,7 @@ llm:
 
 tool:
   timeout: 3s
+  data_scope: mock
 
 # Enable LLM-powered intent/rewrite/plan/reflect when llm.provider is openai_compatible.
 prompt:

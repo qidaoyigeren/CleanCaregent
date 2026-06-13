@@ -82,6 +82,23 @@ func TestExecutorWhitelistAndRepeatedCall(t *testing.T) {
 	}
 }
 
+func TestExecutorAnnotatesConfiguredDataScope(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Register(fakeTool{name: "price_query"}); err != nil {
+		t.Fatal(err)
+	}
+	executor := NewExecutor(registry, nil, time.Second).WithDataScope("sandbox")
+	result, err := executor.Execute(context.Background(), Call{
+		TraceID: "tr_scope", CallID: "call_scope", Name: "price_query",
+	}, []string{"price_query"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.DataScope != "sandbox" {
+		t.Fatalf("data scope = %q", result.DataScope)
+	}
+}
+
 func TestExecutorRejectsNonWhitelistedTool(t *testing.T) {
 	registry := NewRegistry()
 	_ = registry.Register(fakeTool{name: "price_query"})

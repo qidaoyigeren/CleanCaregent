@@ -20,6 +20,7 @@ type Result struct {
 	CallID     string
 	Success    bool
 	Data       any
+	DataScope  string
 	ErrorCode  string
 	Message    string
 	StartedAt  time.Time

@@ -12,6 +12,8 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+const retrievalCacheVersion = "v3"
+
 type Cached struct {
 	next   rag.Retriever
 	client goredis.UniversalClient
@@ -58,7 +60,7 @@ func (c *Cached) Search(
 func retrievalCacheKey(request rag.SearchRequest) string {
 	raw, _ := json.Marshal(request)
 	sum := sha256.Sum256(raw)
-	return "cleancare:retrieval:v1:" + hex.EncodeToString(sum[:])
+	return "cleancare:retrieval:" + retrievalCacheVersion + ":" + hex.EncodeToString(sum[:])
 }
 
 func markCacheState(results []rag.SearchResult, hit bool) {

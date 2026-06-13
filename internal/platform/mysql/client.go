@@ -4,14 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"CleanCaregent/internal/config"
 
-	_ "github.com/go-sql-driver/mysql"
+	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
 func Open(ctx context.Context, cfg config.MySQLConfig) (*sql.DB, error) {
-	db, err := sql.Open("mysql", cfg.DSN)
+	dsn, err := utcSessionDSN(cfg.DSN)
+	if err != nil {
+		return nil, fmt.Errorf("normalize mysql dsn: %w", err)
+	}
+	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open mysql: %w", err)
 	}
@@ -27,4 +32,21 @@ func Open(ctx context.Context, cfg config.MySQLConfig) (*sql.DB, error) {
 		return nil, fmt.Errorf("ping mysql: %w", err)
 	}
 	return db, nil
+}
+
+func utcSessionDSN(dsn string) (string, error) {
+	parsed, err := mysqldriver.ParseDSN(dsn)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Params == nil {
+		parsed.Params = make(map[string]string)
+	}
+	if _, configured := parsed.Params["time_zone"]; !configured {
+		parsed.Params["time_zone"] = "'+00:00'"
+	}
+	if parsed.Loc == nil {
+		parsed.Loc = time.UTC
+	}
+	return parsed.FormatDSN(), nil
 }

@@ -129,3 +129,57 @@ func TestValidateRejectsMoreThanFiveAgentSteps(t *testing.T) {
 		t.Fatal("Validate() expected max steps error")
 	}
 }
+
+func TestLoadInheritsRerankerKeyForSameProviderHost(t *testing.T) {
+	t.Setenv("CLEANCARE_EMBEDDING_API_KEY", "shared-provider-key")
+	t.Setenv("CLEANCARE_RERANKER_API_KEY", "")
+	path := filepath.Join(t.TempDir(), "same-host.yaml")
+	content := []byte(`
+embedding:
+  provider: openai_compatible
+  endpoint: https://api.siliconflow.cn/v1/embeddings
+  model: BAAI/bge-large-zh-v1.5
+reranker:
+  provider: openai_compatible
+  endpoint: https://api.siliconflow.cn/v1/rerank
+  model: BAAI/bge-reranker-v2-m3
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Reranker.APIKey != cfg.Embedding.APIKey {
+		t.Fatalf("reranker key was not inherited from the same provider host")
+	}
+}
+
+func TestLoadDoesNotShareProviderKeyAcrossHosts(t *testing.T) {
+	t.Setenv("CLEANCARE_EMBEDDING_API_KEY", "embedding-only-key")
+	t.Setenv("CLEANCARE_RERANKER_API_KEY", "")
+	path := filepath.Join(t.TempDir(), "different-host.yaml")
+	content := []byte(`
+embedding:
+  provider: openai_compatible
+  endpoint: https://api.siliconflow.cn/v1/embeddings
+  model: BAAI/bge-large-zh-v1.5
+reranker:
+  provider: openai_compatible
+  endpoint: https://rerank.example.com/v1/rerank
+  model: example-reranker
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Reranker.APIKey != "" {
+		t.Fatal("reranker key must not be inherited across provider hosts")
+	}
+}

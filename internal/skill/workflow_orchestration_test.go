@@ -23,8 +23,12 @@ func (r *recordingRetriever) Search(
 	r.requests = append(r.requests, request)
 	index := len(r.requests)
 	r.mu.Unlock()
+	modelName := "scenario"
+	if len(request.Filter.Models) > 0 {
+		modelName = request.Filter.Models[0]
+	}
 	return []rag.SearchResult{{
-		ChunkID:     request.Filter.Models[0] + request.Filter.DocTypes[0],
+		ChunkID:     modelName + request.Filter.DocTypes[0],
 		DocumentID:  "doc",
 		Title:       "evidence",
 		Content:     "grounded evidence",
@@ -89,5 +93,40 @@ func TestProductComparisonRetrievesEachModelAndScenarioGuide(t *testing.T) {
 	}
 	if !modelRoutes["T20"] || !modelRoutes["X20 Pro"] || !hasGuideRoute {
 		t.Fatalf("requests = %#v", retriever.requests)
+	}
+}
+
+func TestAfterSalesPolicyRetrievalIgnoresProductEntityFilters(t *testing.T) {
+	retriever := &recordingRetriever{}
+	workflow := NewAfterSalesJudgement(
+		retriever,
+		workflowGenerator{},
+		nil,
+		WorkflowConfig{DenseTopK: 5, KeywordTopK: 5, RerankTopK: 6},
+	)
+	_, err := workflow.Run(context.Background(), Request{
+		TraceID: "tr_after_sales",
+		Query:   "CC20260603001这单的P400保修到哪天",
+		Intent: intent.Result{
+			Secondary: intent.WarrantyQuery,
+			Entities: map[string]string{
+				"order_no": "CC20260603001",
+				"models":   "P400",
+				"category": "air_purifier",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retriever.requests) != 1 {
+		t.Fatalf("retrieval requests = %d", len(retriever.requests))
+	}
+	request := retriever.requests[0]
+	if len(request.Filter.Models) != 0 || len(request.Filter.Categories) != 0 {
+		t.Fatalf("policy retrieval leaked entity filters: %#v", request.Filter)
+	}
+	if len(request.Filter.DocTypes) == 0 || request.Filter.DocTypes[0] != "after_sales_policy" {
+		t.Fatalf("policy doc types = %#v", request.Filter.DocTypes)
 	}
 }

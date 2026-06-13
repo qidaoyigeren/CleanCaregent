@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/llm"
 	"CleanCaregent/internal/prompt"
 )
@@ -49,7 +50,7 @@ func NewLLMQueryRewriter(llmClient *llm.Client, prompts *prompt.Registry) *LLMQu
 
 // Rewrite performs LLM-based query rewriting with rule-based fallback.
 func (r *LLMQueryRewriter) Rewrite(ctx context.Context, request RewriteRequest) (RewriteResult, error) {
-	if r.llm == nil || r.prompts == nil {
+	if r.llm == nil || r.prompts == nil || !shouldUseLLMRewrite(request) {
 		return r.fallback.Rewrite(ctx, request)
 	}
 
@@ -76,6 +77,9 @@ func (r *LLMQueryRewriter) Rewrite(ctx context.Context, request RewriteRequest) 
 	// Merge with rule-based entities (rule is better at regex extraction).
 	entities := cloneStringMap(request.Intent.Entities)
 	for key, value := range llmOut.ResolvedEntities {
+		if strings.TrimSpace(entities[key]) != "" {
+			continue
+		}
 		if normalized := rewriteEntityString(value); normalized != "" {
 			entities[key] = normalized
 		}
@@ -106,6 +110,26 @@ func (r *LLMQueryRewriter) Rewrite(ctx context.Context, request RewriteRequest) 
 		NeedToolCalls:   uniqueStrings(llmOut.NeedToolCalls),
 		TermsMapping:    llmOut.TermsMapping,
 	}, nil
+}
+
+func shouldUseLLMRewrite(request RewriteRequest) bool {
+	query := strings.TrimSpace(request.Query)
+	if query == "" {
+		return false
+	}
+	if containsReference(query) {
+		return true
+	}
+	if len(request.Intent.Entities) > 0 && request.Intent.Confidence >= 0.75 {
+		return false
+	}
+	switch request.Intent.Secondary {
+	case intent.ProductComparison, intent.PurchaseRecommendation:
+		return false
+	case intent.Chitchat, intent.OutOfScope, intent.Clarification:
+		return false
+	}
+	return request.Intent.Confidence < 0.9 || request.Intent.NeedClarify
 }
 
 func rewriteEntityString(value any) string {

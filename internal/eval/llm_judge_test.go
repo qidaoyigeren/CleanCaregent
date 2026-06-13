@@ -46,8 +46,18 @@ func TestCompositeEvaluatorOverridesSemanticMetrics(t *testing.T) {
 	if value := metricValue(metrics, "answer_faithfulness"); value != 0.91 {
 		t.Fatalf("faithfulness = %v", value)
 	}
-	if value := metricValue(metrics, "answer_correctness"); value != 0.83 {
+	if value := metricValue(metrics, "answer_correctness"); value != 1 {
 		t.Fatalf("correctness = %v", value)
+	}
+}
+
+func TestMergeJudgeMetricsKeepsStrongLiteralCorrectness(t *testing.T) {
+	metrics := mergeJudgeMetrics(
+		[]MetricResult{{Name: "answer_correctness", Value: 1, Pass: true}},
+		[]MetricResult{{Name: "answer_correctness", Value: 0, Pass: false}},
+	)
+	if got := metricValue(metrics, "answer_correctness"); got != 1 {
+		t.Fatalf("correctness = %v", got)
 	}
 }
 

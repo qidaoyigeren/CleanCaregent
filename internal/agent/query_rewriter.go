@@ -81,7 +81,9 @@ func (r *RuleQueryRewriter) Rewrite(ctx context.Context, request RewriteRequest)
 }
 
 func containsReference(query string) bool {
-	for _, value := range []string{"那个", "这个", "这台", "它", "我买的"} {
+	for _, value := range []string{
+		"那个", "这个", "那台", "这台", "那款", "这款", "前者", "后者", "它", "我买的",
+	} {
 		if strings.Contains(query, value) {
 			return true
 		}

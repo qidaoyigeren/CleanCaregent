@@ -195,7 +195,9 @@ $env:CLEANCARE_LLM_MODEL = "your-model"
 $env:CLEANCARE_PROMPT_ENABLE_LLM_COMPONENTS = "true"
 ```
 
-Embedding 与 Reranker 也支持独立端点和 fallback。完整字段见 [`configs/config.example.yaml`](configs/config.example.yaml)。
+Embedding 与 Reranker 也支持独立端点和 fallback。同一供应商域名下，Reranker
+未单独配置 Key 时可安全复用 Embedding Key；跨域名不会复用。完整字段见
+[`configs/config.example.yaml`](configs/config.example.yaml)。
 
 ## 主要 API
 
@@ -253,6 +255,9 @@ make eval-regression
 make eval-compare
 ```
 
+定位特定 Bad Case 时可在 `POST /api/v1/admin/eval/runs` 中传入
+`"case_ids":["EVAL-046","EVAL-047"]`，无需重复执行无关用例。
+
 评测任务通过 API 异步执行，使用返回的 `run_no` 查询进度和结果。Trace 可记录意图、检索、工具、步骤、Token、延迟、模型和估算成本；Prometheus 接口输出请求、Token、工具和模型相关指标。
 
 历史报告中的 100 条本地基线仅用于验证链路，不代表当前 200 条数据集或真实模型效果。完整 200 条外部模型回归与大规模并发压测仍待执行。
@@ -302,7 +307,8 @@ GitHub Actions 会执行模块文件检查、后端测试与构建、前端 lint
 
 ## 项目边界
 
-- 动态价格、库存、订单和售后数据均为本地 mock 数据，未接真实 ERP、支付或物流系统。
+- 动态价格、库存、订单和售后数据均为本地 mock 数据，工具结果和 Trace 会标记
+  `data_scope=mock`，未接真实 ERP、支付或物流系统。
 - Tool Registry 借鉴 MCP 的工具描述思想，但项目没有实现完整 MCP 协议。
 - React 界面是开发与演示控制台，不是具备完整 RBAC、OIDC 和审计能力的生产管理后台。
 - Prompt 版本由进程内 Registry 管理，重启后不会持久化激活状态。

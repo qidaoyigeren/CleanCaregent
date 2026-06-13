@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -223,7 +224,8 @@ type LLMFallbackConfig struct {
 }
 
 type ToolConfig struct {
-	Timeout time.Duration `mapstructure:"timeout"`
+	Timeout   time.Duration `mapstructure:"timeout"`
+	DataScope string        `mapstructure:"data_scope"`
 }
 
 type TracingConfig struct {
@@ -281,10 +283,34 @@ func Load(path string) (Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
+	inheritSameProviderCredentials(&cfg)
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func inheritSameProviderCredentials(cfg *Config) {
+	if cfg == nil ||
+		cfg.Reranker.Provider != "openai_compatible" ||
+		strings.TrimSpace(cfg.Reranker.APIKey) != "" ||
+		cfg.Embedding.Provider != "openai_compatible" ||
+		strings.TrimSpace(cfg.Embedding.APIKey) == "" ||
+		!sameEndpointHost(cfg.Reranker.Endpoint, cfg.Embedding.Endpoint) {
+		return
+	}
+	cfg.Reranker.APIKey = cfg.Embedding.APIKey
+}
+
+func sameEndpointHost(left, right string) bool {
+	leftURL, leftErr := url.Parse(strings.TrimSpace(left))
+	rightURL, rightErr := url.Parse(strings.TrimSpace(right))
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	leftHost := strings.ToLower(leftURL.Hostname())
+	rightHost := strings.ToLower(rightURL.Hostname())
+	return leftHost != "" && leftHost == rightHost
 }
 
 func (c Config) Validate() error {
@@ -526,6 +552,11 @@ func (c Config) Validate() error {
 	if c.Tool.Timeout <= 0 {
 		return errors.New("tool.timeout must be positive")
 	}
+	switch c.Tool.DataScope {
+	case "mock", "sandbox", "external":
+	default:
+		return errors.New("tool.data_scope must be mock, sandbox, or external")
+	}
 	if strings.TrimSpace(c.Tracing.ServiceName) == "" {
 		return errors.New("tracing.service_name is required")
 	}
@@ -674,6 +705,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.fallbacks", []map[string]any{})
 	v.SetDefault("llm.providers", []map[string]any{})
 	v.SetDefault("tool.timeout", "3s")
+	v.SetDefault("tool.data_scope", "mock")
 	v.SetDefault("tracing.enabled", false)
 	v.SetDefault("tracing.service_name", "clean-care-agent")
 	v.SetDefault("tracing.service_version", "dev")

@@ -147,12 +147,14 @@ reranker:
   fallbacks: []
 
 # Example: SiliconFlow bge-reranker
+# When the endpoint host matches embedding.endpoint and api_key is empty,
+# the server reuses embedding.api_key instead of requiring a duplicate secret.
 # reranker:
 #   provider: openai_compatible
 #   endpoint: https://api.siliconflow.cn/v1/rerank
-#   api_key: sk-your-siliconflow-key
+#   api_key: ""
 #   model: BAAI/bge-reranker-v2-m3
-#   request_timeout: 10s
+#   request_timeout: 5s
 
 # LLM provider configuration.
 # extractive: rule-based, no API calls (local fallback).
@@ -189,6 +191,9 @@ llm:
 
 tool:
   timeout: 3s
+  # mock: local reproducible business data; sandbox: test integration;
+  # external: authenticated production business repository.
+  data_scope: mock
 
 # Prompt management and LLM enrichment.
 # When enable_llm_components is true and llm.provider is openai_compatible,

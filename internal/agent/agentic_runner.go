@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"CleanCaregent/internal/embedding"
 	"CleanCaregent/internal/generator"
@@ -207,7 +208,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 
 	// ---- Step 3: Planning ----
 	planCtx, planSpan := otel.Tracer("clean-care-agent/agent").Start(ctx, "planner.plan")
-	toolWhitelist := allowedTools(route.Secondary)
+	toolWhitelist := allowedToolsForRoute(route)
 	planRequest := PlanRequest{
 		TraceID:        request.TraceID,
 		UserID:         request.UserID,
@@ -245,6 +246,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 	useReactivePlanner = useReactivePlanner &&
 		!usePlanExecute &&
 		plan.Mode == "react" &&
+		shouldUseReactivePlanning(route.Secondary) &&
 		r.config.EnableLLMComponents
 	if useReactivePlanner {
 		staticFallback := append([]PlanStep(nil), plan.Steps...)
@@ -291,6 +293,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		evidences                []Evidence
 		answer                   string
 		intentionalClarification bool
+		committedSideEffect      bool
 		finalEvidenceIDs         []string
 		outputTokens             int
 		executedActions          int
@@ -447,10 +450,16 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		}
 		signature := actionSignature(planStep)
 		if _, exists := seenActions[signature]; exists {
-			if !useReactivePlanner {
-				return Result{}, ErrRepeatedAction
+			repeatedStartedAt := time.Now()
+			r.appendTraceStep(ctx, request.TraceID, planStep, "blocked", repeatedStartedAt, map[string]any{
+				"reason":    ErrRepeatedAction.Error(),
+				"recovered": true,
+			})
+			if reviseRemaining(index, ErrRepeatedAction) {
+				continue
 			}
-			planStep = finishStep(index+1, "repeated_action_blocked")
+			planStep = finishStep(index+1, "repeated_action_recovered_with_finish")
+			planStep.Params["blocked_signature"] = signature
 			plan.Steps[index] = planStep
 			signature = actionSignature(planStep)
 		}
@@ -515,9 +524,11 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 				break
 			}
 			dynamicResult, executeErr := r.dynamicExecutor.Execute(ctx, DynamicExecutionRequest{
-				Request: request,
-				Intent:  string(route.Secondary),
-				Step:    planStep,
+				Request:          request,
+				Intent:           string(route.Secondary),
+				SecondaryIntents: intentTypeStrings(route.SecondaryIntents),
+				AllowedTools:     toolWhitelist,
+				Step:             planStep,
 			})
 			if executeErr != nil {
 				stepStatus = "failed"
@@ -530,12 +541,17 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			}
 			answer = dynamicResult.Answer
 			evidences = append(evidences, dynamicResult.Evidences...)
+			if planStep.ToolName == "create_after_sales_ticket" &&
+				hasToolEvidence(dynamicResult.Evidences, planStep.ToolName) {
+				committedSideEffect = true
+			}
 			searchResults = mergeSearchResults(searchResults, dynamicResult.SearchData)
 			for key, value := range dynamicResult.Metadata {
 				stepMetadata[key] = value
 			}
 			if metadataBool(dynamicResult.Metadata, "intentional_clarification") {
 				intentionalClarification = true
+				plan.Steps = plan.Steps[:index+1]
 			}
 			stepMetadata["output"] = map[string]any{
 				"answer_present": dynamicResult.Answer != "",
@@ -557,11 +573,18 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			}
 			searchResults = mergeSearchResults(searchResults, parallelResult.SearchData)
 			evidences = append(evidences, parallelResult.Evidences...)
+			if hasToolEvidence(parallelResult.Evidences, "create_after_sales_ticket") {
+				committedSideEffect = true
+			}
 			if parallelResult.Answer != "" {
 				answer = parallelResult.Answer
 			}
 			for key, value := range parallelResult.Metadata {
 				stepMetadata[key] = value
+			}
+			if metadataBool(parallelResult.Metadata, "intentional_clarification") {
+				intentionalClarification = true
+				plan.Steps = plan.Steps[:index+1]
 			}
 			stepMetadata["output"] = map[string]any{
 				"evidence_count": len(parallelResult.Evidences) + len(parallelResult.SearchData),
@@ -576,7 +599,10 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			}
 
 		case ActionFinish:
-			if answer == "" {
+			if answer == "" ||
+				(!committedSideEffect &&
+					route.NeedDecomposition &&
+					!answerCoversRequestedFacets(answer, request.Query)) {
 				evidences = mergeEvidences(evidences, searchResults)
 				scenario := selectGenerateScenario(route.Secondary)
 				generateCtx, generateSpan := otel.Tracer("clean-care-agent/agent").Start(ctx, "llm.generate")
@@ -792,10 +818,11 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		reflection.Answer = answer
 	}
 	answer = reflection.Answer
-	if reflection.Action == "regenerate" && len(reflection.UnsupportedClaims) > 0 {
+	if (reflection.Action == "regenerate" || reflection.Action == "remove_unsupported") &&
+		len(reflection.UnsupportedClaims) > 0 {
 		answer = removeUnsupportedClaims(answer, reflection.UnsupportedClaims)
 		reflection.Answer = answer
-		reflection.Warnings = append(reflection.Warnings, "unsupported_claims_removed_after_regeneration")
+		reflection.Warnings = append(reflection.Warnings, "unsupported_claims_removed")
 	}
 	if reflection.ShouldTransfer {
 		answer += "\n\n当前结论置信度不足，建议转人工客服复核后再执行售后操作。"
@@ -859,6 +886,14 @@ func (r *AgenticRunner) generateClarification(
 	query string,
 	entities map[string]string,
 ) string {
+	if route.Secondary == intent.CreateAfterSalesTicket {
+		if strings.TrimSpace(entities["order_no"]) == "" {
+			return "请提供订单号和具体问题描述。创建售后工单还需要您明确回复“确认创建售后工单”；在信息完整并确认前，我不会执行创建。"
+		}
+		if !ticketConfirmationPresent(query) {
+			return "请核对订单号和问题描述后，明确回复“确认创建售后工单”；未确认前我不会执行创建。"
+		}
+	}
 	missing := []string{}
 	if entities["models"] == "" && needsModelForIntent(route.Secondary) {
 		if route.Secondary == intent.ProductComparison {
@@ -873,10 +908,29 @@ func (r *AgenticRunner) generateClarification(
 	if route.Secondary == intent.Clarification && len(missing) == 0 {
 		missing = append(missing, "意图")
 	}
+	if route.Secondary == intent.CreateAfterSalesTicket &&
+		!ticketConfirmationPresent(query) {
+		missing = append(missing, "用户确认")
+	}
 	if strings.Contains(query, "够不够用") || strings.Contains(query, "够用不") {
 		missing = append(missing, "参数含义")
 	}
 	return r.clarifier.Clarify(ctx, query, route.Secondary, entities, missing)
+}
+
+func ticketConfirmationPresent(query string) bool {
+	query = strings.TrimSpace(query)
+	for _, marker := range []string{"没确认", "未确认", "没有确认", "不确认", "不要创建"} {
+		if strings.Contains(query, marker) {
+			return false
+		}
+	}
+	for _, marker := range []string{"我确认", "确认创建", "确认提交", "确认给", "确认了"} {
+		if strings.Contains(query, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func needsModelForIntent(t intent.Type) bool {
@@ -950,18 +1004,54 @@ func regenerationQuery(query string, unsupportedClaims []string) string {
 }
 
 func removeUnsupportedClaims(answer string, unsupportedClaims []string) string {
+	claims := make([]string, 0, len(unsupportedClaims))
 	for _, claim := range unsupportedClaims {
-		claim = strings.TrimSpace(claim)
-		if claim == "" {
+		if normalized := normalizeClaimForRemoval(claim); normalized != "" {
+			claims = append(claims, normalized)
+		}
+	}
+	lines := strings.Split(strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(answer), "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		normalizedLine := normalizeClaimForRemoval(line)
+		remove := false
+		for _, claim := range claims {
+			if strings.Contains(normalizedLine, claim) ||
+				(len([]rune(normalizedLine)) >= 6 && strings.Contains(claim, normalizedLine)) {
+				remove = true
+				break
+			}
+		}
+		if remove {
 			continue
 		}
-		answer = strings.ReplaceAll(answer, claim, "")
+		kept = append(kept, line)
 	}
-	answer = strings.TrimSpace(answer)
-	if answer == "" {
+	answer = strings.TrimSpace(strings.Join(kept, "\n"))
+	if !hasSubstantiveContent(answer) {
 		return "当前证据不足，无法形成可靠结论。请补充具体型号或由人工客服复核。"
 	}
 	return answer
+}
+
+func normalizeClaimForRemoval(value string) string {
+	value = citationPattern.ReplaceAllString(value, "")
+	value = strings.ToLower(value)
+	return strings.Map(func(current rune) rune {
+		if unicode.IsLetter(current) || unicode.IsNumber(current) {
+			return current
+		}
+		return -1
+	}, value)
+}
+
+func hasSubstantiveContent(value string) bool {
+	for _, current := range value {
+		if unicode.IsLetter(current) || unicode.IsNumber(current) {
+			return true
+		}
+	}
+	return false
 }
 
 // selectGenerateScenario maps intent types to the appropriate generation scenario.
@@ -1021,9 +1111,14 @@ func (r *AgenticRunner) retrievePlanStep(
 		needRerank = false
 	}
 	models := splitCSV(rewrite.Entities["models"])
+	categories := splitCSV(rewrite.Entities["category"])
 	if boolParam(step.Params["disable_filters"]) {
 		models = nil
+		categories = nil
 		docTypes = nil
+	} else if boolParam(step.Params["disable_entity_filters"]) {
+		models = nil
+		categories = nil
 	}
 
 	type retrievalTask struct {
@@ -1037,6 +1132,7 @@ func (r *AgenticRunner) retrievePlanStep(
 			query: query,
 			filter: rag.MetadataFilter{
 				Models:      models,
+				Categories:  categories,
 				DocTypes:    docTypes,
 				EffectiveAt: &effectiveAt,
 			},
@@ -1044,10 +1140,13 @@ func (r *AgenticRunner) retrievePlanStep(
 		})
 	}
 	originalQuery := strings.TrimSpace(rewrite.Original)
-	if originalQuery != "" && !containsString(queries, originalQuery) {
+	if !boolParam(step.Params["disable_original_recall"]) &&
+		originalQuery != "" && !containsString(queries, originalQuery) {
 		tasks = append(tasks, retrievalTask{
 			query: originalQuery,
 			filter: rag.MetadataFilter{
+				Models:      models,
+				Categories:  categories,
 				EffectiveAt: &effectiveAt,
 			},
 			route: "recall",
@@ -1108,6 +1207,7 @@ func (r *AgenticRunner) retrievePlanStep(
 			Mode:  searchMode,
 			Filter: rag.MetadataFilter{
 				Models:      models,
+				Categories:  categories,
 				DocTypes:    docTypes,
 				EffectiveAt: &effectiveAt,
 			},
@@ -1176,9 +1276,11 @@ func (r *AgenticRunner) executeParallelStep(
 				results[index].result, results[index].err = r.dynamicExecutor.Execute(
 					ctx,
 					DynamicExecutionRequest{
-						Request: request,
-						Intent:  string(route.Secondary),
-						Step:    configured,
+						Request:          request,
+						Intent:           string(route.Secondary),
+						SecondaryIntents: intentTypeStrings(route.SecondaryIntents),
+						AllowedTools:     toolWhitelist,
+						Step:             configured,
 					},
 				)
 			case ActionReflect:
@@ -1193,6 +1295,7 @@ func (r *AgenticRunner) executeParallelStep(
 	merged := DynamicExecutionResult{
 		Metadata: map[string]any{"parallel_substep_count": len(results)},
 	}
+	committedSideEffectAnswer := ""
 	for _, current := range results {
 		status := "success"
 		metadata := map[string]any{
@@ -1216,11 +1319,73 @@ func (r *AgenticRunner) executeParallelStep(
 		}
 		merged.SearchData = mergeSearchResults(merged.SearchData, current.result.SearchData)
 		merged.Evidences = append(merged.Evidences, current.result.Evidences...)
-		if merged.Answer == "" && current.result.Answer != "" {
-			merged.Answer = current.result.Answer
+		if metadataBool(current.result.Metadata, "intentional_clarification") {
+			merged.Metadata["intentional_clarification"] = true
+		}
+		if current.result.Answer != "" {
+			if current.step.Action == ActionCallTool &&
+				isCommittedSideEffectTool(current.step.ToolName) {
+				committedSideEffectAnswer = current.result.Answer
+			}
+			if current.step.Action == ActionCallTool {
+				merged.Answer = removeStaleDynamicClaims(merged.Answer, current.step.ToolName)
+			}
+			if merged.Answer != "" {
+				merged.Answer += "\n\n"
+			}
+			merged.Answer += current.result.Answer
+			if current.step.Action == ActionRunSkill {
+				merged.Evidences = append(merged.Evidences, Evidence{
+					Kind:     "skill_result",
+					SourceID: "skill_result:" + current.step.StepID,
+					Title:    "子任务结论：" + current.step.SkillName,
+					Content:  current.result.Answer,
+					Metadata: map[string]any{
+						"skill_name": current.step.SkillName,
+						"step_id":    current.step.StepID,
+					},
+				})
+			}
 		}
 	}
+	if committedSideEffectAnswer != "" {
+		merged.Answer = committedSideEffectAnswer
+	}
 	return merged, nil
+}
+
+func isCommittedSideEffectTool(toolName string) bool {
+	return toolName == "create_after_sales_ticket"
+}
+
+func removeStaleDynamicClaims(answer, toolName string) string {
+	if strings.TrimSpace(answer) == "" {
+		return answer
+	}
+	var subject string
+	switch toolName {
+	case "price_query":
+		subject = "价格"
+	case "inventory_check":
+		subject = "库存"
+	default:
+		return answer
+	}
+	lines := strings.Split(answer, "\n")
+	filtered := lines[:0]
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		stale := strings.Contains(line, subject) &&
+			(strings.Contains(line, "未收录") ||
+				strings.Contains(line, "无法") ||
+				strings.Contains(line, "暂未") ||
+				strings.Contains(line, "官方渠道") ||
+				strings.Contains(lower, "unavailable"))
+		if !stale {
+			filtered = append(filtered, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(filtered, "\n"))
 }
 
 func (r *AgenticRunner) validateOrFallbackNextStep(
@@ -1374,7 +1539,7 @@ func extractHopEntities(results []rag.SearchResult) []string {
 func buildToolResultsSummary(evidences []Evidence) string {
 	var builder strings.Builder
 	for _, ev := range evidences {
-		if ev.Kind == "tool_result" || ev.Kind == "tool_error" {
+		if ev.Kind == "tool_result" || ev.Kind == "tool_error" || ev.Kind == "skill_result" {
 			fmt.Fprintf(&builder, "[%s] %s: %s\n", ev.ID, ev.Title, ev.Content)
 		}
 	}
@@ -1382,6 +1547,15 @@ func buildToolResultsSummary(evidences []Evidence) string {
 		return "(无工具调用结果)"
 	}
 	return builder.String()
+}
+
+func answerCoversRequestedFacets(answer, query string) bool {
+	for _, facet := range requestedFacets(query) {
+		if !answerCoversFacet(answer, facet) {
+			return false
+		}
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -1467,6 +1641,13 @@ func mergeSearchResults(existing, added []rag.SearchResult) []rag.SearchResult {
 func mergeEvidences(existing []Evidence, searchResults []rag.SearchResult) []Evidence {
 	seen := make(map[string]struct{}, len(existing)+len(searchResults))
 	result := make([]Evidence, 0, len(existing)+len(searchResults))
+	for _, item := range existing {
+		if _, ok := seen[item.SourceID]; ok {
+			continue
+		}
+		seen[item.SourceID] = struct{}{}
+		result = append(result, item)
+	}
 	for _, item := range searchResults {
 		if _, ok := seen[item.ChunkID]; ok {
 			continue
@@ -1484,13 +1665,6 @@ func mergeEvidences(existing []Evidence, searchResults []rag.SearchResult) []Evi
 			Content:  item.Content,
 			Metadata: metadata,
 		})
-	}
-	for _, item := range existing {
-		if _, ok := seen[item.SourceID]; ok {
-			continue
-		}
-		seen[item.SourceID] = struct{}{}
-		result = append(result, item)
 	}
 	for index := range result {
 		result[index].ID = fmt.Sprintf("E%d", index+1)
@@ -1529,6 +1703,28 @@ func allowedTools(intentType intent.Type) []string {
 	default:
 		return nil
 	}
+}
+
+func allowedToolsForRoute(route intent.Result) []string {
+	result := append([]string(nil), allowedTools(route.Secondary)...)
+	for _, secondary := range route.SecondaryIntents {
+		for _, toolName := range allowedTools(secondary) {
+			if !containsString(result, toolName) {
+				result = append(result, toolName)
+			}
+		}
+	}
+	return result
+}
+
+func intentTypeStrings(values []intent.Type) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" {
+			result = append(result, string(value))
+		}
+	}
+	return result
 }
 
 func containsString(values []string, target string) bool {
@@ -1570,7 +1766,6 @@ func shouldUsePlanExecute(mode string, intentType intent.Type) bool {
 		switch intentType {
 		case intent.ProductComparison,
 			intent.PurchaseRecommendation,
-			intent.AccessoryCompatibility,
 			intent.Troubleshooting,
 			intent.ReturnEligibility,
 			intent.WarrantyQuery,
@@ -1579,6 +1774,15 @@ func shouldUsePlanExecute(mode string, intentType intent.Type) bool {
 		}
 	}
 	return false
+}
+
+func shouldUseReactivePlanning(intentType intent.Type) bool {
+	switch intentType {
+	case intent.AccessoryCompatibility:
+		return false
+	default:
+		return true
+	}
 }
 
 func unsatisfiedDependencies(step PlanStep, statuses map[string]string) []string {
@@ -1622,6 +1826,18 @@ func evidenceIDs(evidences []Evidence) []string {
 	return result
 }
 
+func hasToolEvidence(evidences []Evidence, toolName string) bool {
+	for _, evidence := range evidences {
+		if evidence.Kind != "tool_result" || evidence.Metadata == nil {
+			continue
+		}
+		if name, _ := evidence.Metadata["tool_name"].(string); name == toolName {
+			return true
+		}
+	}
+	return false
+}
+
 func estimateTokens(value string) int {
 	runes := len([]rune(value))
 	if runes == 0 {
@@ -1643,11 +1859,14 @@ func currentTokenUsage(inputTokens int, searchResults []rag.SearchResult, eviden
 
 func runtimeTokenUsage(
 	inputTokens int,
-	usage llm.Usage,
+	_ llm.Usage,
 	searchResults []rag.SearchResult,
 	evidences []Evidence,
 ) int {
-	return currentTokenUsage(inputTokens, searchResults, evidences) + usage.TotalTokens
+	// TokenBudget limits the active context assembled for the next step. The
+	// usage collector is cumulative billing telemetry across all prior LLM
+	// calls, so adding it here can exhaust the budget before any skill runs.
+	return currentTokenUsage(inputTokens, searchResults, evidences)
 }
 
 func summarizeSearchResults(items []rag.SearchResult) string {

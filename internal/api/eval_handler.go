@@ -20,9 +20,10 @@ type EvalHandler struct {
 }
 
 type runEvalRequest struct {
-	DatasetVersion string `json:"dataset_version"`
-	SystemVersion  string `json:"system_version"`
-	MaxCases       int    `json:"max_cases"`
+	DatasetVersion string   `json:"dataset_version"`
+	SystemVersion  string   `json:"system_version"`
+	MaxCases       int      `json:"max_cases"`
+	CaseIDs        []string `json:"case_ids"`
 }
 
 type compareEvalRequest struct {
@@ -54,11 +55,16 @@ func (h *EvalHandler) Run(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "max_cases must be between 0 and 200")
 		return
 	}
+	if len(request.CaseIDs) > 200 {
+		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "case_ids must contain at most 200 items")
+		return
+	}
 	run, err := h.runner.Start(c.Request.Context(), eval.RunRequest{
 		UserID:         middleware.UserID(c),
 		DatasetVersion: request.DatasetVersion,
 		SystemVersion:  request.SystemVersion,
 		MaxCases:       request.MaxCases,
+		CaseIDs:        request.CaseIDs,
 	})
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "EVAL_RUN_FAILED", err.Error())

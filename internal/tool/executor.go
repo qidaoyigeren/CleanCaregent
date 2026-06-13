@@ -27,12 +27,13 @@ var (
 )
 
 type Executor struct {
-	registry Registry
-	logStore CallLogStore
-	timeout  time.Duration
-	mu       sync.Mutex
-	seen     map[string]time.Time
-	seenTTL  time.Duration
+	registry  Registry
+	logStore  CallLogStore
+	timeout   time.Duration
+	dataScope string
+	mu        sync.Mutex
+	seen      map[string]time.Time
+	seenTTL   time.Duration
 }
 
 func NewExecutor(registry Registry, logStore CallLogStore, timeout time.Duration) *Executor {
@@ -40,12 +41,21 @@ func NewExecutor(registry Registry, logStore CallLogStore, timeout time.Duration
 		timeout = 3 * time.Second
 	}
 	return &Executor{
-		registry: registry,
-		logStore: logStore,
-		timeout:  timeout,
-		seen:     make(map[string]time.Time),
-		seenTTL:  10 * time.Minute,
+		registry:  registry,
+		logStore:  logStore,
+		timeout:   timeout,
+		dataScope: "mock",
+		seen:      make(map[string]time.Time),
+		seenTTL:   10 * time.Minute,
 	}
+}
+
+func (e *Executor) WithDataScope(dataScope string) *Executor {
+	switch strings.ToLower(strings.TrimSpace(dataScope)) {
+	case "mock", "sandbox", "external":
+		e.dataScope = strings.ToLower(strings.TrimSpace(dataScope))
+	}
+	return e
 }
 
 func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Result, error) {
@@ -53,10 +63,11 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 	span.SetAttributes(
 		attribute.String("tool.name", call.Name),
 		attribute.String("agent.trace_id", call.TraceID),
+		attribute.String("tool.data_scope", e.dataScope),
 	)
 	defer span.End()
 	startedAt := time.Now().UTC()
-	result := Result{CallID: call.CallID, StartedAt: startedAt}
+	result := Result{CallID: call.CallID, DataScope: e.dataScope, StartedAt: startedAt}
 	if !contains(allowed, call.Name) {
 		span.SetStatus(codes.Error, "tool not allowed")
 		return e.failAndLog(ctx, call, result, "TOOL_NOT_ALLOWED", ErrToolNotAllowed)
@@ -122,6 +133,9 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 	executeSpan.End()
 	if executed.CallID == "" {
 		executed.CallID = call.CallID
+	}
+	if executed.DataScope == "" {
+		executed.DataScope = e.dataScope
 	}
 	if executed.StartedAt.IsZero() {
 		executed.StartedAt = startedAt

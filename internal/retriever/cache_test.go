@@ -2,6 +2,7 @@ package retriever
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,5 +52,9 @@ func TestCachedRetrieverUsesStableRequestKey(t *testing.T) {
 	}
 	if second[0].Metadata["retrieval_cache_hit"] != true {
 		t.Fatalf("second metadata = %#v", second[0].Metadata)
+	}
+	if keys := server.Keys(); len(keys) != 1 ||
+		!strings.HasPrefix(keys[0], "cleancare:retrieval:v3:") {
+		t.Fatalf("cache keys = %#v, want v3 namespace", keys)
 	}
 }

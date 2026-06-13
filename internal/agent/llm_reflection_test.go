@@ -12,10 +12,25 @@ func TestShouldUseGroundingOnlyForSimpleGroundedIntent(t *testing.T) {
 	}) {
 		t.Fatal("simple grounded parameter answer should skip semantic reflection")
 	}
-	if shouldUseGroundingOnly(intent.ProductComparison, ReflectionResult{
+	if !shouldUseGroundingOnly(intent.ProductComparison, ReflectionResult{
 		Answer: "X20 Pro 更适合养宠家庭。[E1]",
 	}) {
-		t.Fatal("comparison should retain semantic reflection")
+		t.Fatal("grounded comparison should skip destructive semantic reflection")
+	}
+	if !shouldUseGroundingOnly(intent.AccessoryCompatibility, ReflectionResult{
+		Answer: "F400 与 P400 兼容。[E1]",
+	}) {
+		t.Fatal("structured compatibility answer should skip destructive semantic reflection")
+	}
+	if !shouldUseGroundingOnly(intent.UsageInstruction, ReflectionResult{
+		Answer: "首次开机前先拆除滤芯塑封。[E1]",
+	}) {
+		t.Fatal("grounded usage instructions should skip semantic reflection")
+	}
+	if !shouldUseGroundingOnly(intent.WarrantyQuery, ReflectionResult{
+		Answer: "该订单仍在保修期内。[E1][E2]",
+	}) {
+		t.Fatal("grounded deterministic warranty answers should skip semantic reflection")
 	}
 	if shouldUseGroundingOnly(intent.ProductParameter, ReflectionResult{
 		Answer:        "unknown",

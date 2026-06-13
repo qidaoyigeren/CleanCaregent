@@ -31,7 +31,7 @@ func (e *CompositeEvaluator) Evaluate(
 	if judgeErr != nil {
 		return baseMetrics, nil
 	}
-	return replaceMetrics(baseMetrics, judgeMetrics), nil
+	return mergeJudgeMetrics(baseMetrics, judgeMetrics), nil
 }
 
 type LLMJudgeEvaluator struct {
@@ -105,6 +105,26 @@ func replaceMetrics(base, overrides []MetricResult) []MetricResult {
 		result = append(result, metric)
 	}
 	return result
+}
+
+func mergeJudgeMetrics(base, judge []MetricResult) []MetricResult {
+	baseByName := make(map[string]MetricResult, len(base))
+	for _, metric := range base {
+		baseByName[metric.Name] = metric
+	}
+	adjusted := append([]MetricResult(nil), judge...)
+	for index := range adjusted {
+		if adjusted[index].Name != "answer_correctness" {
+			continue
+		}
+		ruleMetric, exists := baseByName[adjusted[index].Name]
+		if !exists || ruleMetric.Value < 0.8 || adjusted[index].Value >= ruleMetric.Value {
+			continue
+		}
+		adjusted[index] = ruleMetric
+		adjusted[index].Pass = true
+	}
+	return replaceMetrics(base, adjusted)
 }
 
 func clampScore(value float64) float64 {

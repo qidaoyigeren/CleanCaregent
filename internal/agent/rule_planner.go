@@ -34,6 +34,11 @@ func (p *RulePlanner) Plan(ctx context.Context, request PlanRequest) (*Plan, err
 		plan.Steps = []PlanStep{newPlanStep(1, ActionClarify, "", "", request.Query, nil, "low_confidence_or_missing_entity")}
 		return plan, nil
 	}
+	if request.Intent.NeedDecomposition && len(request.Intent.SecondaryIntents) > 0 {
+		plan.Mode = "compound"
+		plan.Steps = compoundPlan(request)
+		return plan, nil
+	}
 
 	switch request.Intent.Secondary {
 	case intent.Chitchat, intent.OutOfScope:
@@ -50,7 +55,7 @@ func (p *RulePlanner) Plan(ctx context.Context, request PlanRequest) (*Plan, err
 		plan.Mode = "naive_rag"
 		plan.Steps = focusedRetrievalPlan(
 			request.RewrittenQueries,
-			[]string{"user_manual", "faq"},
+			[]string{"user_manual", "faq", "product_parameter"},
 			4,
 		)
 	case intent.ProductComparison:
@@ -83,7 +88,7 @@ func (p *RulePlanner) Plan(ctx context.Context, request PlanRequest) (*Plan, err
 		plan.Steps = dynamicPlan(toolName, request.Query, request.Intent.Entities)
 	case intent.CreateAfterSalesTicket:
 		plan.Mode = "react"
-		plan.Steps = dynamicPlan("create_after_sales_ticket", request.Query, request.Intent.Entities)
+		plan.Steps = afterSalesTicketPlan(request.Query, request.Intent.Entities)
 	default:
 		plan.Mode = "clarify"
 		plan.Steps = []PlanStep{newPlanStep(1, ActionClarify, "", "", request.Query, nil, "unsupported_intent")}
@@ -175,6 +180,31 @@ func dynamicPlan(toolName, query string, entities map[string]string) []PlanStep 
 	return steps
 }
 
+func afterSalesTicketPlan(query string, entities map[string]string) []PlanStep {
+	ticketSteps := afterSalesTicketParallelSteps(query, entities)
+	steps := []PlanStep{
+		ticketSteps[0],
+		ticketSteps[1],
+		newPlanStep(3, ActionFinish, "", "", "", nil, "grounded_answer"),
+	}
+	addSequentialDependencies(steps)
+	return steps
+}
+
+func afterSalesTicketParallelSteps(query string, entities map[string]string) []PlanStep {
+	return []PlanStep{
+		newPlanStep(1, ActionRetrieve, "", "", "售后工单创建规则 用户明确确认 订单 问题描述 幂等键", map[string]any{
+			"search_queries":          []string{"售后工单创建规则 用户明确确认 订单 问题描述 幂等键"},
+			"doc_types":               []string{"after_sales_policy"},
+			"max_results":             4,
+			"search_mode":             "keyword",
+			"disable_entity_filters":  true,
+			"disable_original_recall": true,
+		}, "collect_after_sales_ticket_policy"),
+		newPlanStep(2, ActionCallTool, "create_after_sales_ticket", "", query, stringMapToAny(entities), "confirmed_side_effect"),
+	}
+}
+
 func skillPlan(skillName, query string, entities map[string]string) []PlanStep {
 	steps := []PlanStep{
 		newPlanStep(1, ActionRunSkill, "", skillName, query, stringMapToAny(entities), "complex_workflow_required"),
@@ -183,6 +213,111 @@ func skillPlan(skillName, query string, entities map[string]string) []PlanStep {
 	}
 	addSequentialDependencies(steps)
 	return steps
+}
+
+func compoundPlan(request PlanRequest) []PlanStep {
+	intents := append([]intent.Type{request.Intent.Secondary}, request.Intent.SecondaryIntents...)
+	subSteps := make([]PlanStep, 0, len(intents)+1)
+	seen := map[string]struct{}{}
+	for _, intentType := range intents {
+		if request.Intent.Secondary == intent.PurchaseRecommendation &&
+			(intentType == intent.PriceQuery || intentType == intent.InventoryQuery) {
+			continue
+		}
+		if (request.Intent.Secondary == intent.ProductComparison ||
+			request.Intent.Secondary == intent.PurchaseRecommendation) &&
+			intentType == intent.ProductParameter {
+			continue
+		}
+		if request.Intent.Secondary == intent.ReturnEligibility && intentType == intent.OrderQuery {
+			continue
+		}
+		if request.Intent.Secondary == intent.CreateAfterSalesTicket &&
+			intentType == intent.Troubleshooting {
+			continue
+		}
+		if intentType == intent.CreateAfterSalesTicket {
+			for _, step := range afterSalesTicketParallelSteps(request.Query, request.Intent.Entities) {
+				signature := actionSignature(step)
+				if _, exists := seen[signature]; exists {
+					continue
+				}
+				seen[signature] = struct{}{}
+				subSteps = append(subSteps, step)
+			}
+			continue
+		}
+		step, ok := compoundSubStep(intentType, request)
+		if !ok {
+			continue
+		}
+		signature := actionSignature(step)
+		if _, exists := seen[signature]; exists {
+			continue
+		}
+		seen[signature] = struct{}{}
+		subSteps = append(subSteps, step)
+	}
+	if len(subSteps) == 0 {
+		return []PlanStep{
+			newPlanStep(1, ActionClarify, "", "", request.Query, nil, "compound_plan_has_no_supported_action"),
+		}
+	}
+	if len(subSteps) == 1 {
+		subSteps[0].StepID = "step_01"
+		return []PlanStep{subSteps[0], finishStep(2, "compound_answer")}
+	}
+	for index := range subSteps {
+		subSteps[index].StepID = fmt.Sprintf("step_01.%02d", index+1)
+	}
+	steps := []PlanStep{
+		newPlanStep(1, ActionParallel, "", "", request.Query, nil, "compound_intents_parallel"),
+		finishStep(2, "compound_answer"),
+	}
+	steps[0].SubSteps = subSteps
+	addSequentialDependencies(steps)
+	return steps
+}
+
+func compoundSubStep(intentType intent.Type, request PlanRequest) (PlanStep, bool) {
+	params := stringMapToAny(request.Intent.Entities)
+	switch intentType {
+	case intent.ProductParameter:
+		params["doc_types"] = []string{"product_parameter", "product_detail"}
+		return newPlanStep(1, ActionRetrieve, "", "", request.Query, params, "compound_product_parameter"), true
+	case intent.UsageInstruction:
+		params["doc_types"] = []string{"user_manual", "faq", "product_parameter"}
+		return newPlanStep(1, ActionRetrieve, "", "", request.Query, params, "compound_usage_instruction"), true
+	case intent.ProductComparison:
+		params["target_intent"] = string(intentType)
+		return newPlanStep(1, ActionRunSkill, "", "product_comparison", request.Query, params, "compound_product_comparison"), true
+	case intent.PurchaseRecommendation:
+		params["target_intent"] = string(intentType)
+		return newPlanStep(1, ActionRunSkill, "", "purchase_recommendation", request.Query, params, "compound_purchase_recommendation"), true
+	case intent.AccessoryCompatibility:
+		params["target_intent"] = string(intentType)
+		return newPlanStep(1, ActionRunSkill, "", "accessory_compatibility", request.Query, params, "compound_accessory_compatibility"), true
+	case intent.Troubleshooting:
+		params["target_intent"] = string(intentType)
+		return newPlanStep(1, ActionRunSkill, "", "fault_diagnosis", request.Query, params, "compound_fault_diagnosis"), true
+	case intent.WarrantyQuery, intent.ReturnEligibility:
+		params["target_intent"] = string(intentType)
+		return newPlanStep(1, ActionRunSkill, "", "after_sales_judgement", request.Query, params, "compound_after_sales"), true
+	case intent.PriceQuery:
+		return newPlanStep(1, ActionCallTool, "price_query", "", request.Query, params, "compound_price"), true
+	case intent.InventoryQuery:
+		return newPlanStep(1, ActionCallTool, "inventory_check", "", request.Query, params, "compound_inventory"), true
+	case intent.OrderQuery:
+		toolName := "order_lookup"
+		if request.Intent.Entities["order_no"] == "" {
+			toolName = "user_purchase_history"
+		}
+		return newPlanStep(1, ActionCallTool, toolName, "", request.Query, params, "compound_order"), true
+	case intent.CreateAfterSalesTicket:
+		return newPlanStep(1, ActionCallTool, "create_after_sales_ticket", "", request.Query, params, "compound_after_sales_ticket"), true
+	default:
+		return PlanStep{}, false
+	}
 }
 
 func addSequentialDependencies(steps []PlanStep) {

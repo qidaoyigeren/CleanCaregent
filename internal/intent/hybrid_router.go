@@ -81,7 +81,51 @@ func (r *HybridRouter) Route(ctx context.Context, request RouteRequest) (Result,
 		return ruleResult, nil
 	}
 
-	return llmResult, nil
+	return reconcileRuleAndLLM(ruleResult, llmResult), nil
+}
+
+func reconcileRuleAndLLM(ruleResult, llmResult Result) Result {
+	if ruleResult.Secondary == Clarification ||
+		len(ruleResult.RouteTrace.MatchedKeywords) == 0 {
+		return llmResult
+	}
+
+	// Explicit business keywords are more stable than a free-form classifier.
+	// Keep the rule-selected primary intent and use the LLM to enrich entities,
+	// decomposition and clarification details.
+	result := ruleResult
+	for key, value := range llmResult.Entities {
+		if strings.TrimSpace(result.Entities[key]) == "" {
+			if result.Entities == nil {
+				result.Entities = map[string]string{}
+			}
+			result.Entities[key] = value
+		}
+	}
+	result.SecondaryIntents = appendUniqueIntentTypes(
+		result.SecondaryIntents,
+		llmResult.SecondaryIntents...,
+	)
+	if llmResult.Secondary != "" &&
+		llmResult.Secondary != Clarification &&
+		llmResult.Secondary != result.Secondary {
+		result.SecondaryIntents = appendUniqueIntentTypes(
+			result.SecondaryIntents,
+			llmResult.Secondary,
+		)
+	}
+	result.NeedDecomposition = len(result.SecondaryIntents) > 0
+	result.NeedClarify = ruleResult.NeedClarify && !enoughEntitiesForIntent(result.Secondary, result.Entities)
+	if result.Secondary == CreateAfterSalesTicket && ruleResult.NeedClarify {
+		result.NeedClarify = true
+	}
+	result.Confidence = max(ruleResult.Confidence, llmResult.Confidence)
+	result.RouteTrace.Source = "rule+llm"
+	result.RouteTrace.Reasoning = strings.Trim(
+		ruleResult.RouteTrace.Reasoning+"；LLM补充："+llmResult.RouteTrace.Reasoning,
+		"；",
+	)
+	return result
 }
 
 func (r *HybridRouter) classifyWithLLM(ctx context.Context, request RouteRequest, ruleResult Result) (Result, error) {
@@ -119,6 +163,9 @@ func (r *HybridRouter) classifyWithLLM(ctx context.Context, request RouteRequest
 	}
 	if raw, ok := llmOut.Entities["categories"]; ok {
 		entities["categories"] = flattenStringSlice(raw)
+		if entities["category"] == "" {
+			entities["category"] = entities["categories"]
+		}
 	}
 	if raw, ok := llmOut.Entities["accessory_refs"]; ok {
 		entities["accessory_refs"] = flattenStringSlice(raw)
