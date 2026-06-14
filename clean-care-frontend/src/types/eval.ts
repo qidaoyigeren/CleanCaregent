@@ -29,9 +29,12 @@ export interface MetricResult {
 }
 
 export interface AgentMetricsSnapshot {
-  total_requests: number;
-  success_rate: number;
+  request_count: number;
+  failure_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
   p95_latency_ms: number;
-  avg_input_tokens: number;
-  avg_output_tokens: number;
+  latency_samples: number;
+  cost_usd: number;
 }

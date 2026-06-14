@@ -103,6 +103,16 @@ func (s *ConversationService) Create(ctx context.Context, userID, title string) 
 	return conversation, nil
 }
 
+func (s *ConversationService) List(ctx context.Context, userID string, limit int) ([]model.Conversation, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	return s.repository.List(ctx, userID, limit)
+}
+
 func (s *ConversationService) ListMessages(ctx context.Context, userID, conversationID string, limit int) ([]model.Message, error) {
 	if limit <= 0 {
 		limit = 20

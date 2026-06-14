@@ -201,7 +201,6 @@ export default function ChatPage() {
             onSend={handleSend}
             onAbort={handleAbort}
             isStreaming={isStreaming}
-            disabled={!conversationId}
           />
         </div>
       </div>

@@ -15,6 +15,7 @@ var (
 type ConversationRepository interface {
 	Create(ctx context.Context, conversation model.Conversation) error
 	Get(ctx context.Context, userID, conversationID string) (model.Conversation, error)
+	List(ctx context.Context, userID string, limit int) ([]model.Conversation, error)
 	AppendMessage(ctx context.Context, userID string, message model.Message) error
 	ListMessages(ctx context.Context, userID, conversationID string, limit int) ([]model.Message, error)
 }

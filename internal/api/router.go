@@ -68,6 +68,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	userAPI := v1.Group("")
 	userAPI.Use(middleware.JWTAuth(deps.Config.Auth))
 	userAPI.POST("/conversations", conversations.Create)
+	userAPI.GET("/conversations", conversations.List)
 	userAPI.GET("/conversations/:conversation_id/messages", conversations.ListMessages)
 	userAPI.POST("/conversations/:conversation_id/messages", conversations.Ask)
 	userAPI.POST("/conversations/:conversation_id/messages:stream", conversations.Stream)

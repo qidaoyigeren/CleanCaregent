@@ -10,7 +10,10 @@ export default function MetricsCards() {
 
   const fetchMetrics = () => {
     getAgentMetrics()
-      .then(setMetrics)
+      .then((data) => {
+        setMetrics(data);
+        setError(null);
+      })
       .catch((err) => setError(err.message || 'Failed to load metrics'));
   };
 
@@ -23,13 +26,20 @@ export default function MetricsCards() {
   if (error) return <ErrorMessage message={error} onRetry={fetchMetrics} />;
   if (!metrics) return <LoadingSpinner text="Loading metrics..." />;
 
+  const totalRequests = metrics.request_count ?? 0;
+  const failureCount = metrics.failure_count ?? 0;
+  const successRate =
+    totalRequests > 0 ? Math.max(0, totalRequests - failureCount) / totalRequests : 0;
+  const averageTokens =
+    totalRequests > 0 ? Math.round((metrics.total_tokens ?? 0) / totalRequests) : 0;
+
   const cards = [
-    { label: 'Total Requests', value: metrics.total_requests.toLocaleString(), unit: '' },
-    { label: 'Success Rate', value: (metrics.success_rate * 100).toFixed(1), unit: '%' },
-    { label: 'P95 Latency', value: metrics.p95_latency_ms, unit: 'ms' },
+    { label: 'Total Requests', value: totalRequests.toLocaleString(), unit: '' },
+    { label: 'Success Rate', value: (successRate * 100).toFixed(1), unit: '%' },
+    { label: 'P95 Latency', value: metrics.p95_latency_ms ?? 0, unit: 'ms' },
     {
       label: 'Avg Tokens',
-      value: (metrics.avg_input_tokens + metrics.avg_output_tokens),
+      value: averageTokens,
       unit: 't',
     },
   ];

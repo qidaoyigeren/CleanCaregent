@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Message } from '../../types/conversation';
 import LoadingSpinner from '../ui/LoadingSpinner';
@@ -11,31 +11,6 @@ interface ChatAreaProps {
   isLoading: boolean;
   error: string | null;
   onRetryLoad: () => void;
-}
-
-/** Split text on evidence tags [EX] and make them clickable */
-function renderEvidenceContent(text: string, onEvidenceClick: (id: string) => void): ReactNode[] {
-  const parts = text.split(/(\[E\d+\])/g);
-  return parts.map((part, i) => {
-    const match = part.match(/^\[(E\d+)\]$/);
-    if (match) {
-      const evidenceId = match[1]!;
-      return (
-        <span
-          key={i}
-          className="evidence-tag"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEvidenceClick(evidenceId);
-          }}
-          title={`View evidence ${evidenceId}`}
-        >
-          [{evidenceId}]
-        </span>
-      );
-    }
-    return <span key={i}>{part}</span>;
-  });
 }
 
 export default function ChatArea({ messages, streamingContent, isLoading, error, onRetryLoad }: ChatAreaProps) {
@@ -110,32 +85,31 @@ export default function ChatArea({ messages, streamingContent, isLoading, error,
             {msg.role === 'assistant' ? (
               <ReactMarkdown
                 components={{
-                  // Override text rendering to make evidence tags clickable
-                  p: ({ children }) => {
-                    const text = extractTextFromChildren(children);
-                    if (text && /\[E\d+\]/.test(text)) {
-                      return <p>{renderEvidenceContent(text, handleEvidenceClick)}</p>;
+                  a: ({ href, children }) => {
+                    const match = href?.match(/^#evidence-(E\d+)$/);
+                    if (match) {
+                      const evidenceId = match[1]!;
+                      return (
+                        <span
+                          className="evidence-tag"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleEvidenceClick(evidenceId);
+                          }}
+                          title={`View evidence ${evidenceId}`}
+                        >
+                          [{evidenceId}]
+                        </span>
+                      );
                     }
-                    return <p>{children}</p>;
-                  },
-                  li: ({ children }) => {
-                    const text = extractTextFromChildren(children);
-                    if (text && /\[E\d+\]/.test(text)) {
-                      return <li>{renderEvidenceContent(text, handleEvidenceClick)}</li>;
-                    }
-                    return <li>{children}</li>;
+                    return <a href={href}>{children}</a>;
                   },
                 }}
               >
-                {msg.content}
+                {linkifyEvidenceTags(msg.content)}
               </ReactMarkdown>
             ) : (
-              msg.content.split('\n').map((line, i) => (
-                <span key={i}>
-                  {i > 0 && <br />}
-                  {renderEvidenceContent(line, handleEvidenceClick)}
-                </span>
-              ))
+              <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
             )}
           </div>
         </div>
@@ -146,7 +120,28 @@ export default function ChatArea({ messages, streamingContent, isLoading, error,
         <div className="message message--assistant">
           <div className="message__avatar" aria-hidden="true">🤖</div>
           <div className="message__bubble">
-            <ReactMarkdown>{streamingContent}</ReactMarkdown>
+            <ReactMarkdown
+              components={{
+                a: ({ href, children }) => {
+                  const match = href?.match(/^#evidence-(E\d+)$/);
+                  if (match) {
+                    const evidenceId = match[1]!;
+                    return (
+                      <span
+                        className="evidence-tag"
+                        onClick={() => handleEvidenceClick(evidenceId)}
+                        title={`View evidence ${evidenceId}`}
+                      >
+                        [{evidenceId}]
+                      </span>
+                    );
+                  }
+                  return <a href={href}>{children}</a>;
+                },
+              }}
+            >
+              {linkifyEvidenceTags(streamingContent)}
+            </ReactMarkdown>
             <span className="status-bar__dot" style={{ display: 'inline-block', marginLeft: 4 }} />
           </div>
         </div>
@@ -157,11 +152,6 @@ export default function ChatArea({ messages, streamingContent, isLoading, error,
   );
 }
 
-/** Extract plain text from React children (used for evidence tag detection) */
-function extractTextFromChildren(children: ReactNode): string {
-  if (typeof children === 'string') return children;
-  if (Array.isArray(children)) {
-    return children.map(c => (typeof c === 'string' ? c : '')).join('');
-  }
-  return '';
+function linkifyEvidenceTags(content: string): string {
+  return content.replace(/\[(E\d+)\]/g, '[$1](#evidence-$1)');
 }

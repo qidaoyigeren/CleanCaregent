@@ -46,15 +46,27 @@ func (h *ConversationHandler) Create(c *gin.Context) {
 	response.Created(c, conversation)
 }
 
+func (h *ConversationHandler) List(c *gin.Context) {
+	limit, ok := parsePositiveLimit(c, 20)
+	if !ok {
+		return
+	}
+	conversations, err := h.service.List(
+		c.Request.Context(),
+		middleware.UserID(c),
+		limit,
+	)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	response.OK(c, gin.H{"items": conversations})
+}
+
 func (h *ConversationHandler) ListMessages(c *gin.Context) {
-	limit := 20
-	if raw := c.Query("limit"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 {
-			response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "limit must be a positive integer")
-			return
-		}
-		limit = parsed
+	limit, ok := parsePositiveLimit(c, 20)
+	if !ok {
+		return
 	}
 
 	messages, err := h.service.ListMessages(
@@ -68,6 +80,19 @@ func (h *ConversationHandler) ListMessages(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"items": messages})
+}
+
+func parsePositiveLimit(c *gin.Context, defaultValue int) (int, bool) {
+	raw := c.Query("limit")
+	if raw == "" {
+		return defaultValue, true
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 1 {
+		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "limit must be a positive integer")
+		return 0, false
+	}
+	return parsed, true
 }
 
 func (h *ConversationHandler) Ask(c *gin.Context) {

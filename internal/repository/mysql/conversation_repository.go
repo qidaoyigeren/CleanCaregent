@@ -76,6 +76,45 @@ func (r *ConversationRepository) Get(ctx context.Context, userID, conversationID
 	return conversation, nil
 }
 
+func (r *ConversationRepository) List(
+	ctx context.Context,
+	userID string,
+	limit int,
+) ([]model.Conversation, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT c.conversation_no, u.user_no, c.title, c.status, c.created_at, c.last_message_at
+		FROM conversations c
+		JOIN users u ON u.id = c.user_id
+		WHERE u.user_no = ?
+		ORDER BY c.last_message_at DESC, c.id DESC
+		LIMIT ?
+	`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list conversations: %w", err)
+	}
+	defer rows.Close()
+
+	conversations := make([]model.Conversation, 0, limit)
+	for rows.Next() {
+		var conversation model.Conversation
+		if err := rows.Scan(
+			&conversation.ID,
+			&conversation.UserID,
+			&conversation.Title,
+			&conversation.Status,
+			&conversation.CreatedAt,
+			&conversation.LastMessageAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan conversation: %w", err)
+		}
+		conversations = append(conversations, conversation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate conversations: %w", err)
+	}
+	return conversations, nil
+}
+
 func (r *ConversationRepository) AppendMessage(ctx context.Context, userID string, message model.Message) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

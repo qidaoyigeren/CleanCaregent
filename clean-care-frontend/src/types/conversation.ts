@@ -1,7 +1,9 @@
 export interface Conversation {
   conversation_id: string;
   title: string;
+  status: string;
   created_at: string;
+  last_message_at: string;
 }
 
 export interface Message {

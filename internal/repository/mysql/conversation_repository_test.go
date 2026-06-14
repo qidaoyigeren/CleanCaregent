@@ -51,6 +51,32 @@ func TestGetConversationMapsMissingToDomainError(t *testing.T) {
 	}
 }
 
+func TestListConversations(t *testing.T) {
+	db, mock := newMockDB(t)
+	defer db.Close()
+	repo := NewConversationRepository(db)
+	now := time.Now().UTC()
+
+	mock.ExpectQuery("SELECT c\\.conversation_no").
+		WithArgs("user_test", 20).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"conversation_no", "user_no", "title", "status", "created_at", "last_message_at",
+		}).
+			AddRow("cv_new", "user_test", "new", "active", now, now).
+			AddRow("cv_old", "user_test", "old", "active", now.Add(-time.Hour), now.Add(-time.Hour)))
+
+	items, err := repo.List(context.Background(), "user_test", 20)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(items) != 2 || items[0].ID != "cv_new" || items[1].ID != "cv_old" {
+		t.Fatalf("items = %#v", items)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func newMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	db, mock, err := sqlmock.New()

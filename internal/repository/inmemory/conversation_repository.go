@@ -43,6 +43,28 @@ func (r *ConversationRepository) Get(_ context.Context, userID, conversationID s
 	return conversation, nil
 }
 
+func (r *ConversationRepository) List(_ context.Context, userID string, limit int) ([]model.Conversation, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	items := make([]model.Conversation, 0)
+	for _, conversation := range r.conversations {
+		if conversation.UserID == userID {
+			items = append(items, conversation)
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].LastMessageAt.Equal(items[j].LastMessageAt) {
+			return items[i].CreatedAt.After(items[j].CreatedAt)
+		}
+		return items[i].LastMessageAt.After(items[j].LastMessageAt)
+	})
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
 func (r *ConversationRepository) AppendMessage(_ context.Context, userID string, message model.Message) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -55,3 +55,27 @@ func TestConversationRepositoryListsLatestMessages(t *testing.T) {
 		t.Fatalf("messages = %#v", messages)
 	}
 }
+
+func TestConversationRepositoryListsOwnedConversationsByRecentActivity(t *testing.T) {
+	repo := NewConversationRepository()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	conversations := []model.Conversation{
+		{ID: "cv_old", UserID: "user_a", LastMessageAt: now.Add(-time.Hour), CreatedAt: now.Add(-time.Hour)},
+		{ID: "cv_other", UserID: "user_b", LastMessageAt: now, CreatedAt: now},
+		{ID: "cv_new", UserID: "user_a", LastMessageAt: now, CreatedAt: now},
+	}
+	for _, conversation := range conversations {
+		if err := repo.Create(ctx, conversation); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
+
+	items, err := repo.List(ctx, "user_a", 10)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(items) != 2 || items[0].ID != "cv_new" || items[1].ID != "cv_old" {
+		t.Fatalf("items = %#v", items)
+	}
+}
