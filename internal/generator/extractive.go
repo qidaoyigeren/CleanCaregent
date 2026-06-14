@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"CleanCaregent/internal/evidencefmt"
 	"CleanCaregent/internal/prompt"
 	"CleanCaregent/internal/rag"
 )
@@ -25,16 +26,16 @@ func (g *Extractive) Name() string {
 func (g *Extractive) GenerateWithScenario(
 	ctx context.Context,
 	_ prompt.Scenario,
-	_ string,
+	query string,
 	evidence []rag.SearchResult,
 	_ string,
 	_ string,
 	_ string,
 ) (string, error) {
-	return g.Generate(ctx, "", evidence)
+	return g.Generate(ctx, query, evidence)
 }
 
-func (g *Extractive) Generate(ctx context.Context, _ string, evidence []rag.SearchResult) (string, error) {
+func (g *Extractive) Generate(ctx context.Context, query string, evidence []rag.SearchResult) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -44,12 +45,12 @@ func (g *Extractive) Generate(ctx context.Context, _ string, evidence []rag.Sear
 
 	var builder strings.Builder
 	builder.WriteString("根据当前知识库检索结果：\n")
+	perItemLimit := extractiveEvidenceItemLimit(g.maxRunes, len(evidence))
 	for index, item := range evidence {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		content := compactWhitespace(item.Content)
-		content = truncateRunes(content, 320)
+		content := evidencefmt.Compact(item.Content, perItemLimit, query, item.Title)
 		fmt.Fprintf(&builder, "%d. %s [E%d]\n", index+1, content, index+1)
 		if g.maxRunes > 0 && utf8.RuneCountInString(builder.String()) >= g.maxRunes {
 			break
@@ -59,17 +60,27 @@ func (g *Extractive) Generate(ctx context.Context, _ string, evidence []rag.Sear
 	return truncateRunes(builder.String(), g.maxRunes), nil
 }
 
-func compactWhitespace(value string) string {
-	return strings.Join(strings.Fields(value), " ")
+func truncateRunes(value string, limit int) string {
+	return evidencefmt.Compact(value, limit)
 }
 
-func truncateRunes(value string, limit int) string {
-	if limit <= 0 {
-		return value
+func extractiveEvidenceItemLimit(answerLimit, evidenceCount int) int {
+	if evidenceCount <= 0 {
+		return 480
 	}
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
+	if answerLimit <= 0 {
+		return 480
 	}
-	return string(runes[:limit]) + "..."
+	available := answerLimit - 120
+	if available < 160 {
+		return 160
+	}
+	limit := available / evidenceCount
+	if limit < 160 {
+		return 160
+	}
+	if limit > 480 {
+		return 480
+	}
+	return limit
 }

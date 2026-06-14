@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"CleanCaregent/internal/evidencefmt"
 	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/llm"
 	"CleanCaregent/internal/prompt"
@@ -163,7 +164,11 @@ func (r *LLMReflector) reviewWithLLM(
 		return llmReflectionResult{}, err
 	}
 
-	evidenceContext := buildEvidenceContextForReflection(request.Evidences)
+	evidenceContext := buildEvidenceContextForReflectionWithFocus(
+		request.Evidences,
+		request.Query,
+		request.Answer,
+	)
 	subQuestions := "[]"
 	if raw, err := json.Marshal(request.SubQuestions); err == nil {
 		subQuestions = string(raw)
@@ -308,13 +313,25 @@ func extractClaims(answer string) []string {
 }
 
 func buildEvidenceContextForReflection(evidences []Evidence) string {
+	return buildEvidenceContextForReflectionWithFocus(evidences, "", "")
+}
+
+func buildEvidenceContextForReflectionWithFocus(
+	evidences []Evidence,
+	query string,
+	answer string,
+) string {
 	var builder strings.Builder
 	if len(evidences) > 8 {
 		evidences = evidences[:8]
 	}
+	perItemLimit := reflectionEvidenceItemLimit(len(evidences))
 	for _, item := range evidences {
 		fmt.Fprintf(&builder, "[%s] 类型：%s\n标题：%s\n内容：%s\n\n",
-			item.ID, item.Kind, item.Title, truncateReflectionEvidence(item.Content, 800),
+			item.ID,
+			item.Kind,
+			item.Title,
+			evidencefmt.Compact(item.Content, perItemLimit, query, answer, item.Title),
 		)
 	}
 	if builder.Len() == 0 {
@@ -324,11 +341,21 @@ func buildEvidenceContextForReflection(evidences []Evidence) string {
 }
 
 func truncateReflectionEvidence(value string, maxRunes int) string {
-	runes := []rune(strings.TrimSpace(value))
-	if maxRunes <= 0 || len(runes) <= maxRunes {
-		return string(runes)
+	return evidencefmt.Compact(value, maxRunes)
+}
+
+func reflectionEvidenceItemLimit(count int) int {
+	if count <= 0 {
+		return 1200
 	}
-	return string(runes[:maxRunes]) + "..."
+	limit := 6400 / count
+	if limit < 600 {
+		return 600
+	}
+	if limit > 1200 {
+		return 1200
+	}
+	return limit
 }
 
 func containsStringInSlice(slice []string, target string) bool {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"CleanCaregent/internal/evidencefmt"
 	"CleanCaregent/internal/llm"
 	"CleanCaregent/internal/prompt"
 	"CleanCaregent/internal/rag"
@@ -69,7 +70,7 @@ func (c *OpenAIClient) GenerateWithScenario(
 		return "", fmt.Errorf("get prompt template %s: %w", scenario, err)
 	}
 
-	evidenceContext := buildEvidenceContext(evidence)
+	evidenceContext := buildEvidenceContextForQuery(evidence, query)
 	if evidenceContext == "" {
 		evidenceContext = "(无证据)"
 	}
@@ -111,25 +112,40 @@ func (c *OpenAIClient) GenerateWithScenario(
 
 // buildEvidenceContext formats search results into the [EN] evidence format.
 func buildEvidenceContext(evidence []rag.SearchResult) string {
+	return buildEvidenceContextForQuery(evidence, "")
+}
+
+func buildEvidenceContextForQuery(evidence []rag.SearchResult, query string) string {
 	var builder strings.Builder
 	if len(evidence) > 10 {
 		evidence = evidence[:10]
 	}
+	perItemLimit := evidenceItemLimit(len(evidence), 7200, 480, 1200)
 	for index, item := range evidence {
 		fmt.Fprintf(&builder, "[E%d] 标题：%s\n文档：%s\n内容：%s\n\n",
 			index+1,
 			item.Title,
 			item.DocumentID,
-			truncateEvidence(item.Content, 900),
+			evidencefmt.Compact(item.Content, perItemLimit, query, item.Title),
 		)
 	}
 	return builder.String()
 }
 
 func truncateEvidence(value string, maxRunes int) string {
-	runes := []rune(strings.TrimSpace(value))
-	if maxRunes <= 0 || len(runes) <= maxRunes {
-		return string(runes)
+	return evidencefmt.Compact(value, maxRunes)
+}
+
+func evidenceItemLimit(count, total, minimum, maximum int) int {
+	if count <= 0 {
+		return maximum
 	}
-	return string(runes[:maxRunes]) + "..."
+	limit := total / count
+	if limit < minimum {
+		return minimum
+	}
+	if limit > maximum {
+		return maximum
+	}
+	return limit
 }

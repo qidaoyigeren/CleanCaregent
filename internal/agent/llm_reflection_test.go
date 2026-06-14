@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"CleanCaregent/internal/intent"
@@ -44,5 +45,19 @@ func TestExtractClaimsSplitsDeclarativeSentences(t *testing.T) {
 	claims := extractClaims("T20 额定吸力为 6000Pa。[E1]\n它适合 80-120 平米家庭。[E2]\n需要我继续查价格吗？")
 	if len(claims) != 2 {
 		t.Fatalf("claims = %#v", claims)
+	}
+}
+
+func TestReflectionEvidencePreservesAnswerRelatedPolicyException(t *testing.T) {
+	content := "# 售后政策\n" +
+		strings.Repeat("商品应保持包装及配件完整。\n", 40) +
+		"例外：滤芯拆封使用后，不适用七天无理由退货。"
+	context := buildEvidenceContextForReflectionWithFocus(
+		[]Evidence{{ID: "E1", Kind: "kb_chunk", Title: "退货政策", Content: content}},
+		"滤芯拆封后能退吗",
+		"滤芯拆封后可能不支持无理由退货。[E1]",
+	)
+	if !strings.Contains(context, "例外") || !strings.Contains(context, "不适用七天无理由退货") {
+		t.Fatalf("reflection evidence lost policy exception: %s", context)
 	}
 }
