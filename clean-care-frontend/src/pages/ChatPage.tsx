@@ -45,7 +45,7 @@ export default function ChatPage() {
     getMessages(conversationId, 20)
       .then((data) => {
         if (!cancelled) {
-          setMessages(data.items.reverse());
+          setMessages(data.items);
         }
       })
       .catch((err) => {
@@ -188,7 +188,7 @@ export default function ChatPage() {
               setMessagesError(null);
               setIsLoadingMessages(true);
               getMessages(conversationId, 20)
-                .then((data) => setMessages(data.items.reverse()))
+                .then((data) => setMessages(data.items))
                 .catch((err) =>
                   setMessagesError(err instanceof ApiError ? err.message : 'Failed')
                 )
