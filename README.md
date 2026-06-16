@@ -19,7 +19,7 @@
 - **混合检索链路**：MySQL 关键词检索 + Qdrant 向量检索 + RRF 融合 + 可降级 Rerank，并支持结构化参数优先查询。
 - **动静数据隔离**：商品参数、故障树和售后政策进入知识库；价格、库存、订单和保修状态通过 Tool 实时查询。
 - **安全与可信回答**：包含 Prompt Injection 拦截、安全停止条件、Evidence ID、数值证据检查、LLM Reflection 和确定性 Grounding Review。
-- **工程化工具调用**：6 个动态工具具备 JSON Schema、白名单、超时、重复调用检测、幂等、结果校验和审计日志。
+- **工程化工具调用**：6 个动态工具通过 MCP `tools/list` / `tools/call` 执行，支持进程内和 HTTP 远程传输，并具备 JSON Schema、白名单、超时、重复调用检测、幂等、结果校验和审计日志。
 - **可配置业务 Skill**：内置商品对比、选购推荐、配件查询、故障诊断和售后判断 5 类工作流。
 - **模型容错**：支持 OpenAI-compatible LLM、Embedding 和 Reranker，多供应商 fallback、三态熔断与本地降级。
 - **评测闭环**：内置 200 条 v2 分层评测集、异步 Eval Runner、LLM-as-Judge、bad case 分类和系统版本对比。
@@ -141,6 +141,24 @@ go run ./cmd/server
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/health/ready
 ```
+
+可选：将内置业务工具拆到独立 MCP 进程运行：
+
+```powershell
+go run ./cmd/mcp-server
+```
+
+主服务连接独立 MCP server 时配置：
+
+```yaml
+tool:
+  mcp:
+    transport: http
+    endpoint: http://127.0.0.1:8090/mcp
+    api_key: change-me
+```
+
+独立 MCP server 可通过 `tool.mcp.server_api_key` 校验 `Authorization: Bearer <token>` 或 `X-MCP-API-Key`。
 
 ### 6. 启动前端
 
@@ -266,7 +284,7 @@ make eval-compare
 
 ```text
 .
-├── cmd/                       # server、迁移、数据种子、评测与 Trace 分析
+├── cmd/                       # server、mcp-server、迁移、数据种子、评测与 Trace 分析
 ├── configs/                   # 本地配置、完整配置示例与 Skill 配置
 ├── internal/
 │   ├── agent/                 # ReAct、Plan-and-Execute、Reflection、安全护栏
@@ -276,7 +294,7 @@ make eval-compare
 │   ├── intent/                # 规则与 LLM 混合意图路由
 │   ├── retriever/             # Hybrid Retrieval、RRF、缓存与重检
 │   ├── skill/                 # 5 类业务工作流
-│   ├── tool/                  # Tool Registry、Executor 与 6 个内置工具
+│   ├── tool/                  # MCP 工具服务/客户端、Executor 与 6 个内置工具
 │   └── trace/                 # Agent Trace
 ├── clean-care-frontend/       # React + TypeScript 演示控制台
 ├── docs/                      # 设计、ADR、评测、实验与性能文档
@@ -309,7 +327,7 @@ GitHub Actions 会执行模块文件检查、后端测试与构建、前端 lint
 
 - 动态价格、库存、订单和售后数据均为本地 mock 数据，工具结果和 Trace 会标记
   `data_scope=mock`，未接真实 ERP、支付或物流系统。
-- Tool Registry 借鉴 MCP 的工具描述思想，但项目没有实现完整 MCP 协议。
+- 工具发现和调用已走 MCP `tools/list` / `tools/call` 抽象；默认使用进程内 MCP server，也可通过 `tool.mcp.transport=http` 接入独立或外部 MCP server。当前内置工具仍使用本地业务数据，未接真实 ERP、支付或物流系统。
 - React 界面是开发与演示控制台，不是具备完整 RBAC、OIDC 和审计能力的生产管理后台。
 - Prompt 版本由进程内 Registry 管理，重启后不会持久化激活状态。
 - Cross-Encoder Reranker 依赖外部兼容服务，仓库不内置模型推理服务。

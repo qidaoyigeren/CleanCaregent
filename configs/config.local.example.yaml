@@ -91,6 +91,21 @@ llm:
 tool:
   timeout: 3s
   data_scope: mock
+  mcp:
+    transport: in_process
+    endpoint: http://127.0.0.1:8090/mcp
+    api_key: ""
+    headers: {}
+    request_timeout: 5s
+    list_cache_ttl: 30s
+    max_retries: 2
+    retry_base_delay: 100ms
+    retry_max_delay: 1s
+    listen_host: 127.0.0.1
+    listen_port: 8090
+    path: /mcp
+    server_api_key: ""
+    allowed_origins: []
 
 # Enable LLM-powered intent/rewrite/plan/reflect when llm.provider is openai_compatible.
 prompt:

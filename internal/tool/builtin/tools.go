@@ -41,6 +41,17 @@ func NewCreateAfterSalesTicket(repository repository.BusinessRepository) *Create
 	return &CreateAfterSalesTicket{repository: repository}
 }
 
+func NewBusinessTools(repository repository.BusinessRepository) []tool.Tool {
+	return []tool.Tool{
+		NewPriceQuery(repository),
+		NewInventoryCheck(repository),
+		NewUserPurchaseHistory(repository),
+		NewOrderLookup(repository),
+		NewWarrantyCheck(repository),
+		NewCreateAfterSalesTicket(repository),
+	}
+}
+
 func (t *PriceQuery) Name() string                { return "price_query" }
 func (t *PriceQuery) SideEffect() tool.SideEffect { return tool.SideEffectReadOnly }
 func (t *PriceQuery) Description() string {

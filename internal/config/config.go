@@ -226,6 +226,28 @@ type LLMFallbackConfig struct {
 type ToolConfig struct {
 	Timeout   time.Duration `mapstructure:"timeout"`
 	DataScope string        `mapstructure:"data_scope"`
+	MCP       ToolMCPConfig `mapstructure:"mcp"`
+}
+
+type ToolMCPConfig struct {
+	Transport      string            `mapstructure:"transport"`
+	Endpoint       string            `mapstructure:"endpoint"`
+	APIKey         string            `mapstructure:"api_key"`
+	Headers        map[string]string `mapstructure:"headers"`
+	RequestTimeout time.Duration     `mapstructure:"request_timeout"`
+	ListCacheTTL   time.Duration     `mapstructure:"list_cache_ttl"`
+	MaxRetries     int               `mapstructure:"max_retries"`
+	RetryBaseDelay time.Duration     `mapstructure:"retry_base_delay"`
+	RetryMaxDelay  time.Duration     `mapstructure:"retry_max_delay"`
+	ListenHost     string            `mapstructure:"listen_host"`
+	ListenPort     int               `mapstructure:"listen_port"`
+	Path           string            `mapstructure:"path"`
+	ServerAPIKey   string            `mapstructure:"server_api_key"`
+	AllowedOrigins []string          `mapstructure:"allowed_origins"`
+}
+
+func (c ToolMCPConfig) Address() string {
+	return fmt.Sprintf("%s:%d", c.ListenHost, c.ListenPort)
 }
 
 type TracingConfig struct {
@@ -557,6 +579,39 @@ func (c Config) Validate() error {
 	default:
 		return errors.New("tool.data_scope must be mock, sandbox, or external")
 	}
+	switch c.Tool.MCP.Transport {
+	case "in_process":
+	case "http":
+		if strings.TrimSpace(c.Tool.MCP.Endpoint) == "" {
+			return errors.New("tool.mcp.endpoint is required when tool.mcp.transport=http")
+		}
+		parsed, err := url.Parse(strings.TrimSpace(c.Tool.MCP.Endpoint))
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return errors.New("tool.mcp.endpoint must be an absolute URL")
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return errors.New("tool.mcp.endpoint scheme must be http or https")
+		}
+	default:
+		return errors.New("tool.mcp.transport must be in_process or http")
+	}
+	if c.Tool.MCP.RequestTimeout <= 0 ||
+		c.Tool.MCP.ListCacheTTL < 0 ||
+		c.Tool.MCP.MaxRetries < 0 ||
+		c.Tool.MCP.RetryBaseDelay <= 0 ||
+		c.Tool.MCP.RetryMaxDelay <= 0 ||
+		c.Tool.MCP.RetryBaseDelay > c.Tool.MCP.RetryMaxDelay {
+		return errors.New("tool.mcp retry and timeout settings are invalid")
+	}
+	if c.Tool.MCP.ListenPort < 1 || c.Tool.MCP.ListenPort > 65535 {
+		return errors.New("tool.mcp.listen_port must be between 1 and 65535")
+	}
+	if strings.TrimSpace(c.Tool.MCP.ListenHost) == "" {
+		return errors.New("tool.mcp.listen_host is required")
+	}
+	if !strings.HasPrefix(strings.TrimSpace(c.Tool.MCP.Path), "/") {
+		return errors.New("tool.mcp.path must start with /")
+	}
 	if strings.TrimSpace(c.Tracing.ServiceName) == "" {
 		return errors.New("tracing.service_name is required")
 	}
@@ -706,6 +761,20 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.providers", []map[string]any{})
 	v.SetDefault("tool.timeout", "3s")
 	v.SetDefault("tool.data_scope", "mock")
+	v.SetDefault("tool.mcp.transport", "in_process")
+	v.SetDefault("tool.mcp.endpoint", "http://127.0.0.1:8090/mcp")
+	v.SetDefault("tool.mcp.api_key", "")
+	v.SetDefault("tool.mcp.headers", map[string]string{})
+	v.SetDefault("tool.mcp.request_timeout", "5s")
+	v.SetDefault("tool.mcp.list_cache_ttl", "30s")
+	v.SetDefault("tool.mcp.max_retries", 2)
+	v.SetDefault("tool.mcp.retry_base_delay", "100ms")
+	v.SetDefault("tool.mcp.retry_max_delay", "1s")
+	v.SetDefault("tool.mcp.listen_host", "127.0.0.1")
+	v.SetDefault("tool.mcp.listen_port", 8090)
+	v.SetDefault("tool.mcp.path", "/mcp")
+	v.SetDefault("tool.mcp.server_api_key", "")
+	v.SetDefault("tool.mcp.allowed_origins", []string{})
 	v.SetDefault("tracing.enabled", false)
 	v.SetDefault("tracing.service_name", "clean-care-agent")
 	v.SetDefault("tracing.service_version", "dev")

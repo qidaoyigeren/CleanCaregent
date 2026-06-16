@@ -42,31 +42,31 @@
 
 仅 Naive RAG 无法处理订单和副作用操作；仅自由 ReAct 难以控制安全和成本。
 
-## ADR-002：工具调用暂不采用 MCP 协议
+## ADR-002：工具调用采用 MCP 抽象
 
 ### 背景
 
-当前 6 个工具均为项目内 mock 动态能力，部署边界、鉴权模型和审计格式一致。引入远程工具协议会增加连接管理和权限面，但短期不能带来真实外部系统接入。
+当前 6 个工具均为项目内 mock 动态能力，部署边界、鉴权模型和审计格式一致。为了让 Agent 主循环不绑定本地工具实例，同时保留本地可测性，工具发现和执行需要统一到 MCP 形态。
 
 ### 决策
 
-使用 `tool.Registry`、`tool.Executor` 和结构化 Definition 作为内部工具协议；保留未来增加 MCP Adapter 的空间，不把业务 Skill 与传输协议绑定。
+使用 `internal/tool/mcp` 提供 MCP tool server/client。业务工具挂到 MCP server，`tool.Executor` 只依赖 MCP client 的 `tools/list` 和 `tools/call` 能力，并继续负责白名单、Schema 校验、超时、幂等、审计和结果校验。默认配置为进程内 client/server；`tool.mcp.transport=http` 时通过 HTTP JSON-RPC 连接独立或外部 MCP server。
 
-代码：`internal/tool/tool.go`、`internal/tool/registry.go`、`internal/tool/executor.go`。
+代码：`internal/tool/tool.go`、`internal/tool/mcp/server.go`、`internal/tool/mcp/http.go`、`internal/tool/executor.go`、`cmd/mcp-server`。
 
 ### 后果
 
-正面：依赖少、超时和审计统一、测试可完全本地化。
+正面：工具发现/调用路径与 MCP 对齐，Skill 和 Agent 不依赖本地 registry；超时和审计仍统一；测试可完全本地化；需要跨进程部署时可用独立 MCP server，远程连接支持 Bearer/API key 鉴权、工具列表缓存和瞬时故障重试。
 
-负面：暂不能直接复用外部 MCP Server，后续需要适配层。
+负面：当前 HTTP transport 覆盖 `tools/list` / `tools/call` 和基础 SSE 响应读取，尚未实现完整 MCP 生命周期、OAuth 授权服务器、server-to-client notification 订阅和多 MCP server 聚合命名冲突处理。
 
 ### 如果选错会怎样
 
-若为 mock 工具提前引入 MCP，面试演示会增加网络故障点，却仍不能声称接入真实 ERP；若完全没有抽象，未来接 MCP 时会侵入 Agent 主循环。
+若工具仍直接经本地 registry 调用，未来接外部 MCP Server 会侵入 Agent 和 Skill；若强制所有环境都走远程传输，会在 mock 数据阶段增加不必要的网络故障点。因此默认进程内、远程按配置开启。
 
 ### 替代方案
 
-直接 HTTP 调用会把鉴权、超时、校验散落在 Skill 中；当前不采用。
+直接 HTTP 调用会把鉴权、超时、校验散落在 Skill 中；继续使用本地 registry 会让工具发现协议与真实 MCP 脱节。当前采用 MCP client 抽象统一进程内和 HTTP 远程传输。
 
 ## ADR-003：故障排查使用受控 Skill
 

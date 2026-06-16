@@ -194,6 +194,24 @@ tool:
   # mock: local reproducible business data; sandbox: test integration;
   # external: authenticated production business repository.
   data_scope: mock
+  mcp:
+    # in_process keeps the built-in tools in the API server process.
+    # http calls an external/standalone MCP server over Streamable HTTP JSON-RPC.
+    transport: in_process
+    endpoint: http://127.0.0.1:8090/mcp
+    api_key: ""
+    headers: {}
+    request_timeout: 5s
+    list_cache_ttl: 30s
+    max_retries: 2
+    retry_base_delay: 100ms
+    retry_max_delay: 1s
+    # Used by `go run ./cmd/mcp-server`.
+    listen_host: 127.0.0.1
+    listen_port: 8090
+    path: /mcp
+    server_api_key: ""
+    allowed_origins: []
 
 # Prompt management and LLM enrichment.
 # When enable_llm_components is true and llm.provider is openai_compatible,

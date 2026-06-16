@@ -6,7 +6,7 @@
 - 本地 MySQL、Redis、Qdrant 数据链路；MySQL 不由 Docker 部署。
 - 规则快速路由 + LLM 意图分类、LLM Query Rewrite、规则与 LLM 混合 Planner。
 - 简单问题走收窄后的 RAG；复杂问题进入受控 Skill 或最多 5 步 ReAct。
-- 6 个动态工具，具备 JSON Schema、白名单、超时、重复调用检测、幂等和日志。
+- 6 个动态工具通过 MCP `tools/list` / `tools/call` 路径执行，具备 JSON Schema、白名单、超时、重复调用检测、幂等和日志；默认进程内执行，也可通过 HTTP MCP client 接入独立或外部 MCP server。
 - 5 个 Skill：商品对比、选购推荐、配件查询、故障诊断、售后判断。
 - 故障树状态机、配件兼容三态矩阵、结构化参数优先查询和售后动态事实强制落地。
 - Evidence ID、LLM Reflection、确定性 Grounding Review、检索重试和转人工策略。
@@ -26,12 +26,11 @@
 - Naive RAG 与 Agentic RAG 共用评估数据模型，可按系统版本对比。
 - Prompt Injection 入口拦截、竞品提及策略和 MySQL 用户数据隔离。
 - PDF、DOCX、HTML、Markdown、JSON 与纯文本知识入库解析。
-- Prometheus 指标、模型成本估算、熔断器管理 API 和 Trace 离线分析命令。
+- Prometheus 指标、模型成本估算、熔断器管理 API、Trace 离线分析命令、进程内 MCP 工具服务/客户端和独立 HTTP MCP server。
 
 ## 明确未完成或未夸大
 
-- 未实现完整 MCP 协议，只采用 Tool Registry 与工具描述注册思想。
-- 未接真实电商价格、库存、订单、支付和物流系统，当前动态工具使用本地业务数据。
+- 未接真实电商价格、库存、订单、支付和物流系统，当前内置动态工具使用本地业务数据；HTTP MCP transport 已支持接入外部 MCP server，但不等于已完成真实 ERP/支付/物流联调。
 - 已实现 HS256 JWT 与管理员 API Key，但未实现 OIDC、密钥轮换、管理员 RBAC 和可视化管理后台。
 - 当前 SSE 是应用层事件分段，不是上游模型 token 直通；OpenAI-compatible 流式客户端已实现首包超时探测。
 - LLM 三态熔断已覆盖模型请求，但没有宣称所有基础设施都具备复杂熔断与跨机房容灾。

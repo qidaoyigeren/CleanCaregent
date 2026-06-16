@@ -1,12 +1,18 @@
-.PHONY: run build migrate seed-all test test-race coverage fmt vet lint tidy-check eval-dataset eval-compare eval-regression compose-up compose-down
+.PHONY: run run-mcp-server build build-mcp-server migrate seed-all test test-race coverage fmt vet lint tidy-check eval-dataset eval-compare eval-regression compose-up compose-down
 
 BASE_URL ?= http://127.0.0.1:8080
 
 run:
 	go run ./cmd/server
 
+run-mcp-server:
+	go run ./cmd/mcp-server
+
 build:
 	go build -o bin/cleancare ./cmd/server
+
+build-mcp-server:
+	go build -o bin/cleancare-mcp-server ./cmd/mcp-server
 
 migrate:
 	go run ./cmd/migrate

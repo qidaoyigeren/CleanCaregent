@@ -49,6 +49,14 @@ type Tool interface {
 	Execute(ctx context.Context, call Call) (Result, error)
 }
 
+// Client is the MCP-facing tool client used by the executor. Implementations
+// are expected to discover tools through MCP tools/list and execute through
+// MCP tools/call.
+type Client interface {
+	ListTools(ctx context.Context) ([]Definition, error)
+	CallTool(ctx context.Context, call Call) (Result, error)
+}
+
 // SideEffectTool lets tools declare mutation semantics without changing the
 // existing Tool interface implemented by external integrations.
 type SideEffectTool interface {
@@ -63,12 +71,6 @@ func EffectOf(value Tool) SideEffect {
 		}
 	}
 	return SideEffectReadOnly
-}
-
-type Registry interface {
-	Register(tool Tool) error
-	Get(name string) (Tool, bool)
-	ListAllowed(names []string) []Definition
 }
 
 type CallLogStore interface {

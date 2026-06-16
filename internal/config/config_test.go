@@ -24,6 +24,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Agent.Timeout != 20*time.Second {
 		t.Fatalf("Agent.Timeout = %s", cfg.Agent.Timeout)
 	}
+	if cfg.Tool.MCP.Transport != "in_process" || cfg.Tool.MCP.Path != "/mcp" {
+		t.Fatalf("Tool.MCP = %#v", cfg.Tool.MCP)
+	}
 }
 
 func TestLoadRejectsInvalidConfig(t *testing.T) {
@@ -127,6 +130,30 @@ func TestValidateRejectsMoreThanFiveAgentSteps(t *testing.T) {
 	cfg.Agent.MaxSteps = 6
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() expected max steps error")
+	}
+}
+
+func TestValidateHTTPMCPRequiresEndpoint(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Tool.MCP.Transport = "http"
+	cfg.Tool.MCP.Endpoint = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() expected mcp endpoint error")
+	}
+}
+
+func TestValidateRejectsInvalidMCPRetrySettings(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Tool.MCP.RetryBaseDelay = 2 * time.Second
+	cfg.Tool.MCP.RetryMaxDelay = time.Second
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() expected mcp retry settings error")
 	}
 }
 

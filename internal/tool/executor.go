@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +28,7 @@ var (
 )
 
 type Executor struct {
-	registry  Registry
+	client    Client
 	logStore  CallLogStore
 	timeout   time.Duration
 	dataScope string
@@ -36,12 +37,12 @@ type Executor struct {
 	seenTTL   time.Duration
 }
 
-func NewExecutor(registry Registry, logStore CallLogStore, timeout time.Duration) *Executor {
+func NewExecutor(client Client, logStore CallLogStore, timeout time.Duration) *Executor {
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
 	return &Executor{
-		registry:  registry,
+		client:    client,
 		logStore:  logStore,
 		timeout:   timeout,
 		dataScope: "mock",
@@ -58,6 +59,28 @@ func (e *Executor) WithDataScope(dataScope string) *Executor {
 	return e
 }
 
+func (e *Executor) ListAllowed(ctx context.Context, names []string) ([]Definition, error) {
+	if e.client == nil {
+		return nil, ErrToolNotFound
+	}
+	allowed := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		allowed[name] = struct{}{}
+	}
+	definitions, err := e.client.ListTools(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("mcp tools/list: %w", err)
+	}
+	result := make([]Definition, 0, len(names))
+	for _, definition := range definitions {
+		if _, ok := allowed[definition.Name]; ok {
+			result = append(result, definition)
+		}
+	}
+	sortDefinitions(result)
+	return result, nil
+}
+
 func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Result, error) {
 	ctx, span := otel.Tracer("clean-care-agent/tool").Start(ctx, "tool."+call.Name)
 	span.SetAttributes(
@@ -72,14 +95,19 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 		span.SetStatus(codes.Error, "tool not allowed")
 		return e.failAndLog(ctx, call, result, "TOOL_NOT_ALLOWED", ErrToolNotAllowed)
 	}
-	value, ok := e.registry.Get(call.Name)
+	definition, ok, err := e.definition(ctx, call.Name)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "mcp tool discovery failed")
+		return e.failAndLog(ctx, call, result, "TOOL_DISCOVERY_FAILED", err)
+	}
 	if !ok {
 		span.SetStatus(codes.Error, "tool not found")
 		return e.failAndLog(ctx, call, result, "TOOL_NOT_FOUND", ErrToolNotFound)
 	}
 	validationCtx, validationSpan := otel.Tracer("clean-care-agent/tool").Start(ctx, "tool.validate_arguments")
-	validationSpan.SetAttributes(attribute.String("tool.side_effect", string(EffectOf(value))))
-	if err := validateArguments(value.ParamsSchema(), call.Arguments); err != nil {
+	validationSpan.SetAttributes(attribute.String("tool.side_effect", string(definition.SideEffect)))
+	if err := validateArguments(definition.ParamsSchema, call.Arguments); err != nil {
 		validationSpan.RecordError(err)
 		validationSpan.SetStatus(codes.Error, err.Error())
 		validationSpan.End()
@@ -92,7 +120,7 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 			fmt.Errorf("%w: %v", ErrInvalidArguments, err),
 		)
 	}
-	if err := validateStateChangePreconditions(value, call); err != nil {
+	if err := validateStateChangePreconditions(definition, call); err != nil {
 		validationSpan.RecordError(err)
 		validationSpan.SetStatus(codes.Error, err.Error())
 		validationSpan.End()
@@ -125,7 +153,7 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 	runCtx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 	executeCtx, executeSpan := otel.Tracer("clean-care-agent/tool").Start(runCtx, "tool.execute")
-	executed, err := value.Execute(executeCtx, call)
+	executed, err := e.client.CallTool(executeCtx, call)
 	if err != nil {
 		executeSpan.RecordError(err)
 		executeSpan.SetStatus(codes.Error, err.Error())
@@ -178,8 +206,24 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 	return executed, nil
 }
 
-func validateStateChangePreconditions(value Tool, call Call) error {
-	if EffectOf(value) != SideEffectStateChange {
+func (e *Executor) definition(ctx context.Context, name string) (Definition, bool, error) {
+	if e.client == nil {
+		return Definition{}, false, nil
+	}
+	definitions, err := e.client.ListTools(ctx)
+	if err != nil {
+		return Definition{}, false, err
+	}
+	for _, definition := range definitions {
+		if definition.Name == name {
+			return definition, true, nil
+		}
+	}
+	return Definition{}, false, nil
+}
+
+func validateStateChangePreconditions(definition Definition, call Call) error {
+	if definition.SideEffect != SideEffectStateChange {
 		return nil
 	}
 	if strings.TrimSpace(call.IdempotencyKey) == "" {
@@ -238,6 +282,12 @@ func contains(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func sortDefinitions(definitions []Definition) {
+	sort.Slice(definitions, func(i, j int) bool {
+		return definitions[i].Name < definitions[j].Name
+	})
 }
 
 func validateArguments(raw json.RawMessage, arguments map[string]any) error {

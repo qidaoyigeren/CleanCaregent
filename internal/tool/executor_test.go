@@ -46,15 +46,48 @@ func (t fakeTool) SideEffect() SideEffect {
 	return t.effect
 }
 
+type fakeMCPClient struct {
+	tools map[string]fakeTool
+}
+
+func newFakeMCPClient(values ...fakeTool) *fakeMCPClient {
+	client := &fakeMCPClient{tools: make(map[string]fakeTool, len(values))}
+	for _, value := range values {
+		client.tools[value.Name()] = value
+	}
+	return client
+}
+
+func (c *fakeMCPClient) ListTools(context.Context) ([]Definition, error) {
+	definitions := make([]Definition, 0, len(c.tools))
+	for _, value := range c.tools {
+		definitions = append(definitions, Definition{
+			Name:         value.Name(),
+			Description:  value.Description(),
+			ParamsSchema: value.ParamsSchema(),
+			SideEffect:   value.SideEffect(),
+		})
+	}
+	sortDefinitions(definitions)
+	return definitions, nil
+}
+
+func (c *fakeMCPClient) CallTool(ctx context.Context, call Call) (Result, error) {
+	value, ok := c.tools[call.Name]
+	if !ok {
+		return Result{}, ErrToolNotFound
+	}
+	return value.Execute(ctx, call)
+}
+
 func TestExecutorValidatesArgumentsAgainstSchema(t *testing.T) {
-	registry := NewRegistry()
-	_ = registry.Register(fakeTool{
+	client := newFakeMCPClient(fakeTool{
 		name: "price_query",
 		schema: json.RawMessage(
 			`{"type":"object","required":["product_refs"],"properties":{"product_refs":{"type":"array"}}}`,
 		),
 	})
-	executor := NewExecutor(registry, nil, time.Second)
+	executor := NewExecutor(client, nil, time.Second)
 	_, err := executor.Execute(context.Background(), Call{
 		TraceID:   "tr_schema",
 		CallID:    "call_schema",
@@ -67,11 +100,7 @@ func TestExecutorValidatesArgumentsAgainstSchema(t *testing.T) {
 }
 
 func TestExecutorWhitelistAndRepeatedCall(t *testing.T) {
-	registry := NewRegistry()
-	if err := registry.Register(fakeTool{name: "price_query"}); err != nil {
-		t.Fatal(err)
-	}
-	executor := NewExecutor(registry, nil, time.Second)
+	executor := NewExecutor(newFakeMCPClient(fakeTool{name: "price_query"}), nil, time.Second)
 	call := Call{TraceID: "tr_1", CallID: "call_1", Name: "price_query", Arguments: map[string]any{"model": "T20"}}
 	if _, err := executor.Execute(context.Background(), call, []string{"price_query"}); err != nil {
 		t.Fatal(err)
@@ -83,11 +112,7 @@ func TestExecutorWhitelistAndRepeatedCall(t *testing.T) {
 }
 
 func TestExecutorAnnotatesConfiguredDataScope(t *testing.T) {
-	registry := NewRegistry()
-	if err := registry.Register(fakeTool{name: "price_query"}); err != nil {
-		t.Fatal(err)
-	}
-	executor := NewExecutor(registry, nil, time.Second).WithDataScope("sandbox")
+	executor := NewExecutor(newFakeMCPClient(fakeTool{name: "price_query"}), nil, time.Second).WithDataScope("sandbox")
 	result, err := executor.Execute(context.Background(), Call{
 		TraceID: "tr_scope", CallID: "call_scope", Name: "price_query",
 	}, []string{"price_query"})
@@ -100,9 +125,7 @@ func TestExecutorAnnotatesConfiguredDataScope(t *testing.T) {
 }
 
 func TestExecutorRejectsNonWhitelistedTool(t *testing.T) {
-	registry := NewRegistry()
-	_ = registry.Register(fakeTool{name: "price_query"})
-	executor := NewExecutor(registry, nil, time.Second)
+	executor := NewExecutor(newFakeMCPClient(fakeTool{name: "price_query"}), nil, time.Second)
 	_, err := executor.Execute(context.Background(), Call{
 		TraceID: "tr_1", CallID: "call_1", Name: "price_query",
 	}, []string{"order_lookup"})
@@ -112,8 +135,7 @@ func TestExecutorRejectsNonWhitelistedTool(t *testing.T) {
 }
 
 func TestExecutorRejectsInvalidSuccessfulToolResult(t *testing.T) {
-	registry := NewRegistry()
-	_ = registry.Register(fakeTool{
+	client := newFakeMCPClient(fakeTool{
 		name: "price_query",
 		data: map[string]any{"items": []any{map[string]any{
 			"sku_code":                    "SKU-T20",
@@ -124,7 +146,7 @@ func TestExecutorRejectsInvalidSuccessfulToolResult(t *testing.T) {
 			"currency":                    "CNY",
 		}}},
 	})
-	executor := NewExecutor(registry, nil, time.Second)
+	executor := NewExecutor(client, nil, time.Second)
 	result, err := executor.Execute(context.Background(), Call{
 		TraceID: "tr_invalid_result",
 		CallID:  "call_invalid_result",
@@ -139,13 +161,12 @@ func TestExecutorRejectsInvalidSuccessfulToolResult(t *testing.T) {
 }
 
 func TestExecutorRequiresConfirmationAndIdempotencyForStateChange(t *testing.T) {
-	registry := NewRegistry()
-	_ = registry.Register(fakeTool{
+	client := newFakeMCPClient(fakeTool{
 		name:   "state_change",
 		effect: SideEffectStateChange,
 		schema: json.RawMessage(`{"type":"object","required":["confirmed"],"properties":{"confirmed":{"type":"boolean"}}}`),
 	})
-	executor := NewExecutor(registry, nil, time.Second)
+	executor := NewExecutor(client, nil, time.Second)
 
 	_, err := executor.Execute(context.Background(), Call{
 		TraceID: "tr_state", CallID: "call_state_1", Name: "state_change",

@@ -203,7 +203,7 @@
 
 **当前状态：**
 - 6 个内置工具（price_query, inventory_check, user_purchase_history, order_lookup, warranty_check, create_after_sales_ticket）
-- 自定义工具注册表和执行器（非 MCP 协议）
+- 进程内 MCP tool server/client 与执行器
 - 参数提取依赖正则表达式
 - 工具结果有 domain-specific 的验证
 

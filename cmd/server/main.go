@@ -44,6 +44,7 @@ import (
 	"CleanCaregent/internal/skill"
 	"CleanCaregent/internal/tool"
 	"CleanCaregent/internal/tool/builtin"
+	toolmcp "CleanCaregent/internal/tool/mcp"
 	"CleanCaregent/internal/trace"
 	tracemysql "CleanCaregent/internal/trace/mysql"
 	"CleanCaregent/internal/vectorstore"
@@ -198,21 +199,12 @@ func main() {
 		if knowledgeRetriever == nil || traceStore == nil || businessRepo == nil {
 			logger.Fatal("agentic dependencies are not configured")
 		}
-		toolRegistry := tool.NewRegistry()
-		for _, value := range []tool.Tool{
-			builtin.NewPriceQuery(businessRepo),
-			builtin.NewInventoryCheck(businessRepo),
-			builtin.NewUserPurchaseHistory(businessRepo),
-			builtin.NewOrderLookup(businessRepo),
-			builtin.NewWarrantyCheck(businessRepo),
-			builtin.NewCreateAfterSalesTicket(businessRepo),
-		} {
-			if registerErr := toolRegistry.Register(value); registerErr != nil {
-				logger.Fatal("register tool", zap.String("tool", value.Name()), zap.Error(registerErr))
-			}
+		toolClient, mcpErr := buildToolClient(context.Background(), cfg, businessRepo, logger)
+		if mcpErr != nil {
+			logger.Fatal("initialize mcp tool client", zap.Error(mcpErr))
 		}
 		toolExecutor := tool.NewExecutor(
-			toolRegistry,
+			toolClient,
 			toolLogStore,
 			cfg.Tool.Timeout,
 		).WithDataScope(cfg.Tool.DataScope)
@@ -291,6 +283,17 @@ func main() {
 		)
 		if cfg.Prompt.EnableLLMComponents && llmClient != nil {
 			intentLLMClient := llmClient.WithModel(cfg.Prompt.IntentClassifierModel)
+			availableTools, listToolsErr := toolExecutor.ListAllowed(context.Background(), []string{
+				"price_query",
+				"inventory_check",
+				"user_purchase_history",
+				"order_lookup",
+				"warranty_check",
+				"create_after_sales_ticket",
+			})
+			if listToolsErr != nil {
+				logger.Fatal("list mcp tools", zap.Error(listToolsErr))
+			}
 			agentOpts = append(agentOpts,
 				agent.WithLLMRouter(intent.NewHybridRouter(intentLLMClient, promptRegistry)),
 				agent.WithLLMRewriter(agent.NewLLMQueryRewriter(
@@ -300,14 +303,7 @@ func main() {
 				agent.WithLLMPlanner(agent.NewLLMPlanner(
 					llmClient.WithModel(cfg.Prompt.PlannerModel),
 					promptRegistry,
-					toolRegistry.ListAllowed([]string{
-						"price_query",
-						"inventory_check",
-						"user_purchase_history",
-						"order_lookup",
-						"warranty_check",
-						"create_after_sales_ticket",
-					})...,
+					availableTools...,
 				)),
 				agent.WithLLMReflector(agent.NewLLMReflector(
 					llmClient.WithModel(cfg.Prompt.ReflectionModel),
@@ -565,6 +561,53 @@ func buildEmbedder(cfg config.Config) embedding.Embedder {
 		return current
 	}
 	return embedding.NewLocalHash(cfg.Embedding.Dimension)
+}
+
+func buildToolClient(
+	ctx context.Context,
+	cfg config.Config,
+	businessRepo repository.BusinessRepository,
+	logger *zap.Logger,
+) (tool.Client, error) {
+	switch cfg.Tool.MCP.Transport {
+	case "in_process":
+		tools := builtin.NewBusinessTools(businessRepo)
+		toolServer, err := toolmcp.NewServer(tools...)
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("mcp tools configured",
+			zap.String("transport", cfg.Tool.MCP.Transport),
+			zap.Int("tool_count", len(tools)),
+		)
+		return toolmcp.NewInProcessClient(toolServer), nil
+	case "http":
+		client, err := toolmcp.NewRemoteClient(toolmcp.RemoteClientConfig{
+			Endpoint:       cfg.Tool.MCP.Endpoint,
+			APIKey:         cfg.Tool.MCP.APIKey,
+			Headers:        cfg.Tool.MCP.Headers,
+			Timeout:        cfg.Tool.MCP.RequestTimeout,
+			ListCacheTTL:   cfg.Tool.MCP.ListCacheTTL,
+			MaxRetries:     cfg.Tool.MCP.MaxRetries,
+			RetryBaseDelay: cfg.Tool.MCP.RetryBaseDelay,
+			RetryMaxDelay:  cfg.Tool.MCP.RetryMaxDelay,
+		})
+		if err != nil {
+			return nil, err
+		}
+		definitions, err := client.ListTools(ctx)
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("remote mcp tool server connected",
+			zap.String("transport", cfg.Tool.MCP.Transport),
+			zap.String("endpoint", cfg.Tool.MCP.Endpoint),
+			zap.Int("tool_count", len(definitions)),
+		)
+		return client, nil
+	default:
+		return nil, fmt.Errorf("unsupported mcp transport %q", cfg.Tool.MCP.Transport)
+	}
 }
 
 func buildGenerator(

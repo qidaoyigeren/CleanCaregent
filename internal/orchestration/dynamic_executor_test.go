@@ -13,6 +13,7 @@ import (
 	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/skill"
 	"CleanCaregent/internal/tool"
+	toolmcp "CleanCaregent/internal/tool/mcp"
 )
 
 type chainSkill struct {
@@ -123,12 +124,12 @@ func TestDynamicExecutorPassesCompoundTargetIntentToSkill(t *testing.T) {
 }
 
 func TestDynamicExecutorFallsBackToKnowledgeOnTimeout(t *testing.T) {
-	registry := tool.NewRegistry()
-	if err := registry.Register(timeoutTool{}); err != nil {
+	server, err := toolmcp.NewServer(timeoutTool{})
+	if err != nil {
 		t.Fatal(err)
 	}
 	executor := NewDynamicExecutor(
-		tool.NewExecutor(registry, nil, 10*time.Millisecond),
+		tool.NewExecutor(toolmcp.NewInProcessClient(server), nil, 10*time.Millisecond),
 		nil,
 		WithKnowledgeRetriever(fallbackRetriever{}),
 	)
