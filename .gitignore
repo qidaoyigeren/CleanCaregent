@@ -6,6 +6,7 @@
 bin/
 dist/
 coverage.out
+.e2e/
 *.log
 *.exe
 configs/config.local.yaml

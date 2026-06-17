@@ -4,6 +4,8 @@
 
 2026-06-13 使用真实 DeepSeek LLM、SiliconFlow Embedding/Reranker、
 Qdrant、MySQL FULLTEXT 和 LLM-as-Judge 完成三轮完整 200 条评测。
+这是一份历史运行记录；之后 MCP HTTP transport、CI 与工具链继续演进，
+当前版本指标需要使用新的 `system_version` 重跑后再引用。
 
 | 运行 | 严格通过率 | P95 | 平均 Token |
 |---|---:|---:|---:|

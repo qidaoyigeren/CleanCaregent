@@ -40,6 +40,38 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestLoadUsesConfigFileEnv(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "e2e.yaml")
+	content := []byte(`
+server:
+  port: 19091
+mysql:
+  enabled: true
+  dsn: "user:pass@tcp(127.0.0.1:13306)/cleancare?parseTime=true&multiStatements=true"
+storage:
+  conversation_repository: mysql
+qdrant:
+  enabled: true
+  base_url: "http://127.0.0.1:16333"
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("CLEANCARE_CONFIG_FILE", path)
+	t.Setenv("CLEANCARE_SERVER_PORT", "19092")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Server.Port != 19092 {
+		t.Fatalf("Server.Port = %d", cfg.Server.Port)
+	}
+	if cfg.MySQL.DSN == "" || cfg.Qdrant.BaseURL != "http://127.0.0.1:16333" {
+		t.Fatalf("loaded config = %#v", cfg)
+	}
+}
+
 func TestValidateRequiresEnabledMySQLRepository(t *testing.T) {
 	cfg, err := Load("")
 	if err != nil {
@@ -142,6 +174,40 @@ func TestValidateHTTPMCPRequiresEndpoint(t *testing.T) {
 	cfg.Tool.MCP.Endpoint = ""
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() expected mcp endpoint error")
+	}
+}
+
+func TestValidateStdioMCPRequiresCommand(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Tool.MCP.Transport = "stdio"
+	cfg.Tool.MCP.StdioCommand = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() expected mcp stdio command error")
+	}
+	cfg.Tool.MCP.StdioCommand = "clean-care-mcp"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() unexpected error = %v", err)
+	}
+}
+
+func TestValidateMCPServers(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.Tool.MCP.Servers = []ToolMCPServerConfig{
+		{Name: "tools", Transport: "http", Endpoint: "http://127.0.0.1:8090/mcp"},
+		{Name: "stdio", Transport: "stdio", StdioCommand: "clean-care-mcp"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() unexpected error = %v", err)
+	}
+	cfg.Tool.MCP.Servers[1].Name = "tools"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() expected duplicate mcp server name error")
 	}
 }
 

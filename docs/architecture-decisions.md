@@ -50,15 +50,15 @@
 
 ### 决策
 
-使用 `internal/tool/mcp` 提供 MCP tool server/client。业务工具挂到 MCP server，`tool.Executor` 只依赖 MCP client 的 `tools/list` 和 `tools/call` 能力，并继续负责白名单、Schema 校验、超时、幂等、审计和结果校验。默认配置为进程内 client/server；`tool.mcp.transport=http` 时通过 HTTP JSON-RPC 连接独立或外部 MCP server。
+使用 `internal/tool/mcp` 提供 MCP tool server/client。业务工具挂到 MCP server，`tool.Executor` 只依赖 MCP client 的 `tools/list` 和 `tools/call` 能力，并继续负责白名单、Schema 校验、超时、幂等、审计和结果校验。默认配置为进程内 client/server；`tool.mcp.transport=http` 时通过 Streamable HTTP JSON-RPC 连接独立或外部 MCP server，`tool.mcp.transport=stdio` 时通过子进程 stdin/stdout 通信，`tool.mcp.servers` 可聚合多个 server 并用 `<server>/<tool>` 前缀处理命名冲突。
 
-代码：`internal/tool/tool.go`、`internal/tool/mcp/server.go`、`internal/tool/mcp/http.go`、`internal/tool/executor.go`、`cmd/mcp-server`。
+代码：`internal/tool/tool.go`、`internal/tool/mcp/server.go`、`internal/tool/mcp/http.go`、`internal/tool/mcp/stdio.go`、`internal/tool/mcp/aggregate.go`、`internal/tool/executor.go`、`cmd/mcp-server`。
 
 ### 后果
 
-正面：工具发现/调用路径与 MCP 对齐，Skill 和 Agent 不依赖本地 registry；超时和审计仍统一；测试可完全本地化；需要跨进程部署时可用独立 MCP server，远程连接支持 Bearer/API key 鉴权、工具列表缓存和瞬时故障重试。
+正面：工具发现/调用路径与 MCP 对齐，Skill 和 Agent 不依赖本地 registry；超时和审计仍统一；测试可完全本地化；需要跨进程部署时可用独立 HTTP 或 stdio MCP server，远程连接支持 Bearer/API key 鉴权、初始化握手、工具列表缓存、SSE notification stream、请求重试、session 失效重建和多 server 聚合。
 
-负面：当前 HTTP transport 覆盖 `tools/list` / `tools/call` 和基础 SSE 响应读取，尚未实现完整 MCP 生命周期、OAuth 授权服务器、server-to-client notification 订阅和多 MCP server 聚合命名冲突处理。
+负面：当前实现聚焦工具调用链路；OAuth 只实现 protected-resource metadata 和 Bearer/API key 校验，不内置完整授权码发放服务器；resources/prompts 支持协议方法和静态注册，但默认业务链路仍主要暴露 tools。
 
 ### 如果选错会怎样
 

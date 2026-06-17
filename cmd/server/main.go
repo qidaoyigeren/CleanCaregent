@@ -569,7 +569,55 @@ func buildToolClient(
 	businessRepo repository.BusinessRepository,
 	logger *zap.Logger,
 ) (tool.Client, error) {
-	switch cfg.Tool.MCP.Transport {
+	if len(cfg.Tool.MCP.Servers) > 0 {
+		clients := make([]toolmcp.NamedClient, 0, len(cfg.Tool.MCP.Servers))
+		for _, serverConfig := range cfg.Tool.MCP.Servers {
+			client, err := buildSingleToolClient(ctx, cfg.Tool.MCP, serverConfig, businessRepo, logger)
+			if err != nil {
+				return nil, fmt.Errorf("initialize mcp server %s: %w", serverConfig.Name, err)
+			}
+			clients = append(clients, toolmcp.NamedClient{Name: serverConfig.Name, Client: client})
+		}
+		aggregate, err := toolmcp.NewAggregateClient(clients)
+		if err != nil {
+			return nil, err
+		}
+		definitions, err := aggregate.ListTools(ctx)
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("aggregate mcp tool servers connected",
+			zap.Int("server_count", len(clients)),
+			zap.Int("tool_count", len(definitions)),
+		)
+		return aggregate, nil
+	}
+	return buildSingleToolClient(ctx, cfg.Tool.MCP, config.ToolMCPServerConfig{
+		Name:           "default",
+		Transport:      cfg.Tool.MCP.Transport,
+		Endpoint:       cfg.Tool.MCP.Endpoint,
+		APIKey:         cfg.Tool.MCP.APIKey,
+		Headers:        cfg.Tool.MCP.Headers,
+		StdioCommand:   cfg.Tool.MCP.StdioCommand,
+		StdioArgs:      cfg.Tool.MCP.StdioArgs,
+		StdioEnv:       cfg.Tool.MCP.StdioEnv,
+		RequestTimeout: cfg.Tool.MCP.RequestTimeout,
+		ListCacheTTL:   cfg.Tool.MCP.ListCacheTTL,
+		MaxRetries:     cfg.Tool.MCP.MaxRetries,
+		RetryBaseDelay: cfg.Tool.MCP.RetryBaseDelay,
+		RetryMaxDelay:  cfg.Tool.MCP.RetryMaxDelay,
+	}, businessRepo, logger)
+}
+
+func buildSingleToolClient(
+	ctx context.Context,
+	base config.ToolMCPConfig,
+	serverConfig config.ToolMCPServerConfig,
+	businessRepo repository.BusinessRepository,
+	logger *zap.Logger,
+) (tool.Client, error) {
+	transport := firstNonEmpty(serverConfig.Transport, base.Transport)
+	switch transport {
 	case "in_process":
 		tools := builtin.NewBusinessTools(businessRepo)
 		toolServer, err := toolmcp.NewServer(tools...)
@@ -577,20 +625,21 @@ func buildToolClient(
 			return nil, err
 		}
 		logger.Info("mcp tools configured",
-			zap.String("transport", cfg.Tool.MCP.Transport),
+			zap.String("transport", transport),
+			zap.String("server", firstNonEmpty(serverConfig.Name, "default")),
 			zap.Int("tool_count", len(tools)),
 		)
 		return toolmcp.NewInProcessClient(toolServer), nil
 	case "http":
 		client, err := toolmcp.NewRemoteClient(toolmcp.RemoteClientConfig{
-			Endpoint:       cfg.Tool.MCP.Endpoint,
-			APIKey:         cfg.Tool.MCP.APIKey,
-			Headers:        cfg.Tool.MCP.Headers,
-			Timeout:        cfg.Tool.MCP.RequestTimeout,
-			ListCacheTTL:   cfg.Tool.MCP.ListCacheTTL,
-			MaxRetries:     cfg.Tool.MCP.MaxRetries,
-			RetryBaseDelay: cfg.Tool.MCP.RetryBaseDelay,
-			RetryMaxDelay:  cfg.Tool.MCP.RetryMaxDelay,
+			Endpoint:       firstNonEmpty(serverConfig.Endpoint, base.Endpoint),
+			APIKey:         firstNonEmpty(serverConfig.APIKey, base.APIKey),
+			Headers:        firstHeaders(serverConfig.Headers, base.Headers),
+			Timeout:        firstDuration(serverConfig.RequestTimeout, base.RequestTimeout),
+			ListCacheTTL:   firstDuration(serverConfig.ListCacheTTL, base.ListCacheTTL),
+			MaxRetries:     firstInt(serverConfig.MaxRetries, base.MaxRetries),
+			RetryBaseDelay: firstDuration(serverConfig.RetryBaseDelay, base.RetryBaseDelay),
+			RetryMaxDelay:  firstDuration(serverConfig.RetryMaxDelay, base.RetryMaxDelay),
 		})
 		if err != nil {
 			return nil, err
@@ -600,14 +649,91 @@ func buildToolClient(
 			return nil, err
 		}
 		logger.Info("remote mcp tool server connected",
-			zap.String("transport", cfg.Tool.MCP.Transport),
-			zap.String("endpoint", cfg.Tool.MCP.Endpoint),
+			zap.String("transport", transport),
+			zap.String("server", firstNonEmpty(serverConfig.Name, "default")),
+			zap.String("endpoint", firstNonEmpty(serverConfig.Endpoint, base.Endpoint)),
+			zap.Int("tool_count", len(definitions)),
+		)
+		return client, nil
+	case "stdio":
+		client, err := toolmcp.NewStdioClient(toolmcp.StdioClientConfig{
+			Command:        firstNonEmpty(serverConfig.StdioCommand, base.StdioCommand),
+			Args:           firstStringSlice(serverConfig.StdioArgs, base.StdioArgs),
+			Env:            firstStringMap(serverConfig.StdioEnv, base.StdioEnv),
+			Timeout:        firstDuration(serverConfig.RequestTimeout, base.RequestTimeout),
+			MaxRestarts:    firstInt(serverConfig.MaxRetries, base.MaxRetries),
+			RestartBackoff: firstDuration(serverConfig.RetryBaseDelay, base.RetryBaseDelay),
+		})
+		if err != nil {
+			return nil, err
+		}
+		definitions, err := client.ListTools(ctx)
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("stdio mcp tool server connected",
+			zap.String("transport", transport),
+			zap.String("server", firstNonEmpty(serverConfig.Name, "default")),
 			zap.Int("tool_count", len(definitions)),
 		)
 		return client, nil
 	default:
-		return nil, fmt.Errorf("unsupported mcp transport %q", cfg.Tool.MCP.Transport)
+		return nil, fmt.Errorf("unsupported mcp transport %q", transport)
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func firstDuration(values ...time.Duration) time.Duration {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func firstInt(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func firstHeaders(values ...map[string]string) map[string]string {
+	for _, value := range values {
+		if len(value) > 0 {
+			return value
+		}
+	}
+	return nil
+}
+
+func firstStringMap(values ...map[string]string) map[string]string {
+	for _, value := range values {
+		if len(value) > 0 {
+			return value
+		}
+	}
+	return nil
+}
+
+func firstStringSlice(values ...[]string) []string {
+	for _, value := range values {
+		if len(value) > 0 {
+			return value
+		}
+	}
+	return nil
 }
 
 func buildGenerator(

@@ -2,12 +2,12 @@
 
 ## 目标
 
-v2 评测用于同一批 100 条真实化问法上比较 Naive RAG 与 Agentic RAG。它不把历史 mock 基线包装成当前线上效果；正式数值必须在指定模型、知识库和配置版本下重新运行后记录。
+v2 评测用于同一批 200 条真实化问法上比较 Naive RAG 与 Agentic RAG。它不把历史 mock 基线包装成当前线上效果；正式数值必须在指定模型、知识库和配置版本下重新运行后记录。
 
 ## 数据集
 
 - 默认版本：`v2`
-- 用例数：100
+- 用例数：200
 - 至少 30 条带有口语化、省略、大小写混用、指代或歧义
 - 覆盖纯知识查询、多文档对比、知识加工具、多轮故障诊断、澄清和拒答
 - 生成命令：`make eval-dataset`
@@ -55,4 +55,4 @@ make eval-compare
 
 接口为 `POST /api/v1/admin/eval/comparisons`，会立即返回 `comparison_id`；通过 `GET /api/v1/admin/eval/comparisons/{comparison_id}` 查询状态和报告。后台先用 Naive RAG 跑同一批用例，再用 Agentic RAG 跑候选版本，最终报告包含两次运行记录以及 Pass Rate、P95、平均 Token和各项指标的 delta。
 
-历史结果见 `docs/eval/experiment-report.md`，仅作为改造前基线，不代表 v2 当前效果。
+历史本地基线见 `docs/eval/experiment-report.md`，仅作为改造前链路基线；2026-06-13 真实模型 200 条串行评测见 `docs/eval/llm-experiment-report.md`。代码、Prompt 或 MCP transport 变更后，应使用新的 `system_version` 重跑再引用当前效果。

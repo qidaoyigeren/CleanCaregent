@@ -2,7 +2,7 @@
 
 ## 数据可信度声明
 
-本文只把已保存运行记录标为“实测”。没有对应运行 ID 的并发、真实 Embedding 和完整 200 条 LLM 结果均标为“待测”，不使用设计目标冒充结果。
+本文只把已保存运行记录标为“实测”。没有对应运行 ID 的并发压测、当前代码版本重跑或外部服务组合结果均标为“待测”，不使用设计目标冒充结果。
 
 ## 已有实测基线
 
@@ -38,6 +38,16 @@
 
 样本只有 3 条，不具备统计代表性。
 
+## 真实模型 200 条串行实测
+
+来源：`docs/eval/llm-experiment-report.md`，日期 2026-06-13，200 条 v2 数据集，DeepSeek LLM、SiliconFlow Embedding/Reranker、Qdrant、MySQL FULLTEXT 和 LLM-as-Judge。
+
+| 运行 ID | Strict Pass Rate | P95 延迟 | 平均 Token |
+|---|---:|---:|---:|
+| `eval_67abf7a0bdfe419fbdf92a68` | 71.5% | 17,077 ms | 4,007 |
+
+该结果是单机串行评测记录，不代表并发 SLA；MCP HTTP transport、CI 和工具链后续变更后的当前版本指标需要重新运行后记录。
+
 ## 当前资产规模
 
 | 项目 | 当前值 |
@@ -55,15 +65,15 @@
 
 | 维度 | 配置 | 状态 | 验收指标 |
 |---|---|---|---|
-| 运行模式 | bootstrap / naive_rag / agentic | 待重跑 200 条 | P50/P95、成功率、Token |
-| Embedding | local_hash / OpenAI-compatible | 待真实端点 | Hit@5、MRR、召回延迟 |
-| Rerank | local_lexical / BGE-compatible | 待真实端点 | Context Precision、P95 |
-| Generator | extractive / Qwen / DeepSeek compatible | 待真实端点 | Faithfulness、Correctness |
+| 运行模式 | bootstrap / naive_rag / agentic | 待按当前版本重跑 200 条 | P50/P95、成功率、Token |
+| Embedding | local_hash / OpenAI-compatible | 已有 local_hash 与 SiliconFlow 串行记录；其他端点待测 | Hit@5、MRR、召回延迟 |
+| Rerank | local_lexical / BGE-compatible | 已有 local_lexical 与 SiliconFlow BGE 串行记录；其他端点待测 | Context Precision、P95 |
+| Generator | extractive / Qwen / DeepSeek compatible | 已有 extractive 与 DeepSeek 串行记录；其他端点待测 | Faithfulness、Correctness |
 | 并发 | 10 / 50 / 100 | 待压测环境 | 成功率、P95、429 比例 |
 
 ## Token 分布采集方案
 
-需要按以下阶段写入 trace：意图分类、查询改写、规划、生成、反思。当前实现已记录请求级 Prompt/Completion Token、模型名和估算成本，并通过 `internal/observability/prometheus.go` 暴露计数器与延迟直方图。分阶段 Token 成本拆分仍待真实模型全量回归后验证。
+需要按以下阶段写入 trace：意图分类、查询改写、规划、生成、反思。当前实现已记录请求级 Prompt/Completion Token、模型名和估算成本，并通过 `internal/observability/prometheus.go` 暴露计数器与延迟直方图。2026-06-13 的 200 条真实模型评测已记录运行级平均 Token；分阶段 Token 成本拆分仍需在后续当前版本回归中补齐和验证。
 
 ## ReAct 步数分布
 

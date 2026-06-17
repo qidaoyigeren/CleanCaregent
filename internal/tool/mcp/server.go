@@ -16,6 +16,8 @@ import (
 var (
 	ErrToolAlreadyAdded = errors.New("mcp tool already added")
 	ErrToolNotFound     = errors.New("mcp tool not found")
+	ErrResourceNotFound = errors.New("mcp resource not found")
+	ErrPromptNotFound   = errors.New("mcp prompt not found")
 )
 
 type Tool struct {
@@ -65,12 +67,22 @@ type CallToolResult struct {
 }
 
 type Server struct {
-	mu    sync.RWMutex
-	tools map[string]tool.Tool
+	mu        sync.RWMutex
+	tools     map[string]tool.Tool
+	resources map[string]staticResource
+	prompts   map[string]staticPrompt
+
+	notificationMu sync.RWMutex
+	subscribers    map[chan Notification]struct{}
 }
 
 func NewServer(values ...tool.Tool) (*Server, error) {
-	server := &Server{tools: make(map[string]tool.Tool, len(values))}
+	server := &Server{
+		tools:       make(map[string]tool.Tool, len(values)),
+		resources:   make(map[string]staticResource),
+		prompts:     make(map[string]staticPrompt),
+		subscribers: make(map[chan Notification]struct{}),
+	}
 	for _, value := range values {
 		if err := server.AddTool(value); err != nil {
 			return nil, err
@@ -89,7 +101,76 @@ func (s *Server) AddTool(value tool.Tool) error {
 		return ErrToolAlreadyAdded
 	}
 	s.tools[value.Name()] = value
+	go s.publish("notifications/tools/list_changed", nil)
 	return nil
+}
+
+func (s *Server) AddResource(resource Resource, contents ...ResourceContent) error {
+	if strings.TrimSpace(resource.URI) == "" {
+		return errors.New("mcp resource uri is required")
+	}
+	if strings.TrimSpace(resource.Name) == "" {
+		resource.Name = resource.URI
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cloned := make([]ResourceContent, 0, len(contents))
+	for _, content := range contents {
+		if content.URI == "" {
+			content.URI = resource.URI
+		}
+		cloned = append(cloned, content)
+	}
+	s.resources[resource.URI] = staticResource{definition: resource, contents: cloned}
+	go s.publish("notifications/resources/list_changed", nil)
+	return nil
+}
+
+func (s *Server) AddPrompt(prompt Prompt, result GetPromptResult) error {
+	if strings.TrimSpace(prompt.Name) == "" {
+		return errors.New("mcp prompt name is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prompts[prompt.Name] = staticPrompt{definition: prompt, result: result}
+	go s.publish("notifications/prompts/list_changed", nil)
+	return nil
+}
+
+func (s *Server) Initialize(_ context.Context, params InitializeParams) InitializeResult {
+	version := strings.TrimSpace(params.ProtocolVersion)
+	if version == "" {
+		version = ProtocolVersion
+	}
+	if version != ProtocolVersion {
+		version = ProtocolVersion
+	}
+	return InitializeResult{
+		ProtocolVersion: version,
+		Capabilities:    s.Capabilities(),
+		ServerInfo: ImplementationInfo{
+			Name:        "cleancare-mcp",
+			Title:       "CleanCare MCP Tool Server",
+			Version:     "1.0.0",
+			Description: "MCP server exposing CleanCare business tools",
+		},
+		Instructions: "Use tools/list to discover CleanCare tools and tools/call to execute them. Dynamic business data is mock unless data_scope says otherwise.",
+	}
+}
+
+func (s *Server) Capabilities() ServerCapabilities {
+	capabilities := ServerCapabilities{
+		Tools: &ListChangedCapability{ListChanged: true},
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.resources) > 0 {
+		capabilities.Resources = &ResourceCapability{ListChanged: true}
+	}
+	if len(s.prompts) > 0 {
+		capabilities.Prompts = &ListChangedCapability{ListChanged: true}
+	}
+	return capabilities
 }
 
 func (s *Server) ListTools(context.Context) ([]Tool, error) {
@@ -157,6 +238,85 @@ func (s *Server) CallTool(ctx context.Context, params CallToolParams) (CallToolR
 	response.Content = []Content{{Type: "json", Data: result.Data}}
 	response.StructuredContent = result.Data
 	return response, nil
+}
+
+func (s *Server) ListResources(context.Context) ([]Resource, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]Resource, 0, len(s.resources))
+	for _, value := range s.resources {
+		result = append(result, value.definition)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].URI < result[j].URI })
+	return result, nil
+}
+
+func (s *Server) ReadResource(_ context.Context, uri string) ([]ResourceContent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	value, ok := s.resources[uri]
+	if !ok {
+		return nil, ErrResourceNotFound
+	}
+	return append([]ResourceContent(nil), value.contents...), nil
+}
+
+func (s *Server) ListPrompts(context.Context) ([]Prompt, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]Prompt, 0, len(s.prompts))
+	for _, value := range s.prompts {
+		result = append(result, value.definition)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result, nil
+}
+
+func (s *Server) GetPrompt(_ context.Context, name string) (GetPromptResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	value, ok := s.prompts[name]
+	if !ok {
+		return GetPromptResult{}, ErrPromptNotFound
+	}
+	return value.result, nil
+}
+
+func (s *Server) SubscribeNotifications() (<-chan Notification, func()) {
+	ch := make(chan Notification, 16)
+	s.notificationMu.Lock()
+	s.subscribers[ch] = struct{}{}
+	s.notificationMu.Unlock()
+	cancel := func() {
+		s.notificationMu.Lock()
+		if _, ok := s.subscribers[ch]; ok {
+			delete(s.subscribers, ch)
+			close(ch)
+		}
+		s.notificationMu.Unlock()
+	}
+	return ch, cancel
+}
+
+func (s *Server) publish(method string, params any) {
+	s.notificationMu.RLock()
+	defer s.notificationMu.RUnlock()
+	for ch := range s.subscribers {
+		select {
+		case ch <- Notification{Method: method, Params: params}:
+		default:
+		}
+	}
+}
+
+type staticResource struct {
+	definition Resource
+	contents   []ResourceContent
+}
+
+type staticPrompt struct {
+	definition Prompt
+	result     GetPromptResult
 }
 
 type InProcessClient struct {

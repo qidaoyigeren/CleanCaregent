@@ -59,13 +59,32 @@ func main() {
 	if err != nil {
 		logger.Fatal("initialize mcp tool server", zap.Error(err))
 	}
+	if cfg.Tool.MCP.ServerTransport == "stdio" {
+		logger.Info("mcp stdio server started", zap.Int("tool_count", len(tools)))
+		if err := toolmcp.ServeStdio(context.Background(), toolServer, os.Stdin, os.Stdout); err != nil {
+			logger.Fatal("mcp stdio server failed", zap.Error(err))
+		}
+		return
+	}
 
 	mux := http.NewServeMux()
 	mcpPath := strings.TrimSpace(cfg.Tool.MCP.Path)
 	mux.Handle(mcpPath, toolmcp.NewHTTPHandler(toolServer, toolmcp.HTTPHandlerConfig{
-		APIKey:         firstNonEmpty(cfg.Tool.MCP.ServerAPIKey, cfg.Tool.MCP.APIKey),
-		AllowedOrigins: cfg.Tool.MCP.AllowedOrigins,
+		APIKey:               firstNonEmpty(cfg.Tool.MCP.ServerAPIKey, cfg.Tool.MCP.APIKey),
+		AllowedOrigins:       cfg.Tool.MCP.AllowedOrigins,
+		StreamResponses:      cfg.Tool.MCP.StreamResponses,
+		RequireSession:       cfg.Tool.MCP.RequireSession,
+		AuthorizationServers: cfg.Tool.MCP.AuthorizationServers,
+		Scopes:               cfg.Tool.MCP.Scopes,
 	}))
+	protectedResourceMetadata := toolmcp.NewProtectedResourceMetadataHandler(toolmcp.ProtectedResourceMetadataConfig{
+		Resource:             "http://" + cfg.Tool.MCP.Address() + mcpPath,
+		ResourceName:         "CleanCare MCP Tool Server",
+		AuthorizationServers: cfg.Tool.MCP.AuthorizationServers,
+		Scopes:               cfg.Tool.MCP.Scopes,
+	})
+	mux.Handle("/.well-known/oauth-protected-resource", protectedResourceMetadata)
+	mux.Handle("/.well-known/oauth-protected-resource/", protectedResourceMetadata)
 	mux.HandleFunc("/health/live", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})

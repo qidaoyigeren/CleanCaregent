@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -230,20 +231,45 @@ type ToolConfig struct {
 }
 
 type ToolMCPConfig struct {
+	Transport            string                `mapstructure:"transport"`
+	Endpoint             string                `mapstructure:"endpoint"`
+	APIKey               string                `mapstructure:"api_key"`
+	Headers              map[string]string     `mapstructure:"headers"`
+	StdioCommand         string                `mapstructure:"stdio_command"`
+	StdioArgs            []string              `mapstructure:"stdio_args"`
+	StdioEnv             map[string]string     `mapstructure:"stdio_env"`
+	RequestTimeout       time.Duration         `mapstructure:"request_timeout"`
+	ListCacheTTL         time.Duration         `mapstructure:"list_cache_ttl"`
+	MaxRetries           int                   `mapstructure:"max_retries"`
+	RetryBaseDelay       time.Duration         `mapstructure:"retry_base_delay"`
+	RetryMaxDelay        time.Duration         `mapstructure:"retry_max_delay"`
+	Servers              []ToolMCPServerConfig `mapstructure:"servers"`
+	ServerTransport      string                `mapstructure:"server_transport"`
+	ListenHost           string                `mapstructure:"listen_host"`
+	ListenPort           int                   `mapstructure:"listen_port"`
+	Path                 string                `mapstructure:"path"`
+	ServerAPIKey         string                `mapstructure:"server_api_key"`
+	AllowedOrigins       []string              `mapstructure:"allowed_origins"`
+	StreamResponses      bool                  `mapstructure:"stream_responses"`
+	RequireSession       bool                  `mapstructure:"require_session"`
+	AuthorizationServers []string              `mapstructure:"authorization_servers"`
+	Scopes               []string              `mapstructure:"scopes"`
+}
+
+type ToolMCPServerConfig struct {
+	Name           string            `mapstructure:"name"`
 	Transport      string            `mapstructure:"transport"`
 	Endpoint       string            `mapstructure:"endpoint"`
 	APIKey         string            `mapstructure:"api_key"`
 	Headers        map[string]string `mapstructure:"headers"`
+	StdioCommand   string            `mapstructure:"stdio_command"`
+	StdioArgs      []string          `mapstructure:"stdio_args"`
+	StdioEnv       map[string]string `mapstructure:"stdio_env"`
 	RequestTimeout time.Duration     `mapstructure:"request_timeout"`
 	ListCacheTTL   time.Duration     `mapstructure:"list_cache_ttl"`
 	MaxRetries     int               `mapstructure:"max_retries"`
 	RetryBaseDelay time.Duration     `mapstructure:"retry_base_delay"`
 	RetryMaxDelay  time.Duration     `mapstructure:"retry_max_delay"`
-	ListenHost     string            `mapstructure:"listen_host"`
-	ListenPort     int               `mapstructure:"listen_port"`
-	Path           string            `mapstructure:"path"`
-	ServerAPIKey   string            `mapstructure:"server_api_key"`
-	AllowedOrigins []string          `mapstructure:"allowed_origins"`
 }
 
 func (c ToolMCPConfig) Address() string {
@@ -284,6 +310,9 @@ func Load(path string) (Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
+	if path == "" {
+		path = strings.TrimSpace(os.Getenv("CLEANCARE_CONFIG_FILE"))
+	}
 	if path != "" {
 		v.SetConfigFile(path)
 		if err := v.ReadInConfig(); err != nil {
@@ -592,8 +621,15 @@ func (c Config) Validate() error {
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
 			return errors.New("tool.mcp.endpoint scheme must be http or https")
 		}
+	case "stdio":
+		if strings.TrimSpace(c.Tool.MCP.StdioCommand) == "" {
+			return errors.New("tool.mcp.stdio_command is required when tool.mcp.transport=stdio")
+		}
 	default:
-		return errors.New("tool.mcp.transport must be in_process or http")
+		return errors.New("tool.mcp.transport must be in_process, http or stdio")
+	}
+	if err := validateMCPServers(c.Tool.MCP); err != nil {
+		return err
 	}
 	if c.Tool.MCP.RequestTimeout <= 0 ||
 		c.Tool.MCP.ListCacheTTL < 0 ||
@@ -609,6 +645,11 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Tool.MCP.ListenHost) == "" {
 		return errors.New("tool.mcp.listen_host is required")
 	}
+	switch c.Tool.MCP.ServerTransport {
+	case "", "http", "stdio":
+	default:
+		return errors.New("tool.mcp.server_transport must be http or stdio")
+	}
 	if !strings.HasPrefix(strings.TrimSpace(c.Tool.MCP.Path), "/") {
 		return errors.New("tool.mcp.path must start with /")
 	}
@@ -619,6 +660,74 @@ func (c Config) Validate() error {
 		return errors.New("tracing.sample_ratio must be between 0 and 1")
 	}
 	return nil
+}
+
+func validateMCPServers(config ToolMCPConfig) error {
+	seen := map[string]struct{}{}
+	for index, server := range config.Servers {
+		name := strings.TrimSpace(server.Name)
+		if name == "" {
+			return fmt.Errorf("tool.mcp.servers[%d].name is required", index)
+		}
+		if strings.Contains(name, "/") {
+			return fmt.Errorf("tool.mcp.servers[%d].name must not contain /", index)
+		}
+		if _, ok := seen[name]; ok {
+			return fmt.Errorf("tool.mcp.servers[%d].name %q is duplicated", index, name)
+		}
+		seen[name] = struct{}{}
+		transport := strings.TrimSpace(server.Transport)
+		if transport == "" {
+			transport = config.Transport
+		}
+		switch transport {
+		case "in_process":
+		case "http":
+			endpoint := firstNonEmpty(server.Endpoint, config.Endpoint)
+			if strings.TrimSpace(endpoint) == "" {
+				return fmt.Errorf("tool.mcp.servers[%d].endpoint is required when transport=http", index)
+			}
+			parsed, err := url.Parse(strings.TrimSpace(endpoint))
+			if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+				return fmt.Errorf("tool.mcp.servers[%d].endpoint must be an absolute URL", index)
+			}
+			if parsed.Scheme != "http" && parsed.Scheme != "https" {
+				return fmt.Errorf("tool.mcp.servers[%d].endpoint scheme must be http or https", index)
+			}
+		case "stdio":
+			command := firstNonEmpty(server.StdioCommand, config.StdioCommand)
+			if strings.TrimSpace(command) == "" {
+				return fmt.Errorf("tool.mcp.servers[%d].stdio_command is required when transport=stdio", index)
+			}
+		default:
+			return fmt.Errorf("tool.mcp.servers[%d].transport must be in_process, http or stdio", index)
+		}
+		timeout := firstPositiveDuration(server.RequestTimeout, config.RequestTimeout)
+		retryBase := firstPositiveDuration(server.RetryBaseDelay, config.RetryBaseDelay)
+		retryMax := firstPositiveDuration(server.RetryMaxDelay, config.RetryMaxDelay)
+		if timeout <= 0 || server.ListCacheTTL < 0 || server.MaxRetries < 0 || retryBase <= 0 || retryMax <= 0 || retryBase > retryMax {
+			return fmt.Errorf("tool.mcp.servers[%d] retry and timeout settings are invalid", index)
+		}
+	}
+	return nil
+}
+
+func firstPositiveDuration(values ...time.Duration) time.Duration {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func supportedChunkProfile(docType string) bool {
@@ -765,16 +874,25 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("tool.mcp.endpoint", "http://127.0.0.1:8090/mcp")
 	v.SetDefault("tool.mcp.api_key", "")
 	v.SetDefault("tool.mcp.headers", map[string]string{})
+	v.SetDefault("tool.mcp.stdio_command", "")
+	v.SetDefault("tool.mcp.stdio_args", []string{})
+	v.SetDefault("tool.mcp.stdio_env", map[string]string{})
 	v.SetDefault("tool.mcp.request_timeout", "5s")
 	v.SetDefault("tool.mcp.list_cache_ttl", "30s")
 	v.SetDefault("tool.mcp.max_retries", 2)
 	v.SetDefault("tool.mcp.retry_base_delay", "100ms")
 	v.SetDefault("tool.mcp.retry_max_delay", "1s")
+	v.SetDefault("tool.mcp.servers", []map[string]any{})
+	v.SetDefault("tool.mcp.server_transport", "http")
 	v.SetDefault("tool.mcp.listen_host", "127.0.0.1")
 	v.SetDefault("tool.mcp.listen_port", 8090)
 	v.SetDefault("tool.mcp.path", "/mcp")
 	v.SetDefault("tool.mcp.server_api_key", "")
 	v.SetDefault("tool.mcp.allowed_origins", []string{})
+	v.SetDefault("tool.mcp.stream_responses", true)
+	v.SetDefault("tool.mcp.require_session", true)
+	v.SetDefault("tool.mcp.authorization_servers", []string{})
+	v.SetDefault("tool.mcp.scopes", []string{})
 	v.SetDefault("tracing.enabled", false)
 	v.SetDefault("tracing.service_name", "clean-care-agent")
 	v.SetDefault("tracing.service_version", "dev")

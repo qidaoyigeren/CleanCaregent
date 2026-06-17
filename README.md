@@ -19,7 +19,7 @@
 - **混合检索链路**：MySQL 关键词检索 + Qdrant 向量检索 + RRF 融合 + 可降级 Rerank，并支持结构化参数优先查询。
 - **动静数据隔离**：商品参数、故障树和售后政策进入知识库；价格、库存、订单和保修状态通过 Tool 实时查询。
 - **安全与可信回答**：包含 Prompt Injection 拦截、安全停止条件、Evidence ID、数值证据检查、LLM Reflection 和确定性 Grounding Review。
-- **工程化工具调用**：6 个动态工具通过 MCP `tools/list` / `tools/call` 执行，支持进程内和 HTTP 远程传输，并具备 JSON Schema、白名单、超时、重复调用检测、幂等、结果校验和审计日志。
+- **工程化工具调用**：6 个动态工具通过 MCP `initialize`、`tools/list` / `tools/call` 执行，支持进程内、Streamable HTTP、stdio 和多 server 聚合，并具备 JSON Schema、白名单、超时、重复调用检测、幂等、结果校验和审计日志。
 - **可配置业务 Skill**：内置商品对比、选购推荐、配件查询、故障诊断和售后判断 5 类工作流。
 - **模型容错**：支持 OpenAI-compatible LLM、Embedding 和 Reranker，多供应商 fallback、三态熔断与本地降级。
 - **评测闭环**：内置 200 条 v2 分层评测集、异步 Eval Runner、LLM-as-Judge、bad case 分类和系统版本对比。
@@ -158,7 +158,19 @@ tool:
     api_key: change-me
 ```
 
-独立 MCP server 可通过 `tool.mcp.server_api_key` 校验 `Authorization: Bearer <token>` 或 `X-MCP-API-Key`。
+stdio MCP server 示例：
+
+```yaml
+tool:
+  mcp:
+    transport: stdio
+    stdio_command: go
+    stdio_args: ["run", "./cmd/mcp-server"]
+    stdio_env:
+      CLEANCARE_TOOL_MCP_SERVER_TRANSPORT: stdio
+```
+
+多个 MCP server 可通过 `tool.mcp.servers` 聚合；当配置多于一个 server 时，暴露给 Agent 的工具名会加上 `<server>/<tool>` 前缀，避免命名冲突。独立 MCP server 支持 `initialize` / `notifications/initialized` 生命周期、`Mcp-Session-Id`、`MCP-Protocol-Version`、SSE notification stream、Bearer / `X-MCP-API-Key` 校验和 OAuth protected-resource metadata；本仓库不内置完整 OAuth 授权码发放服务器，可通过 `authorization_servers` 指向外部授权服务器。
 
 ### 6. 启动前端
 
@@ -273,12 +285,27 @@ make eval-regression
 make eval-compare
 ```
 
+生成当前 MCP HTTP 链路的 200 条回归报告：
+
+```powershell
+make e2e-agentic-mcp-eval SYSTEM_VERSION=agentic-mcp-http-20260617
+```
+
+若服务已经启动，也可以只调用评测 API 并生成报告：
+
+```powershell
+make eval-regression-report SYSTEM_VERSION=agentic-mcp-http-20260617
+```
+
 定位特定 Bad Case 时可在 `POST /api/v1/admin/eval/runs` 中传入
 `"case_ids":["EVAL-046","EVAL-047"]`，无需重复执行无关用例。
 
 评测任务通过 API 异步执行，使用返回的 `run_no` 查询进度和结果。Trace 可记录意图、检索、工具、步骤、Token、延迟、模型和估算成本；Prometheus 接口输出请求、Token、工具和模型相关指标。
 
-历史报告中的 100 条本地基线仅用于验证链路，不代表当前 200 条数据集或真实模型效果。完整 200 条外部模型回归与大规模并发压测仍待执行。
+历史 100 条本地基线仅用于验证确定性链路；真实模型 200 条串行评测见
+`docs/eval/llm-experiment-report.md`。当前 MCP HTTP 版本回归记录见
+`docs/eval/mcp-regression-report.md`；真实模型或外部 MCP server 配置变化后，应使用新的
+`system_version` 重新生成报告。大规模并发压测仍待执行。
 
 ## 项目结构
 
@@ -321,13 +348,18 @@ npm run lint
 npm run build
 ```
 
-GitHub Actions 会执行模块文件检查、后端测试与构建、前端 lint 与构建，以及 Docker 镜像构建。
+端到端链路：
+```powershell
+make e2e-agentic-mcp
+```
+
+GitHub Actions 会执行模块文件检查、后端测试与构建、前端 lint 与构建、Docker 镜像构建，以及基于 Docker Compose 的 Agentic MCP 端到端链路测试。
 
 ## 项目边界
 
 - 动态价格、库存、订单和售后数据均为本地 mock 数据，工具结果和 Trace 会标记
   `data_scope=mock`，未接真实 ERP、支付或物流系统。
-- 工具发现和调用已走 MCP `tools/list` / `tools/call` 抽象；默认使用进程内 MCP server，也可通过 `tool.mcp.transport=http` 接入独立或外部 MCP server。当前内置工具仍使用本地业务数据，未接真实 ERP、支付或物流系统。
+- 工具发现和调用已走 MCP `initialize`、`tools/list` / `tools/call` 抽象；默认使用进程内 MCP server，也可通过 Streamable HTTP、stdio 或多 server 聚合接入独立/外部 MCP server。当前内置工具仍使用本地业务数据，未接真实 ERP、支付或物流系统。
 - React 界面是开发与演示控制台，不是具备完整 RBAC、OIDC 和审计能力的生产管理后台。
 - Prompt 版本由进程内 Registry 管理，重启后不会持久化激活状态。
 - Cross-Encoder Reranker 依赖外部兼容服务，仓库不内置模型推理服务。
@@ -339,6 +371,7 @@ GitHub Actions 会执行模块文件检查、后端测试与构建、前端 lint
 - [架构决策记录](docs/architecture-decisions.md)
 - [项目完成度与边界](docs/project-status.md)
 - [性能基准](docs/performance-benchmark.md)
-- [真实模型实验记录](docs/llm-experiment-report.md)
+- [MCP HTTP 回归评测记录](docs/eval/mcp-regression-report.md)
+- [真实模型 200 条评测报告](docs/eval/llm-experiment-report.md)
 - [历史评测报告](docs/eval/experiment-report.md)
 - [面试说明](docs/interview-notes.md)

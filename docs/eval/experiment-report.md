@@ -5,7 +5,7 @@
 知识资产：57 篇生成式 mock 文档  
 运行环境：本地 MySQL、Redis、Qdrant，`local_hash` Embedding，抽取式 Generator
 
-> 本报告记录的是改造前的可复现基线，不代表当前 LLM 意图分类、查询改写、受控 ReAct、远程 Rerank 和 LLM Reflection 的效果。当前版本需要使用新的 `system_version` 重跑完整 100 条评估后再做正式对比。
+> 本报告记录的是改造前的可复现 v1 本地基线，不代表当前 LLM 意图分类、查询改写、受控 ReAct、远程 Rerank、MCP 工具调用和 LLM Reflection 的效果。当前版本需要使用新的 `system_version` 重跑对应评测集；当前 v2 正式口径为 200 条。
 
 ## 路径分布
 
@@ -87,4 +87,4 @@ Agentic 版本的主要收益来自动态工具和受控 Skill。价格、订单
 | Average Tokens | 1445 |
 | Average ReAct Steps | 4 |
 
-评估创建接口在本次调用中约 125 ms 返回 `202 Accepted`，计算在后台继续执行。该结果仅证明当前链路可运行，不具备统计代表性；正式版本对比仍需重跑完整 100 条评估集。
+评估创建接口在本次调用中约 125 ms 返回 `202 Accepted`，计算在后台继续执行。该结果仅证明当时链路可运行，不具备统计代表性；正式版本对比应使用当前 v2 200 条评测集重新运行。
