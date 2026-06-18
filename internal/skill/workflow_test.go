@@ -258,8 +258,8 @@ func TestComparisonRetrievalPrioritizesScenarioDocuments(t *testing.T) {
 			(len(request.Filter.Categories) != 1 || request.Filter.Categories[0] != "robot_vacuum") {
 			t.Fatalf("comparison scenario route should infer category from models: %#v", request.Filter)
 		}
-		if request.Filter.DocTypes[0] == "product_comparison" && request.RerankTopK != 4 {
-			t.Fatalf("scenario rerank top k = %d, want 4", request.RerankTopK)
+		if request.Filter.DocTypes[0] == "product_comparison" && request.RerankTopK != 6 {
+			t.Fatalf("scenario rerank top k = %d, want 6", request.RerankTopK)
 		}
 		if request.Filter.DocTypes[0] == "product_detail" && request.RerankTopK != 3 {
 			t.Fatalf("model rerank top k = %d, want 3", request.RerankTopK)

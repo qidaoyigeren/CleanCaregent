@@ -57,8 +57,8 @@ type Workflow struct {
 }
 
 var (
-	accessoryModelPattern = regexp.MustCompile(`(?i)\b(?:F|DB|RB)[0-9]{2,}[A-Z0-9-]*\b`)
-	coreModelPattern      = regexp.MustCompile(`(?i)\b(?:T20|X20\s+Pro|R10|R20|P400|P500|W300|W500|H100|H200)\b`)
+	accessoryModelPattern = regexp.MustCompile(`(?i)\b(?:F|DB|RB|C)[0-9]{2,}[A-Z0-9-]*\b`)
+	coreModelPattern      = regexp.MustCompile(`(?i)\b(?:T20|X20\s*Pro|R10|R20|P400|P500|W300|W500|H100|H200)\b`)
 )
 
 func NewProductComparison(
@@ -243,6 +243,52 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 	case AfterSalesJudgementSkill:
 		orderNo := request.Intent.Entities["order_no"]
 		if orderNo == "" {
+			if request.Intent.Secondary == intent.WarrantyQuery && refersToPurchase(request.Query) {
+				args := map[string]any{"limit": 10}
+				if len(models) > 0 {
+					args["model"] = first(models)
+				} else if category := first(categoriesForQuery(request.Query)); category != "" {
+					args["category"] = category
+				}
+				value, executeErr := s.callTool(ctx, request, "user_purchase_history", args)
+				if executeErr != nil {
+					dynamicNotes = append(dynamicNotes, "购买记录暂时不可用，无法定位保修订单")
+					break
+				}
+				evidences = append(evidences, toolEvidence("user_purchase_history", value))
+				records := purchaseRecords(value.Data)
+				orderNos := purchaseOrderNos(records, models)
+				if len(orderNos) == 0 {
+					return &Result{
+						Status:       "clarify",
+						NextQuestion: "未从购买记录中定位到可核验保修的订单，请补充订单号或主机型号。",
+						Evidences:    evidences,
+					}, nil
+				}
+				var warranties []model.WarrantyStatus
+				var warrantyCitations []string
+				for _, candidateOrderNo := range orderNos {
+					warranty, warrantyErr := s.callTool(ctx, request, "warranty_check", map[string]any{
+						"order_no": candidateOrderNo,
+					})
+					if warrantyErr != nil {
+						continue
+					}
+					evidences = append(evidences, toolEvidence("warranty_check", warranty))
+					warrantyCitations = append(warrantyCitations, evidenceCitation(len(evidences)))
+					var payload warrantyToolPayload
+					if decodeToolData(warranty.Data, &payload) == nil {
+						warranties = append(warranties, payload.Items...)
+					}
+				}
+				deterministicAnswer = buildPurchaseWarrantyAnswer(
+					records,
+					warranties,
+					evidenceCitation(len(evidences)-len(warrantyCitations)),
+					strings.Join(compactValues(warrantyCitations), ""),
+				)
+				break
+			}
 			return &Result{
 				Status:       "clarify",
 				NextQuestion: "请提供订单号，以便结合购买时间和售后政策判断。",
@@ -298,7 +344,7 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 		}
 	case AccessoryCompatibilitySkill:
 		if len(models) > 0 && !requestsAccessoryDynamicData(request) {
-			if accessoryRefs := accessoryModels(searchData); len(accessoryRefs) > 0 {
+			if accessoryRefs := accessoryModelsForHost(searchData, first(models)); len(accessoryRefs) > 0 {
 				deterministicAnswer = buildAccessoryLookupAnswer(
 					first(models),
 					accessoryRefs,
@@ -356,6 +402,23 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 					price.DataScope,
 				),
 			)
+			if inventorySignalRequested(strings.ToLower(request.Query)) {
+				inventory, inventoryErr := s.callTool(ctx, request, "inventory_check", map[string]any{
+					"product_refs": accessoryRefs,
+				})
+				if inventoryErr == nil {
+					evidences = append(evidences, toolEvidence("inventory_check", inventory))
+					dynamicNotes = append(
+						dynamicNotes,
+						toolResultSummary(
+							"inventory_check",
+							inventory.Data,
+							evidenceCitation(len(evidences)),
+							inventory.DataScope,
+						),
+					)
+				}
+			}
 		}
 	}
 
@@ -461,17 +524,17 @@ func requestedRecommendationTools(request Request) []string {
 		}
 	}
 	query := strings.ToLower(request.Query)
-	if containsAny(
-		query,
-		"价格", "多少钱", "到手价", "查价", "实时报价", "今天价格",
-		"实时价", "总价", "哪个便宜",
-	) {
+	if priceSignalRequested(query) {
 		add("price_query")
 	}
 	if containsAny(query, "库存", "有货", "现货", "没货", "几台") {
 		add("inventory_check")
 	}
 	return result
+}
+
+func inventorySignalRequested(query string) bool {
+	return containsAny(query, "库存", "有货", "现货", "没货", "几台")
 }
 
 func (s *Workflow) retrieveInitial(
@@ -517,7 +580,7 @@ func (s *Workflow) retrieveInitial(
 				scenarioGuideQueryExpansion(request.Query),
 			categories: categories,
 			docTypes:   []string{"product_comparison", "purchase_guide"},
-			topK:       min(s.config.RerankTopK, 4),
+			topK:       max(s.config.RerankTopK, 6),
 		}}
 		for _, modelName := range compactValues(models) {
 			routes = append(routes, route{
@@ -556,8 +619,8 @@ func (s *Workflow) retrieveInitial(
 	case AfterSalesJudgementSkill:
 		routes = []route{{
 			query:    afterSalesPolicyQuery(request.Intent.Secondary, request.Query),
-			docTypes: []string{"after_sales_policy", "faq"},
-			topK:     min(s.config.RerankTopK, 6),
+			docTypes: []string{"after_sales_policy", "accessory_compatibility", "faq"},
+			topK:     max(s.config.RerankTopK, 6),
 		}}
 	}
 	span.SetAttributes(attribute.Int("skill.route_count", len(routes)))
@@ -721,11 +784,15 @@ func (s *Workflow) runFaultDiagnosis(
 	)
 	if state == nil {
 		if len(models) == 0 {
-			return &Result{
-				Status:       "clarify",
-				NextQuestion: "为了进入对应的故障排查流程，请先告诉我产品型号，并描述指示灯、错误码或异常现象。",
-				Evidences:    evidences,
-			}, true, nil
+			if inferred := s.diagnosisEngine.InferModel(request.Query); inferred != "" {
+				models = []string{inferred}
+			} else {
+				return &Result{
+					Status:       "clarify",
+					NextQuestion: "为了进入对应的故障排查流程，请先告诉我产品型号，并描述指示灯、错误码或异常现象。",
+					Evidences:    evidences,
+				}, true, nil
+			}
 		}
 		nextState, decision, err = s.diagnosisEngine.Start(models[0], request.Query)
 		nextState.ConversationID = request.ConversationID
@@ -847,7 +914,7 @@ func skillDocTypes(name string) []string {
 	case FaultDiagnosisSkill:
 		return []string{"troubleshooting", "user_manual", "faq"}
 	case AfterSalesJudgementSkill:
-		return []string{"after_sales_policy", "faq"}
+		return []string{"after_sales_policy", "accessory_compatibility", "faq"}
 	default:
 		return nil
 	}
@@ -1290,7 +1357,7 @@ func queryModels(query string) []string {
 
 func canonicalModel(value string) string {
 	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
-	if strings.EqualFold(value, "X20 Pro") {
+	if strings.EqualFold(strings.ReplaceAll(value, " ", ""), "X20Pro") {
 		return "X20 Pro"
 	}
 	return strings.ToUpper(value)
@@ -1316,7 +1383,7 @@ func categoriesForModels(models []string) []string {
 func categoriesForQuery(query string) []string {
 	query = strings.ToLower(strings.TrimSpace(query))
 	switch {
-	case containsAny(query, "扫地机", "扫地机器人", "扫拖", "地毯", "猫毛", "宠物毛", "倒尘盒", "基站"):
+	case containsAny(query, "扫地机", "扫地机器人", "扫拖", "机器人", "地毯", "猫毛", "宠物毛", "倒尘盒", "基站"):
 		return []string{"robot_vacuum"}
 	case containsAny(query, "空气净化", "净化器", "cadr", "过敏", "花粉", "pm2.5"):
 		return []string{"air_purifier"}
@@ -1327,6 +1394,17 @@ func categoriesForQuery(query string) []string {
 	default:
 		return nil
 	}
+}
+
+func priceSignalRequested(query string) bool {
+	if containsAny(query, "别给我报价格", "不要报价", "不查价格", "别报价格", "不用报价格") {
+		return false
+	}
+	return containsAny(
+		query,
+		"价格", "多少钱", "到手价", "查价", "实时报价", "今天价格",
+		"实时价", "总价", "哪个便宜",
+	)
 }
 
 func recommendationQueryExpansion(query string) string {
@@ -1425,7 +1503,10 @@ func first(values []string) string {
 }
 
 func refersToPurchase(query string) bool {
-	for _, keyword := range []string{"上周买", "之前买", "我买的", "购买记录", "那个净化器"} {
+	for _, keyword := range []string{
+		"上周买", "上礼拜", "之前买", "以前买", "我买的", "买过", "购买记录",
+		"上次", "那个净化器", "查订单", "订单后", "买没买", "延保", "保到哪天", "还保不保",
+	} {
 		if strings.Contains(query, keyword) {
 			return true
 		}
@@ -1433,7 +1514,7 @@ func refersToPurchase(query string) bool {
 	return false
 }
 
-func purchaseModels(data any) []string {
+func purchaseRecords(data any) []model.PurchaseRecord {
 	raw, _ := json.Marshal(data)
 	var payload struct {
 		Items []model.PurchaseRecord `json:"items"`
@@ -1441,9 +1522,89 @@ func purchaseModels(data any) []string {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil
 	}
+	return payload.Items
+}
+
+func purchaseOrderNos(records []model.PurchaseRecord, models []string) []string {
+	targets := make(map[string]struct{}, len(models))
+	for _, modelName := range models {
+		if modelName = canonicalModel(modelName); modelName != "" {
+			targets[modelName] = struct{}{}
+		}
+	}
+	seen := map[string]struct{}{}
+	var result []string
+	for _, record := range records {
+		if record.OrderNo == "" {
+			continue
+		}
+		if len(targets) > 0 {
+			if _, ok := targets[canonicalModel(record.Model)]; !ok {
+				continue
+			}
+		}
+		if _, ok := seen[record.OrderNo]; ok {
+			continue
+		}
+		seen[record.OrderNo] = struct{}{}
+		result = append(result, record.OrderNo)
+		if len(result) >= 3 {
+			break
+		}
+	}
+	return result
+}
+
+func buildPurchaseWarrantyAnswer(
+	records []model.PurchaseRecord,
+	warranties []model.WarrantyStatus,
+	purchaseCitation string,
+	warrantyCitation string,
+) string {
+	if len(warranties) == 0 {
+		return "已查询购买记录，但暂未取得可用的保修结果；请补充订单号后重试。" + purchaseCitation
+	}
+	recordsByOrder := map[string]model.PurchaseRecord{}
+	for _, record := range records {
+		if record.OrderNo != "" {
+			recordsByOrder[record.OrderNo] = record
+		}
+	}
+	var builder strings.Builder
+	builder.WriteString("**保修核验结果**\n")
+	for _, item := range warranties {
+		status := "不在保"
+		if item.InWarranty {
+			status = "在保"
+		}
+		record := recordsByOrder[item.OrderNo]
+		fmt.Fprintf(
+			&builder,
+			"- %s（%s，订单 %s）：%s，保修截止 %s。",
+			item.Model,
+			item.ProductName,
+			item.OrderNo,
+			status,
+			formatOptionalFactTime(item.WarrantyEnd),
+		)
+		if !record.PaidAt.IsZero() {
+			fmt.Fprintf(&builder, " 购买时间 %s。", formatFactTime(record.PaidAt))
+		}
+		builder.WriteString("\n")
+	}
+	builder.WriteString("\n依据：购买记录")
+	builder.WriteString(purchaseCitation)
+	builder.WriteString("；保修工具")
+	builder.WriteString(warrantyCitation)
+	builder.WriteString("。")
+	return builder.String()
+}
+
+func purchaseModels(data any) []string {
+	items := purchaseRecords(data)
 	seen := make(map[string]struct{})
-	result := make([]string, 0, len(payload.Items))
-	for _, item := range payload.Items {
+	result := make([]string, 0, len(items))
+	for _, item := range items {
 		if item.Model == "" {
 			continue
 		}
@@ -1460,6 +1621,30 @@ func accessoryModels(items []rag.SearchResult) []string {
 	seen := make(map[string]struct{})
 	var result []string
 	for _, item := range items {
+		for _, match := range accessoryModelPattern.FindAllString(item.Title+"\n"+item.Content, -1) {
+			match = strings.ToUpper(match)
+			if _, ok := seen[match]; ok {
+				continue
+			}
+			seen[match] = struct{}{}
+			result = append(result, match)
+		}
+	}
+	return result
+}
+
+func accessoryModelsForHost(items []rag.SearchResult, hostModel string) []string {
+	hostModel = strings.ToUpper(strings.Join(strings.Fields(strings.TrimSpace(hostModel)), " "))
+	if hostModel == "" {
+		return accessoryModels(items)
+	}
+	seen := make(map[string]struct{})
+	var result []string
+	for _, item := range items {
+		text := strings.ToUpper(strings.Join(strings.Fields(item.Title+"\n"+item.Content), " "))
+		if !strings.Contains(text, hostModel) {
+			continue
+		}
 		for _, match := range accessoryModelPattern.FindAllString(item.Title+"\n"+item.Content, -1) {
 			match = strings.ToUpper(match)
 			if _, ok := seen[match]; ok {
