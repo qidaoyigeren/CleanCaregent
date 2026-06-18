@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"CleanCaregent/internal/llm"
+	"CleanCaregent/internal/tool"
 )
 
 type ArgumentExtractor interface {
@@ -48,10 +49,10 @@ func (e *LLMArgumentExtractor) Extract(
 	return output, nil
 }
 
-var accessoryPattern = regexp.MustCompile(`(?i)^(?:F|DB|RB)[0-9]{2,}[A-Z0-9-]*$`)
+var accessoryPattern = regexp.MustCompile(`(?i)^(?:F|DB|RB|C)[0-9]{2,}[A-Z0-9-]*$`)
 
 func needsArgumentExtraction(toolName string, arguments map[string]any) bool {
-	switch toolName {
+	switch tool.LogicalName(toolName) {
 	case "price_query", "inventory_check":
 		return len(stringSliceArgument(arguments["product_refs"], arguments["model"])) == 0
 	case "order_lookup", "warranty_check", "create_after_sales_ticket":
@@ -69,7 +70,7 @@ func normalizeExtractedArguments(source map[string]any) map[string]any {
 	}
 	var products []string
 	for _, value := range stringSliceArgument(source["product_refs"], source["model"]) {
-		normalized := strings.ToUpper(strings.Join(strings.Fields(value), " "))
+		normalized := normalizeProductRef(value)
 		if _, ok := knownProducts[normalized]; ok || accessoryPattern.MatchString(normalized) {
 			products = append(products, normalized)
 		}
@@ -85,6 +86,14 @@ func normalizeExtractedArguments(source map[string]any) map[string]any {
 		result["category"] = category
 	}
 	return result
+}
+
+func normalizeProductRef(value string) string {
+	normalized := strings.ToUpper(strings.Join(strings.Fields(strings.TrimSpace(value)), ""))
+	if normalized == "X20PRO" {
+		return "X20 PRO"
+	}
+	return normalized
 }
 
 func normalizeToolArguments(source map[string]any) map[string]any {
@@ -146,7 +155,7 @@ func stringSliceArgument(values ...any) []string {
 }
 
 func fallbackDocTypes(toolName string) []string {
-	switch toolName {
+	switch tool.LogicalName(toolName) {
 	case "price_query", "inventory_check":
 		return []string{"product_detail", "product_parameter", "faq"}
 	case "order_lookup", "warranty_check", "create_after_sales_ticket":

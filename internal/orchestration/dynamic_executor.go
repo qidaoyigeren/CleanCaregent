@@ -21,7 +21,7 @@ import (
 var (
 	ErrSkillNotFound = errors.New("skill not found")
 	orderPattern     = regexp.MustCompile(`(?i)\b(?:CC|ORDER)[0-9]{6,}\b`)
-	modelPattern     = regexp.MustCompile(`(?i)\b[A-Z]+[0-9]+(?:\s+Pro)?\b`)
+	modelPattern     = regexp.MustCompile(`(?i)\b[A-Z]+[0-9]+(?:\s*Pro)?\b`)
 )
 
 type DynamicExecutor struct {
@@ -78,6 +78,7 @@ func (e *DynamicExecutor) executeTool(
 		}, nil
 	}
 	arguments := e.buildArguments(ctx, request)
+	logicalToolName := tool.LogicalName(request.Step.ToolName)
 	call := tool.Call{
 		TraceID:        request.Request.TraceID,
 		CallID:         id.New("call"),
@@ -114,7 +115,7 @@ func (e *DynamicExecutor) executeTool(
 			Evidences: []agent.Evidence{{
 				Kind:     "tool_error",
 				SourceID: call.CallID,
-				Title:    toolEvidenceTitle(call.Name),
+				Title:    toolEvidenceTitle(logicalToolName),
 				Content:  validationErr.Error(),
 				Metadata: map[string]any{"error_code": "INVALID_TOOL_RESULT"},
 			}},
@@ -123,23 +124,29 @@ func (e *DynamicExecutor) executeTool(
 	}
 	raw, _ := json.Marshal(result.Data)
 	return agent.DynamicExecutionResult{
-		Answer: formatToolAnswer(call.Name, result.Data, result.DataScope),
+		Answer: formatToolAnswer(logicalToolName, result.Data, result.DataScope),
 		Evidences: []agent.Evidence{{
 			Kind:     "tool_result",
 			SourceID: call.CallID,
-			Title:    toolEvidenceTitle(call.Name),
+			Title:    toolEvidenceTitle(logicalToolName),
 			Content:  string(raw),
 			Metadata: map[string]any{
-				"tool_name":   call.Name,
-				"data_scope":  result.DataScope,
-				"finished_at": result.FinishedAt,
+				"tool_name":         call.Name,
+				"logical_tool_name": logicalToolName,
+				"data_scope":        result.DataScope,
+				"finished_at":       result.FinishedAt,
 			},
 		}},
-		Metadata: map[string]any{"tool_name": call.Name, "data_scope": result.DataScope},
+		Metadata: map[string]any{
+			"tool_name":         call.Name,
+			"logical_tool_name": logicalToolName,
+			"data_scope":        result.DataScope,
+		},
 	}, nil
 }
 
 func formatToolAnswer(name string, data any, dataScope ...string) string {
+	name = tool.LogicalName(name)
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return ""
@@ -340,6 +347,7 @@ func (e *DynamicExecutor) buildArguments(
 ) map[string]any {
 	arguments := cloneMap(request.Step.Params)
 	query := request.Request.Query
+	logicalToolName := tool.LogicalName(request.Step.ToolName)
 	models := modelPattern.FindAllString(query, -1)
 	orderNo := strings.ToUpper(orderPattern.FindString(query))
 	filteredModels := models[:0]
@@ -356,7 +364,7 @@ func (e *DynamicExecutor) buildArguments(
 	if orderNo != "" {
 		arguments["order_no"] = orderNo
 	}
-	switch request.Step.ToolName {
+	switch logicalToolName {
 	case "user_purchase_history":
 		arguments["limit"] = 10
 		if strings.Contains(query, "上周") || strings.Contains(query, "最近") {
@@ -371,8 +379,8 @@ func (e *DynamicExecutor) buildArguments(
 		arguments["confirmed"] = ticketConfirmationPresent(query)
 	}
 	arguments = normalizeToolArguments(arguments)
-	if e.argumentExtractor != nil && needsArgumentExtraction(request.Step.ToolName, arguments) {
-		if extracted, err := e.argumentExtractor.Extract(ctx, request.Step.ToolName, query); err == nil {
+	if e.argumentExtractor != nil && needsArgumentExtraction(logicalToolName, arguments) {
+		if extracted, err := e.argumentExtractor.Extract(ctx, logicalToolName, query); err == nil {
 			for key, value := range normalizeExtractedArguments(extracted) {
 				if _, exists := arguments[key]; !exists || arguments[key] == "" {
 					arguments[key] = value
@@ -440,6 +448,7 @@ func (e *DynamicExecutor) degradeToKnowledge(
 }
 
 func validateToolData(name string, data any) error {
+	name = tool.LogicalName(name)
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("encode tool result: %w", err)
@@ -497,7 +506,7 @@ func numberValue(value any) float64 {
 }
 
 func toolEvidenceTitle(name string) string {
-	switch name {
+	switch tool.LogicalName(name) {
 	case "price_query":
 		return "实时价格查询"
 	case "inventory_check":
