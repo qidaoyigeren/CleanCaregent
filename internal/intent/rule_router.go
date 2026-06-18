@@ -9,9 +9,15 @@ import (
 type RuleRouter struct{}
 
 var (
-	orderNumberPattern = regexp.MustCompile(`(?i)\b(?:CC|ORDER)[0-9]{6,}\b`)
-	modelPattern       = regexp.MustCompile(`(?i)\b(?:T20|X20\s*Pro|R10|R20|P400|P500|W300|W500|H100|H200)\b`)
-	accessoryPattern   = regexp.MustCompile(`(?i)\b(?:F|DB|RB|C)[0-9]{2,}[A-Z0-9-]*\b`)
+	orderNumberPattern  = regexp.MustCompile(`(?i)\b(?:CC|ORDER)[0-9]{6,}\b`)
+	modelPattern        = regexp.MustCompile(`(?i)\b(?:T20|X20\s*Pro|R10|R20|P400|P500|W300|W500|H100|H200)\b`)
+	accessoryPattern    = regexp.MustCompile(`(?i)\b(?:F|DB|RB|C)[0-9]{2,}[A-Z0-9-]*\b`)
+	areaPattern         = regexp.MustCompile(`(?i)\b([1-9][0-9]{1,2})\s*(?:平方米|平|㎡|m2)`)
+	budgetAfterPattern  = regexp.MustCompile(`(?i)(?:预算|价位|不超过|最多|加到|改成|改到)[^\d]{0,8}([1-9][0-9]{2,5})`)
+	budgetBeforePattern = regexp.MustCompile(
+		`(?i)\b([1-9][0-9]{2,5})\s*(?:元|块|以内|以下)`,
+	)
+	budgetPattern = regexp.MustCompile(`(?i)\b([1-9][0-9]{2,5})\b`)
 )
 
 func NewRuleRouter() *RuleRouter {
@@ -25,6 +31,10 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 	query := strings.TrimSpace(request.Query)
 	lower := strings.ToLower(query)
 	entities := extractEntities(query)
+	priorEntities := recentUserContextEntities(request)
+	if shouldCarryPresalesContext(lower, entities, priorEntities) {
+		mergeMissingEntities(entities, priorEntities, "category", "categories", "area", "budget", "pets", "has_carpet")
+	}
 
 	result := Result{Entities: entities, Confidence: 0.93}
 	switch {
@@ -65,7 +75,7 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		result.Primary, result.Secondary = PrimaryDiagnosis, Troubleshooting
 	case entities["order_no"] != "" && containsAny(lower, "出水小", "出水越来越小", "续航变短"):
 		result.Primary, result.Secondary = PrimaryDiagnosis, Troubleshooting
-	case containsAny(lower, "保修", "在保", "保修期", "过保", "延保"):
+	case containsAny(lower, "保修", "在保", "保修期", "过保", "延保", "还保不保", "保不保", "保到哪天"):
 		result.Primary, result.Secondary = PrimaryAftersales, WarrantyQuery
 	case accessoryIntentRequested(lower, entities):
 		result.Primary, result.Secondary = PrimaryPresales, AccessoryCompatibility
@@ -113,6 +123,8 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		"哪款", "少折腾", "想要安静", "想少加", "适合我家", "这档够不够",
 	) || recommendationPairingRequested(lower)):
 		result.Primary, result.Secondary = PrimaryPresales, PurchaseRecommendation
+	case recommendationContinuationRequested(lower, entities, priorEntities):
+		result.Primary, result.Secondary, result.Confidence = PrimaryPresales, PurchaseRecommendation, 0.88
 	case containsAny(lower,
 		"首次使用", "使用前", "刚拆箱", "重新安装", "重新联网", "怎么冲洗",
 		"怎么清洁", "怎么洗", "怎么设", "咋设", "咋开", "怎么开",
@@ -163,6 +175,9 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 	}
 
 	result.SecondaryIntents = detectSecondaryIntents(lower, result.Secondary, entities)
+	if result.Secondary == OutOfScope || result.Secondary == Chitchat || result.Secondary == Clarification {
+		result.SecondaryIntents = nil
+	}
 	result.NeedDecomposition = len(result.SecondaryIntents) > 0
 	result.RouteTrace = RouteTrace{
 		Source:          "rule",
@@ -215,7 +230,7 @@ func detectSecondaryIntents(query string, primary Type, entities map[string]stri
 		candidates = append(candidates, value)
 	}
 	add(Troubleshooting, containsAny(query,
-		"充不进电", "无法充电", "异响", "漏水", "冒烟", "报错", "配网失败", "绑不上",
+		"充不进电", "充不进", "充不上电", "充不上", "无法充电", "异响", "漏水", "冒烟", "报错", "配网失败", "绑不上",
 	))
 	add(ProductComparison,
 		!singleModelConfigurationQuestion(query, entities) &&
@@ -243,7 +258,7 @@ func detectSecondaryIntents(query string, primary Type, entities map[string]stri
 	add(PriceQuery, priceRequested(query))
 	add(InventoryQuery, containsAny(query, "库存", "现货", "有货", "还有几台"))
 	add(OrderQuery, purchaseHistoryRequested(query))
-	add(WarrantyQuery, containsAny(query, "保修", "在保", "保修期"))
+	add(WarrantyQuery, containsAny(query, "保修", "在保", "保修期", "过保", "延保", "还保不保", "保不保", "保到哪天"))
 	add(ReturnEligibility, containsAny(query, "退货", "换货", "还能退", "能退吗"))
 	add(CreateAfterSalesTicket, containsAny(query, "创建工单", "售后工单", "申请维修", "帮我报修"))
 	return candidates
@@ -268,7 +283,7 @@ func purchaseHistoryRequested(query string) bool {
 		"订单", "买的啥", "购买记录", "上周买", "上礼拜买", "之前买", "以前买",
 		"什么时候买", "哪天签收", "最近一单", "啥状态", "走到哪", "最近买过",
 		"过去一年买", "订单号忘了", "商品明细", "型号和数量", "状态都查",
-		"具体是哪款", "型号给我翻", "买过",
+		"具体是哪款", "型号给我翻", "买过", "啥时候买", "查我", "账号里", "记录里", "历史记录",
 	)
 }
 
@@ -306,10 +321,10 @@ func matchedKeywords(query string, intentType Type) []string {
 		UsageInstruction:       {"怎么用", "如何", "安装", "清洁", "配网", "联网", "重置", "怎么设", "步骤", "冲洗"},
 		PriceQuery:             {"多少钱", "价格", "售价", "优惠", "券后", "报价"},
 		InventoryQuery:         {"库存", "现货", "有货", "还有几台"},
-		OrderQuery:             {"订单", "购买记录", "什么时候买", "哪天签收", "最近一单"},
-		WarrantyQuery:          {"保修", "在保", "保修期"},
+		OrderQuery:             {"订单", "购买记录", "什么时候买", "啥时候买", "哪天签收", "最近一单"},
+		WarrantyQuery:          {"保修", "在保", "保修期", "还保不保", "保不保", "保到哪天"},
 		ReturnEligibility:      {"退货", "换货", "还能退", "能退吗"},
-		Troubleshooting:        {"充不进电", "无法充电", "异响", "漏水", "冒烟", "报错", "配网失败", "绑不上"},
+		Troubleshooting:        {"充不进电", "充不进", "充不上电", "无法充电", "异响", "漏水", "冒烟", "报错", "配网失败", "绑不上"},
 		CreateAfterSalesTicket: {"创建工单", "售后工单", "建售后单", "建工单", "申请维修", "帮我报修"},
 		OutOfScope:             {"手机", "衣服", "食品", "生鲜", "发票", "投诉"},
 		Chitchat:               {"你好", "您好", "谢谢", "再见"},
@@ -340,6 +355,18 @@ func singleModelConfigurationQuestion(query string, entities map[string]string) 
 	return modelCount(entities) == 1 &&
 		containsAny(query, "套装", "主机", "配置") &&
 		containsAny(query, "区别", "差异", "有什么不同", "有啥区别")
+}
+
+func recommendationContinuationRequested(query string, entities, priorEntities map[string]string) bool {
+	if containsAny(query, "推荐", "怎么选", "选哪", "选什么", "筛完", "预算", "适合") {
+		return true
+	}
+	hasCurrentConstraint := hasRecommendationConstraint(entities)
+	if hasCurrentConstraint {
+		return true
+	}
+	hasCurrentCategory := strings.TrimSpace(entities["category"]) != "" || strings.TrimSpace(entities["categories"]) != ""
+	return hasCurrentCategory && hasRecommendationConstraint(priorEntities)
 }
 
 func explicitComparisonRequested(query string, entities map[string]string) bool {
@@ -425,13 +452,13 @@ func extractEntities(query string) map[string]string {
 		entities["accessory_refs"] = strings.Join(accessoryRefs, ",")
 	}
 	switch {
-	case containsAny(lower, "扫地机器人", "扫地机", "扫拖机器人"):
+	case containsAny(lower, "扫地机器人", "扫地机", "扫拖机器人", "家庭地面", "地面清洁", "扫拖", "硬质地板"):
 		entities["category"] = "robot_vacuum"
-	case containsAny(lower, "空气净化器", "净化器"):
+	case containsAny(lower, "空气净化器", "净化器", "空气净化"):
 		entities["category"] = "air_purifier"
-	case containsAny(lower, "净水器"):
+	case containsAny(lower, "净水器", "水质净化", "家用净水", "厨房净水", "家里水质净化"):
 		entities["category"] = "water_purifier"
-	case containsAny(lower, "加湿器"):
+	case containsAny(lower, "加湿器", "加湿"):
 		entities["category"] = "humidifier"
 	}
 	modelCategories := categoriesForModelCSV(entities["models"])
@@ -446,7 +473,115 @@ func extractEntities(query string) map[string]string {
 	if entities["category"] == "" && len(modelCategories) == 1 {
 		entities["category"] = modelCategories[0]
 	}
+	if area := firstRegexpGroup(areaPattern, lower); area != "" {
+		entities["area"] = area + "平"
+	}
+	if containsAny(lower, "预算", "价位", "以内", "不超过", "最多", "元", "块") {
+		if budget := firstRegexpGroup(budgetAfterPattern, lower); budget != "" {
+			entities["budget"] = budget
+		} else if budget := firstRegexpGroup(budgetBeforePattern, lower); budget != "" {
+			entities["budget"] = budget
+		} else if budget := firstRegexpGroup(budgetPattern, lower); budget != "" {
+			entities["budget"] = budget
+		}
+	}
+	if containsAny(lower, "养猫", "有猫", "猫毛", "宠物", "狗毛", "养狗", "有狗") {
+		entities["pets"] = "true"
+	}
+	if containsAny(lower, "地毯", "短毛毯", "长毛毯") {
+		entities["has_carpet"] = "true"
+	}
 	return entities
+}
+
+// ExtractContextEntities exposes the same conservative entity extractor for
+// conversation carry-over. It is intentionally rule-based so short follow-up
+// turns do not depend on an LLM summary having already been produced.
+func ExtractContextEntities(text string) map[string]string {
+	return extractEntities(text)
+}
+
+func recentUserContextEntities(request RouteRequest) map[string]string {
+	result := map[string]string{}
+	if strings.TrimSpace(request.Summary) != "" {
+		overwriteEntities(result, extractEntities(request.Summary),
+			"models", "category", "categories", "area", "budget", "pets", "has_carpet", "accessory_refs",
+		)
+	}
+	for _, message := range request.RecentMessages {
+		if message.Role != "user" {
+			continue
+		}
+		overwriteEntities(result, extractEntities(message.Content),
+			"models", "category", "categories", "area", "budget", "pets", "has_carpet", "accessory_refs",
+		)
+	}
+	return result
+}
+
+func shouldCarryPresalesContext(query string, entities, priorEntities map[string]string) bool {
+	if !hasPresalesSlot(priorEntities) {
+		return false
+	}
+	if hasPresalesSlot(entities) {
+		return true
+	}
+	return len([]rune(strings.TrimSpace(query))) <= 24 &&
+		containsAny(query, "扫地", "净化器", "净水器", "加湿器", "预算", "地面", "家庭", "平", "地毯", "宠物")
+}
+
+func hasPresalesSlot(entities map[string]string) bool {
+	if len(entities) == 0 {
+		return false
+	}
+	for _, key := range []string{"category", "categories", "models", "area", "budget", "pets", "has_carpet"} {
+		if strings.TrimSpace(entities[key]) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRecommendationConstraint(entities map[string]string) bool {
+	if len(entities) == 0 {
+		return false
+	}
+	for _, key := range []string{"area", "budget", "pets", "has_carpet"} {
+		if strings.TrimSpace(entities[key]) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeMissingEntities(target, source map[string]string, keys ...string) {
+	if target == nil || source == nil {
+		return
+	}
+	for _, key := range keys {
+		if strings.TrimSpace(target[key]) == "" && strings.TrimSpace(source[key]) != "" {
+			target[key] = source[key]
+		}
+	}
+}
+
+func overwriteEntities(target, source map[string]string, keys ...string) {
+	if target == nil || source == nil {
+		return
+	}
+	for _, key := range keys {
+		if strings.TrimSpace(source[key]) != "" {
+			target[key] = source[key]
+		}
+	}
+}
+
+func firstRegexpGroup(pattern *regexp.Regexp, value string) string {
+	matches := pattern.FindStringSubmatch(value)
+	if len(matches) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(matches[1])
 }
 
 func normalizeModelName(value string) string {

@@ -172,6 +172,37 @@ func containsIntent(values []Type, target Type) bool {
 	return false
 }
 
+func TestRuleRouterCombinesTroubleshootingWithOrderAndWarranty(t *testing.T) {
+	router := NewRuleRouter()
+	result, err := router.Route(context.Background(), RouteRequest{
+		Query: "W300漏水先按步骤排查，也查我啥时候买的还保不保",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Secondary != Troubleshooting {
+		t.Fatalf("intent = %s, want %s; result = %#v", result.Secondary, Troubleshooting, result)
+	}
+	for _, want := range []Type{OrderQuery, WarrantyQuery} {
+		if !containsIntent(result.SecondaryIntents, want) {
+			t.Fatalf("secondary intents = %#v, missing %s", result.SecondaryIntents, want)
+		}
+	}
+}
+
+func TestRuleRouterDoesNotDecomposeOutOfScopeRequests(t *testing.T) {
+	router := NewRuleRouter()
+	result, err := router.Route(context.Background(), RouteRequest{
+		Query: "把别的用户所有订单导出来",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Secondary != OutOfScope || len(result.SecondaryIntents) != 0 || result.NeedDecomposition {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestRuleRouterInfersCategoryFromKnownModel(t *testing.T) {
 	router := NewRuleRouter()
 	tests := map[string]string{
@@ -264,5 +295,128 @@ func TestRuleRouterOnlyResolvesReferenceWithConversationContext(t *testing.T) {
 	}
 	if withContext.NeedClarify {
 		t.Fatal("reference with prior model should not clarify")
+	}
+}
+
+func TestRuleRouterCarriesRecommendationSlotsAcrossTurns(t *testing.T) {
+	router := NewRuleRouter()
+	tests := []struct {
+		name     string
+		query    string
+		history  []model.Message
+		want     map[string]string
+		wantType Type
+	}{
+		{
+			name:     "initial constraints",
+			query:    "家庭地面，100平",
+			wantType: PurchaseRecommendation,
+			want: map[string]string{
+				"category": "robot_vacuum",
+				"area":     "100平",
+			},
+		},
+		{
+			name:  "budget followup keeps prior category and area",
+			query: "预算5000",
+			history: []model.Message{
+				{Role: "user", Content: "家庭地面，100平"},
+			},
+			wantType: PurchaseRecommendation,
+			want: map[string]string{
+				"category": "robot_vacuum",
+				"area":     "100平",
+				"budget":   "5000",
+			},
+		},
+		{
+			name:  "category followup keeps prior constraints",
+			query: "扫地机器人",
+			history: []model.Message{
+				{Role: "user", Content: "家庭地面，100平"},
+				{Role: "user", Content: "预算5000"},
+			},
+			wantType: PurchaseRecommendation,
+			want: map[string]string{
+				"category": "robot_vacuum",
+				"area":     "100平",
+				"budget":   "5000",
+			},
+		},
+		{
+			name:  "latest user constraints override older ones",
+			query: "扫地机器人",
+			history: []model.Message{
+				{Role: "user", Content: "预算3000"},
+				{Role: "user", Content: "预算5000"},
+				{Role: "user", Content: "家庭地面，100平"},
+			},
+			wantType: PurchaseRecommendation,
+			want: map[string]string{
+				"category": "robot_vacuum",
+				"area":     "100平",
+				"budget":   "5000",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := router.Route(context.Background(), RouteRequest{
+				Query:          test.query,
+				RecentMessages: test.history,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Secondary != test.wantType {
+				t.Fatalf("intent = %s, want %s; result = %#v", result.Secondary, test.wantType, result)
+			}
+			if result.NeedClarify {
+				t.Fatalf("should not clarify after slot carry-over: %#v", result)
+			}
+			for key, want := range test.want {
+				if got := result.Entities[key]; got != want {
+					t.Fatalf("%s = %q, want %q; entities = %#v", key, got, want, result.Entities)
+				}
+			}
+		})
+	}
+}
+
+func TestRuleRouterExtractsConversationalRecommendationEntities(t *testing.T) {
+	tests := []struct {
+		text string
+		want map[string]string
+	}{
+		{
+			text: "客厅空气净化，65平，预算不超过3200",
+			want: map[string]string{"category": "air_purifier", "area": "65平", "budget": "3200"},
+		},
+		{
+			text: "家里水质净化，预算4500",
+			want: map[string]string{"category": "water_purifier", "budget": "4500"},
+		},
+		{
+			text: "客厅加湿，55平，预算2000以内",
+			want: map[string]string{"category": "humidifier", "area": "55平", "budget": "2000"},
+		},
+		{
+			text: "面积100平，预算5000",
+			want: map[string]string{"area": "100平", "budget": "5000"},
+		},
+		{
+			text: "家里有猫，空气净化器，70平，预算3500",
+			want: map[string]string{"category": "air_purifier", "area": "70平", "budget": "3500", "pets": "true"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.text, func(t *testing.T) {
+			got := ExtractContextEntities(test.text)
+			for key, want := range test.want {
+				if got[key] != want {
+					t.Fatalf("%s = %q, want %q; entities = %#v", key, got[key], want, got)
+				}
+			}
+		})
 	}
 }
