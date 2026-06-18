@@ -8,11 +8,32 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"CleanCaregent/internal/tool"
 )
+
+// syncRecorder wraps httptest.ResponseRecorder with a mutex so that
+// concurrent writes (from ServeHTTP in a goroutine) and reads (from
+// the test goroutine) do not race on the underlying buffer.
+type syncRecorder struct {
+	*httptest.ResponseRecorder
+	mu sync.Mutex
+}
+
+func (sr *syncRecorder) Write(p []byte) (int, error) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	return sr.ResponseRecorder.Write(p)
+}
+
+func (sr *syncRecorder) bodyString() string {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	return sr.ResponseRecorder.Body.String()
+}
 
 type fakeTool struct{}
 
@@ -477,23 +498,24 @@ func TestHTTPHandlerReplaysMissedSSENotifications(t *testing.T) {
 	request.Header.Set("Accept", "text/event-stream")
 	request.Header.Set("Last-Event-ID", "0")
 	recorder := httptest.NewRecorder()
+	safeRec := &syncRecorder{ResponseRecorder: recorder}
 	done := make(chan struct{})
 	go func() {
-		handler.ServeHTTP(recorder, request)
+		handler.ServeHTTP(safeRec, request)
 		close(done)
 	}()
 	deadline = time.Now().Add(time.Second)
-	for !strings.Contains(recorder.Body.String(), "notifications/resources/list_changed") {
+	for !strings.Contains(safeRec.bodyString(), "notifications/resources/list_changed") {
 		if time.Now().After(deadline) {
 			cancel()
 			<-done
-			t.Fatalf("SSE body = %q", recorder.Body.String())
+			t.Fatalf("SSE body = %q", safeRec.bodyString())
 		}
 		time.Sleep(time.Millisecond)
 	}
 	cancel()
 	<-done
-	if !strings.Contains(recorder.Body.String(), "id: ") {
-		t.Fatalf("SSE replay missing event id: %q", recorder.Body.String())
+	if !strings.Contains(safeRec.bodyString(), "id: ") {
+		t.Fatalf("SSE replay missing event id: %q", safeRec.bodyString())
 	}
 }
