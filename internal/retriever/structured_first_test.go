@@ -48,3 +48,20 @@ func TestStructuredFirstPrependsExactProductAttributes(t *testing.T) {
 		t.Fatalf("metadata = %#v", results[0].Metadata)
 	}
 }
+
+func TestStructuredFirstPreservesExplicitDocTypeResultsFirst(t *testing.T) {
+	retriever := NewStructuredFirst(structuredRetriever{}, structuredCatalog{})
+	results, err := retriever.Search(context.Background(), rag.SearchRequest{
+		Query: "T20鍚稿姏澶氬ぇ",
+		Filter: rag.MetadataFilter{
+			Models:   []string{"T20"},
+			DocTypes: []string{"product_parameter"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0].ChunkID != "kb_1" {
+		t.Fatalf("results = %#v", results)
+	}
+}

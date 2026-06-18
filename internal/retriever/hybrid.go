@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -31,6 +32,8 @@ type Hybrid struct {
 	repository repository.KnowledgeRepository
 	reranker   reranker.Reranker
 }
+
+var searchCodePattern = regexp.MustCompile(`(?i)\b[A-Z]+[0-9]+(?:\s*Pro)?\b`)
 
 func NewHybrid(
 	embedder embedding.Embedder,
@@ -151,6 +154,7 @@ func (h *Hybrid) searchOnce(
 	if request.NeedRerank && h.reranker != nil && len(fused) > 0 {
 		reranked, err := h.reranker.Rerank(ctx, request.Query, fused, request.RerankTopK)
 		if err == nil {
+			reranked = applyBusinessRanking(request, reranked)
 			markFallbacks(reranked, denseErr, keywordErr, nil)
 			return reranked, nil
 		}
@@ -158,6 +162,7 @@ func (h *Hybrid) searchOnce(
 	} else {
 		markFallbacks(fused, denseErr, keywordErr, nil)
 	}
+	fused = applyBusinessRanking(request, fused)
 	if len(fused) > request.RerankTopK {
 		fused = fused[:request.RerankTopK]
 	}
@@ -548,13 +553,90 @@ func reciprocalRankFusion(dense, keyword []rag.SearchResult) []rag.SearchResult 
 
 func rrfRankConstant(result rag.SearchResult) float64 {
 	switch resultDocType(result) {
-	case "product_parameter":
+	case "product_parameter", "accessory_compatibility":
 		return 10
+	case "faq", "troubleshooting", "user_manual":
+		return 20
 	case "purchase_guide":
 		return 60
 	default:
 		return 40
 	}
+}
+
+func applyBusinessRanking(request rag.SearchRequest, results []rag.SearchResult) []rag.SearchResult {
+	if len(results) == 0 {
+		return nil
+	}
+	type rankedResult struct {
+		result rag.SearchResult
+		score  float64
+		index  int
+	}
+	ranked := make([]rankedResult, len(results))
+	for index, result := range results {
+		bonus := businessRankBonus(request, result)
+		if bonus > 0 {
+			if result.Metadata == nil {
+				result.Metadata = map[string]any{}
+			}
+			result.Metadata["business_rank_bonus"] = bonus
+		}
+		ranked[index] = rankedResult{
+			result: result,
+			score:  effectiveResultScore(result) + bonus,
+			index:  index,
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score == ranked[j].score {
+			return ranked[i].index < ranked[j].index
+		}
+		return ranked[i].score > ranked[j].score
+	})
+	output := make([]rag.SearchResult, len(ranked))
+	for index := range ranked {
+		output[index] = ranked[index].result
+	}
+	return output
+}
+
+func businessRankBonus(request rag.SearchRequest, result rag.SearchResult) float64 {
+	bonus := 0.0
+	if len(request.Filter.DocTypes) > 0 && stringInSlice(resultDocType(result), request.Filter.DocTypes) {
+		bonus += 0.18
+	}
+	if len(request.Filter.Models) > 0 {
+		resultModels := resultModels(result)
+		for _, modelName := range request.Filter.Models {
+			if canonicalSearchModel(modelName) != "" && modelInSlice(modelName, resultModels) {
+				bonus += 0.22
+				break
+			}
+		}
+	}
+	if len(request.Filter.Categories) > 0 {
+		if category, _ := result.Metadata["category"].(string); stringInSlice(category, request.Filter.Categories) {
+			bonus += 0.04
+		}
+	}
+	terms := queryTerms(request.Query)
+	if len(terms) > 0 {
+		text := strings.ToLower(result.Title + "\n" + result.Content)
+		matches := 0
+		for _, term := range terms {
+			if len([]rune(term)) < 2 {
+				continue
+			}
+			if strings.Contains(text, strings.ToLower(term)) {
+				matches++
+			}
+		}
+		if matches > 0 {
+			bonus += math.Min(0.12, float64(matches)*0.015)
+		}
+	}
+	return bonus
 }
 
 func toSearchResult(chunk model.KnowledgeChunk, denseScore, keywordScore float64) rag.SearchResult {
@@ -651,19 +733,47 @@ func stringInSlice(value string, values []string) bool {
 	return false
 }
 
+func modelInSlice(value string, values []string) bool {
+	value = canonicalSearchModel(value)
+	for _, candidate := range values {
+		if value != "" && value == canonicalSearchModel(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalSearchModel(value string) string {
+	value = strings.ToUpper(strings.Join(strings.Fields(strings.TrimSpace(value)), ""))
+	if value == "" {
+		return ""
+	}
+	if value == "X20PRO" {
+		return "X20PRO"
+	}
+	return value
+}
+
 func queryTerms(query string) []string {
 	query = strings.ToLower(strings.TrimSpace(query))
 	var words []string
 	var current []rune
 	var han []rune
+	currentClass := 0
 	flush := func() {
 		if len(current) > 0 {
 			words = append(words, string(current))
 			current = current[:0]
+			currentClass = 0
 		}
 	}
 	for _, value := range []rune(query) {
-		if unicode.IsLetter(value) || unicode.IsNumber(value) {
+		class := tokenClass(value)
+		if class > 0 {
+			if currentClass != 0 && currentClass != class {
+				flush()
+			}
+			currentClass = class
 			current = append(current, value)
 			if unicode.Is(unicode.Han, value) {
 				han = append(han, value)
@@ -673,6 +783,15 @@ func queryTerms(query string) []string {
 		flush()
 	}
 	flush()
+	for _, match := range searchCodePattern.FindAllString(query, -1) {
+		compact := strings.ToLower(strings.Join(strings.Fields(match), ""))
+		if compact != "" {
+			words = append(words, compact)
+		}
+		if compact == "x20pro" {
+			words = append(words, "x20", "pro")
+		}
+	}
 	for index := 0; index+2 <= len(han); index++ {
 		words = append(words, string(han[index:index+2]))
 	}
@@ -681,6 +800,19 @@ func queryTerms(query string) []string {
 		terms = terms[:32]
 	}
 	return terms
+}
+
+func tokenClass(value rune) int {
+	switch {
+	case value <= unicode.MaxASCII && (unicode.IsLetter(value) || unicode.IsNumber(value)):
+		return 1
+	case unicode.Is(unicode.Han, value):
+		return 2
+	case unicode.IsLetter(value) || unicode.IsNumber(value):
+		return 3
+	default:
+		return 0
+	}
 }
 
 func compactStrings(values []string) []string {

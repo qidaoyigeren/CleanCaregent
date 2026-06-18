@@ -75,6 +75,9 @@ func (r *StructuredFirst) Search(
 	if len(structured) == 0 {
 		return results, retrievalErr
 	}
+	if len(request.Filter.DocTypes) > 0 {
+		return mergeStructuredResults(results, structured), nil
+	}
 	return mergeStructuredResults(structured, results), nil
 }
 

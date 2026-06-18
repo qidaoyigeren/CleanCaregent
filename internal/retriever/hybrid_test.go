@@ -130,6 +130,48 @@ func TestBM25CandidatesRewardRareExactTerm(t *testing.T) {
 	}
 }
 
+func TestQueryTermsSplitMixedModelAndChineseText(t *testing.T) {
+	terms := queryTerms("X20pro到底多少Pa？T20吸力多少")
+	for _, want := range []string{"x20pro", "x20", "pro", "pa", "t20", "吸力", "多少"} {
+		if !stringInSlice(want, terms) {
+			t.Fatalf("terms = %#v, missing %q", terms, want)
+		}
+	}
+}
+
+func TestBusinessRankingPromotesRequestedModelAndDocumentType(t *testing.T) {
+	request := rag.SearchRequest{
+		Query: "T20吸力多少",
+		Filter: rag.MetadataFilter{
+			Models:   []string{"T20"},
+			DocTypes: []string{"product_parameter"},
+		},
+	}
+	results := []rag.SearchResult{
+		{
+			ChunkID:     "guide",
+			Title:       "T20 选购建议",
+			Content:     "T20 适合养宠家庭。",
+			RerankScore: 0.80,
+			Metadata:    map[string]any{"doc_type": "purchase_guide", "model": "T20"},
+		},
+		{
+			ChunkID:     "parameter",
+			Title:       "T20 参数",
+			Content:     "T20 吸力 6000Pa，适用面积 80-120 平。",
+			RerankScore: 0.70,
+			Metadata:    map[string]any{"doc_type": "product_parameter", "model": "T20"},
+		},
+	}
+	ranked := applyBusinessRanking(request, results)
+	if ranked[0].ChunkID != "parameter" {
+		t.Fatalf("ranked = %#v, want parameter document first", ranked)
+	}
+	if _, ok := ranked[0].Metadata["business_rank_bonus"].(float64); !ok {
+		t.Fatalf("business rank bonus missing: %#v", ranked[0].Metadata)
+	}
+}
+
 func TestReciprocalRankFusionUsesDocumentSpecificConstantsAndNormalization(t *testing.T) {
 	results := reciprocalRankFusion(
 		[]rag.SearchResult{
