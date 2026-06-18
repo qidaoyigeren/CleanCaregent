@@ -358,6 +358,16 @@ func TestAllowedToolsForRouteIncludesSecondaryIntents(t *testing.T) {
 	}
 }
 
+func TestAllowedToolsForRouteDoesNotInheritForOutOfScope(t *testing.T) {
+	tools := allowedToolsForRoute(intent.Result{
+		Secondary:        intent.OutOfScope,
+		SecondaryIntents: []intent.Type{intent.OrderQuery, intent.WarrantyQuery},
+	})
+	if len(tools) != 0 {
+		t.Fatalf("tools = %v, want no tools for out-of-scope route", tools)
+	}
+}
+
 func TestRuntimeTokenUsageDoesNotTreatCumulativeBillingAsContext(t *testing.T) {
 	got := runtimeTokenUsage(
 		100,

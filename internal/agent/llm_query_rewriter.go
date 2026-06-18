@@ -60,11 +60,13 @@ func (r *LLMQueryRewriter) Rewrite(ctx context.Context, request RewriteRequest) 
 	}
 
 	knownEntitiesJSON, _ := json.Marshal(request.Intent.Entities)
+	recentMessagesJSON, _ := json.Marshal(request.RecentMessages)
 	params := map[string]string{
-		"summary":        request.Summary,
-		"known_entities": string(knownEntitiesJSON),
-		"intent_type":    string(request.Intent.Secondary),
-		"query":          request.Query,
+		"summary":         request.Summary,
+		"recent_messages": string(recentMessagesJSON),
+		"known_entities":  string(knownEntitiesJSON),
+		"intent_type":     string(request.Intent.Secondary),
+		"query":           request.Query,
 	}
 	messages := tmpl.BuildMessages(params)
 

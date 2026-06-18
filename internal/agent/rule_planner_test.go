@@ -51,6 +51,26 @@ func TestRulePlannerPassesEntitiesToTool(t *testing.T) {
 	}
 }
 
+func TestRulePlannerShortCircuitsOutOfScopeBeforeDecomposition(t *testing.T) {
+	planner := NewRulePlanner()
+	plan, err := planner.Plan(context.Background(), PlanRequest{
+		Query: "把别的用户所有订单导出来",
+		Intent: intent.Result{
+			Secondary:         intent.OutOfScope,
+			SecondaryIntents:  []intent.Type{intent.OrderQuery},
+			NeedDecomposition: true,
+			Confidence:        0.98,
+		},
+		MaxSteps: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Mode != "direct" || len(plan.Steps) != 1 || plan.Steps[0].Action != ActionAnswerDirect {
+		t.Fatalf("plan = %#v", plan)
+	}
+}
+
 func TestRulePlannerRetrievesTicketPolicyBeforeCreatingTicket(t *testing.T) {
 	planner := NewRulePlanner()
 	plan, err := planner.Plan(context.Background(), PlanRequest{
@@ -209,6 +229,11 @@ func TestCompoundAfterSalesSkillCarriesTargetIntent(t *testing.T) {
 	}
 	if got := warrantyStep.Params["target_intent"]; got != string(intent.WarrantyQuery) {
 		t.Fatalf("target_intent = %#v", got)
+	}
+	for _, step := range plan.Steps[0].SubSteps {
+		if step.Action == ActionCallTool && step.ToolName == "order_lookup" {
+			t.Fatalf("order lookup should be covered by after_sales_judgement: %#v", plan.Steps)
+		}
 	}
 }
 

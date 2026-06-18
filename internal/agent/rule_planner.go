@@ -34,6 +34,11 @@ func (p *RulePlanner) Plan(ctx context.Context, request PlanRequest) (*Plan, err
 		plan.Steps = []PlanStep{newPlanStep(1, ActionClarify, "", "", request.Query, nil, "low_confidence_or_missing_entity")}
 		return plan, nil
 	}
+	if request.Intent.Secondary == intent.Chitchat || request.Intent.Secondary == intent.OutOfScope {
+		plan.Mode = "direct"
+		plan.Steps = []PlanStep{newPlanStep(1, ActionAnswerDirect, "", "", request.Query, nil, string(request.Intent.Secondary))}
+		return plan, nil
+	}
 	if request.Intent.NeedDecomposition && len(request.Intent.SecondaryIntents) > 0 {
 		plan.Mode = "compound"
 		plan.Steps = compoundPlan(request)
@@ -230,6 +235,9 @@ func compoundPlan(request PlanRequest) []PlanStep {
 			continue
 		}
 		if request.Intent.Secondary == intent.ReturnEligibility && intentType == intent.OrderQuery {
+			continue
+		}
+		if intentType == intent.OrderQuery && containsIntent(intents, intent.WarrantyQuery) {
 			continue
 		}
 		if request.Intent.Secondary == intent.CreateAfterSalesTicket &&

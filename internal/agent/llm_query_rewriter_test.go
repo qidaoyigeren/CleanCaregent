@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"CleanCaregent/internal/intent"
+	"CleanCaregent/internal/model"
 )
 
 func TestShouldUseLLMRewriteKeepsExplicitComparisonDeterministic(t *testing.T) {
@@ -46,5 +49,41 @@ func TestLLMRewriteDoesNotOverwriteRuleEntities(t *testing.T) {
 	}
 	if entities["category"] != "robot_vacuum" {
 		t.Fatalf("category = %q", entities["category"])
+	}
+}
+
+func TestRuleRewriteCarriesRecommendationContextIntoSearchQueries(t *testing.T) {
+	rewriter := NewRuleQueryRewriter()
+	result, err := rewriter.Rewrite(context.Background(), RewriteRequest{
+		Query: "扫地机器人",
+		Intent: intent.Result{
+			Secondary:  intent.PurchaseRecommendation,
+			Confidence: 0.88,
+			Entities:   map[string]string{"category": "robot_vacuum"},
+		},
+		RecentMessages: []model.Message{
+			{Role: "user", Content: "家庭地面，100平"},
+			{Role: "user", Content: "预算5000"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		"category": "robot_vacuum",
+		"area":     "100平",
+		"budget":   "5000",
+	} {
+		if got := result.Entities[key]; got != want {
+			t.Fatalf("%s = %q, want %q; entities = %#v", key, got, want, result.Entities)
+		}
+	}
+	for _, want := range []string{"扫地机器人", "100平", "5000"} {
+		if !strings.Contains(result.Rewritten, want) {
+			t.Fatalf("rewritten query %q missing %q", result.Rewritten, want)
+		}
+	}
+	if len(result.SearchQueries) == 0 || !strings.Contains(result.SearchQueries[0], "100平") {
+		t.Fatalf("search queries did not preserve carried constraints: %#v", result.SearchQueries)
 	}
 }

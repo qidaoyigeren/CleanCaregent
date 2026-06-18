@@ -67,7 +67,7 @@ func (r *GroundingReflector) Review(
 
 	evidenceText := normalizeGroundingText(query + "\n" + joinEvidence(evidences))
 	toolEvidence, toolFailure := evidenceKinds(evidences)
-	if !(intentType == intent.CreateAfterSalesTicket && toolEvidence) {
+	if intentType != intent.Troubleshooting && !(intentType == intent.CreateAfterSalesTicket && toolEvidence) {
 		if low, scores := lowEvidenceRelevance(evidences); low {
 			result.LowConfidence = true
 			result.Action = "rerun_retrieval"
@@ -327,11 +327,15 @@ func isHighRiskIntent(intentType intent.Type) bool {
 func requestedFacets(query string) []string {
 	facets := make([]string, 0, 4)
 	for facet, keywords := range map[string][]string{
-		"price":     {"多少钱", "价格", "售价"},
-		"coupon":    {"券", "优惠"},
-		"inventory": {"库存", "有货"},
-		"warranty":  {"保修", "在保"},
-		"return":    {"退货", "换货", "还能退"},
+		"price":         {"多少钱", "价格", "售价", "查价", "报价", "总价"},
+		"coupon":        {"券", "优惠"},
+		"inventory":     {"库存", "有货", "现货", "没货", "几台"},
+		"warranty":      {"保修", "在保", "过保", "延保", "保到哪天"},
+		"return":        {"退货", "换货", "还能退"},
+		"instruction":   {"怎么", "咋", "步骤", "如何", "首次", "更换", "清洁", "设置", "模式", "安装", "冲洗"},
+		"suitability":   {"够不够", "够用", "适合", "推荐", "筛完", "限制", "区别", "差啥", "能不能"},
+		"compatibility": {"兼容", "能装", "适配", "该买", "耗材", "滤芯", "滚刷", "尘袋"},
+		"order":         {"查订单", "订单号", "签收", "买过", "购买记录", "啥时候买", "什么时候买", "最近一单"},
 	} {
 		for _, keyword := range keywords {
 			if strings.Contains(query, keyword) {
@@ -345,11 +349,15 @@ func requestedFacets(query string) []string {
 
 func answerCoversFacet(answer, facet string) bool {
 	keywords := map[string][]string{
-		"price":     {"价格", "price", "current_price", "current_price_cents", "元"},
-		"coupon":    {"优惠", "coupon", "券"},
-		"inventory": {"库存", "stock", "有货"},
-		"warranty":  {"保修", "warranty", "在保"},
-		"return":    {"退", "换货", "政策"},
+		"price":         {"价格", "price", "current_price", "current_price_cents", "元"},
+		"coupon":        {"优惠", "coupon", "券"},
+		"inventory":     {"库存", "stock", "有货", "可售"},
+		"warranty":      {"保修", "warranty", "在保", "过保"},
+		"return":        {"退", "换货", "政策"},
+		"instruction":   {"步骤", "设置", "模式", "安装", "冲洗", "清洁", "更换", "先", "请"},
+		"suitability":   {"适合", "建议", "满足", "覆盖", "够用", "限制", "区别", "推荐"},
+		"compatibility": {"兼容", "适配", "型号", "滤芯", "滚刷", "尘袋"},
+		"order":         {"订单", "签收", "购买", "记录"},
 	}[facet]
 	lower := strings.ToLower(answer)
 	for _, keyword := range keywords {

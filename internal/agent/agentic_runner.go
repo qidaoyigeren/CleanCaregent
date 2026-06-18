@@ -1692,13 +1692,13 @@ func allowedTools(intentType intent.Type) []string {
 	case intent.PurchaseRecommendation:
 		return []string{"price_query", "inventory_check"}
 	case intent.AccessoryCompatibility:
-		return []string{"user_purchase_history", "price_query"}
+		return []string{"user_purchase_history", "price_query", "inventory_check"}
 	case intent.WarrantyQuery:
-		return []string{"order_lookup", "warranty_check"}
+		return []string{"user_purchase_history", "order_lookup", "warranty_check"}
 	case intent.ReturnEligibility:
-		return []string{"order_lookup"}
+		return []string{"user_purchase_history", "order_lookup", "warranty_check"}
 	case intent.Troubleshooting:
-		return []string{"warranty_check", "create_after_sales_ticket"}
+		return []string{"user_purchase_history", "order_lookup", "warranty_check", "create_after_sales_ticket"}
 	case intent.CreateAfterSalesTicket:
 		return []string{"order_lookup", "warranty_check", "create_after_sales_ticket"}
 	default:
@@ -1707,6 +1707,11 @@ func allowedTools(intentType intent.Type) []string {
 }
 
 func allowedToolsForRoute(route intent.Result) []string {
+	if route.Secondary == intent.OutOfScope ||
+		route.Secondary == intent.Chitchat ||
+		route.Secondary == intent.Clarification {
+		return allowedTools(route.Secondary)
+	}
 	result := append([]string(nil), allowedTools(route.Secondary)...)
 	for _, secondary := range route.SecondaryIntents {
 		for _, toolName := range allowedTools(secondary) {
