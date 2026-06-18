@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { createConversation, getMessages } from '../api/conversations';
 import { getTrace } from '../api/traces';
 import useSSEStream from '../hooks/useSSEStream';
 import usePipeline, { type PipelineAction } from '../hooks/usePipeline';
+import useKeyboardShortcuts from '../hooks/useKeyboardShortcuts';
+import { useAppStore } from '../store/appStore';
 import type { Message } from '../types/conversation';
 import type { StatusEvent, EvidenceEvent, DoneEvent, SSEErrorEvent } from '../types/sse';
-import { addConversationToStorage } from '../components/chat/ConversationList';
+import { addConversationToStorage } from '../components/layout/Sidebar';
 import ChatArea from '../components/chat/ChatArea';
 import ChatInput from '../components/chat/ChatInput';
 import StatusBar from '../components/chat/StatusBar';
+import ConnectionStatus from '../components/chat/ConnectionStatus';
 import PipelinePanel from '../components/pipeline/PipelinePanel';
 import ErrorMessage from '../components/ui/ErrorMessage';
 import { ApiError } from '../types/api';
@@ -18,22 +21,51 @@ export default function ChatPage() {
   const { conversationId } = useParams();
   const navigate = useNavigate();
 
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
-  const [messagesError, setMessagesError] = useState<string | null>(null);
-  const [streamingContent, setStreamingContent] = useState('');
-  const [traceId, setTraceId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    messages,
+    streamingContent,
+    traceId,
+    error,
+    isLoadingMessages,
+    messagesError,
+    pipelineDrawerOpen,
+    setMessages,
+    setStreamingContent,
+    setTraceId,
+    setError,
+    addMessage,
+    setIsLoadingMessages,
+    setMessagesError,
+    resetChatState,
+    toggleSidebar,
+    togglePipelineDrawer,
+    connectionState,
+    reconnectCount,
+  } = useAppStore();
 
   const { pipeline, dispatch: pipelineDispatch } = usePipeline();
-  const { startStream, abort, isStreaming } = useSSEStream();
+  const { startStream, abort, isStreaming, connectionState: sseConnectionState, reconnectCount: sseReconnectCount } = useSSEStream();
+
+  // Keyboard shortcuts
+  useKeyboardShortcuts({
+    onNewConversation: () => navigate('/chat'),
+    onToggleSidebar: toggleSidebar,
+    onTogglePipeline: togglePipelineDrawer,
+  });
+
+  // Sync SSE state to store
+  useEffect(() => {
+    useAppStore.setState({
+      isStreaming,
+      connectionState: sseConnectionState,
+      reconnectCount: sseReconnectCount,
+    });
+  }, [isStreaming, sseConnectionState, sseReconnectCount]);
 
   // Load messages when conversationId changes
   useEffect(() => {
     if (!conversationId) {
-      setMessages([]);
-      setStreamingContent('');
-      setTraceId(null);
+      resetChatState();
       pipelineDispatch({ type: 'RESET' });
       return;
     }
@@ -50,7 +82,7 @@ export default function ChatPage() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setMessagesError(err instanceof ApiError ? err.message : 'Failed to load messages');
+          setMessagesError(err instanceof ApiError ? err.message : '加载消息失败');
         }
       })
       .finally(() => {
@@ -60,7 +92,7 @@ export default function ChatPage() {
     return () => {
       cancelled = true;
     };
-  }, [conversationId, pipelineDispatch]);
+  }, [conversationId, pipelineDispatch, resetChatState, setIsLoadingMessages, setMessages, setMessagesError]);
 
   // Abort SSE on unmount
   useEffect(() => {
@@ -85,18 +117,24 @@ export default function ChatPage() {
           );
           convId = conv.conversation_id;
           addConversationToStorage(conv);
+          useAppStore.getState().addConversation(conv);
           navigate(`/chat/${convId}`, { replace: true });
         } catch (err) {
           setError(
-            err instanceof ApiError ? err.message : 'Failed to create conversation'
+            err instanceof ApiError ? err.message : '创建对话失败'
           );
           return;
         }
       }
 
       // Add user message optimistically
-      const userMsg: Message = { id: `local_${Date.now()}`, role: 'user', content };
-      setMessages((prev) => [...prev, userMsg]);
+      const userMsg: Message = {
+        id: `local_${Date.now()}`,
+        role: 'user',
+        content,
+        created_at: new Date().toISOString(),
+      };
+      addMessage(userMsg);
 
       let assistantContent = '';
 
@@ -123,26 +161,25 @@ export default function ChatPage() {
         },
 
         onDone: async (data: DoneEvent) => {
-          // Finalize the AI message
           const aiMsg: Message = {
             id: data.message_id,
             role: 'assistant',
             content: assistantContent,
             trace_id: data.trace_id,
+            created_at: new Date().toISOString(),
           };
-          setMessages((prev) => [...prev, aiMsg]);
+          addMessage(aiMsg);
           setStreamingContent('');
           setTraceId(data.trace_id);
 
           pipelineDispatch({ type: 'MARK_COMPLETE' });
 
-          // Fetch full trace to enrich pipeline
           if (data.trace_id) {
             try {
               const trace = await getTrace(data.trace_id);
               pipelineDispatch({ type: 'ENRICH_TRACE', trace });
             } catch {
-              // Trace fetch failure is non-fatal — pipeline already shows SSE data
+              // Non-fatal
             }
           }
         },
@@ -153,7 +190,7 @@ export default function ChatPage() {
         },
       });
     },
-    [conversationId, navigate, startStream, pipelineDispatch]
+    [conversationId, navigate, startStream, pipelineDispatch, setError, setStreamingContent, setTraceId, addMessage]
   );
 
   const handleAbort = useCallback(() => {
@@ -162,49 +199,87 @@ export default function ChatPage() {
       const aiMsg: Message = {
         id: `aborted_${Date.now()}`,
         role: 'assistant',
-        content: streamingContent + '\n\n*[Interrupted]*',
+        content: streamingContent + '\n\n*[已中断]*',
+        created_at: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, aiMsg]);
+      addMessage(aiMsg);
       setStreamingContent('');
     }
-  }, [abort, streamingContent]);
+  }, [abort, streamingContent, addMessage, setStreamingContent]);
+
+  const handleSuggestionClick = (text: string) => {
+    handleSend(text);
+  };
 
   return (
     <div className="chat-page">
-      <div className="chat-area">
-        <StatusBar pipeline={pipeline} isStreaming={isStreaming} />
-        {error && (
-          <div style={{ padding: '8px 24px 0' }}>
-            <ErrorMessage message={error} onRetry={() => setError(null)} />
-          </div>
-        )}
-        <ChatArea
-          messages={messages}
-          streamingContent={streamingContent}
-          isLoading={isLoadingMessages}
-          error={messagesError}
-          onRetryLoad={() => {
-            if (conversationId) {
-              setMessagesError(null);
-              setIsLoadingMessages(true);
-              getMessages(conversationId, 20)
-                .then((data) => setMessages(data.items))
-                .catch((err) =>
-                  setMessagesError(err instanceof ApiError ? err.message : 'Failed')
-                )
-                .finally(() => setIsLoadingMessages(false));
-            }
-          }}
-        />
-        <div className="chat-input-container">
-          <ChatInput
-            onSend={handleSend}
-            onAbort={handleAbort}
-            isStreaming={isStreaming}
-          />
+      {/* Top bar: pipeline status + connection */}
+      <div className="chat-topbar">
+        <div className="chat-topbar__left">
+          <button
+            className="chat-topbar__menu-btn"
+            onClick={toggleSidebar}
+            title="切换侧边栏"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 12h18M3 6h18M3 18h18" />
+            </svg>
+          </button>
+          <StatusBar pipeline={pipeline} isStreaming={isStreaming} />
+          <ConnectionStatus state={connectionState} reconnectCount={reconnectCount} />
+        </div>
+        <div className="chat-topbar__right">
+          <button
+            className={`chat-topbar__pipeline-btn ${pipelineDrawerOpen ? 'chat-topbar__pipeline-btn--active' : ''}`}
+            onClick={togglePipelineDrawer}
+            title="Agent Pipeline"
+          >
+            🔍 Pipeline
+          </button>
         </div>
       </div>
-      <PipelinePanel steps={pipeline.steps} traceId={traceId || pipeline.traceId} />
+
+      {error && (
+        <div className="chat-error-bar">
+          <ErrorMessage message={error} onRetry={() => setError(null)} />
+        </div>
+      )}
+
+      <ChatArea
+        messages={messages}
+        streamingContent={streamingContent}
+        isLoading={isLoadingMessages}
+        error={messagesError}
+        onRetryLoad={() => {
+          if (conversationId) {
+            setMessagesError(null);
+            setIsLoadingMessages(true);
+            getMessages(conversationId, 20)
+              .then((data) => setMessages(data.items))
+              .catch((err) =>
+                setMessagesError(err instanceof ApiError ? err.message : '加载失败')
+              )
+              .finally(() => setIsLoadingMessages(false));
+          }
+        }}
+        onSuggestionClick={handleSuggestionClick}
+      />
+
+      <div className="chat-input-container">
+        <ChatInput
+          onSend={handleSend}
+          onAbort={handleAbort}
+          isStreaming={isStreaming}
+        />
+      </div>
+
+      {/* Pipeline drawer overlay */}
+      {pipelineDrawerOpen && (
+        <div className="pipeline-drawer-overlay" onClick={togglePipelineDrawer} />
+      )}
+      <div className={`pipeline-drawer ${pipelineDrawerOpen ? 'pipeline-drawer--open' : ''}`}>
+        <PipelinePanel steps={pipeline.steps} traceId={traceId || pipeline.traceId} />
+      </div>
     </div>
   );
 }
