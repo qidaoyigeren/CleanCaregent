@@ -29,7 +29,7 @@ export default function useSSEStream(): SSEStreamResult {
   const [reconnectCount, setReconnectCount] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const heartbeatRef = useRef<TimeoutId | null>(null);
-  const lastActivityRef = useRef<number>(Date.now());
+  const lastActivityRef = useRef<number>(0);
   // Ref to avoid stale closure in finally block
   const connectionStateRef = useRef<ConnectionState>('idle');
   // Ref to track if stream is active (for heartbeat reconnection)

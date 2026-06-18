@@ -18,7 +18,7 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers = {}) {
       // Ctrl/Cmd + N: New conversation
       if (isModifier && e.key === 'n') {
         e.preventDefault();
-        handlers.onNewConversation?.() || navigate('/chat');
+        if (!handlers.onNewConversation) { navigate('/chat'); } else { handlers.onNewConversation(); }
       }
 
       // Ctrl/Cmd + B: Toggle sidebar

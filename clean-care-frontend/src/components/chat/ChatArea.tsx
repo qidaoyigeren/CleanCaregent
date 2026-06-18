@@ -163,7 +163,7 @@ export default function ChatArea({
             </div>
             <div className="message__footer">
               <span className="message__time">
-                {formatTime(msg.created_at || Date.now())}
+                {formatTime(msg.created_at || '')}
               </span>
               <div className="message__actions">
                 <button

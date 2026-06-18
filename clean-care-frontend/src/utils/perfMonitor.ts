@@ -14,6 +14,11 @@ export interface WebVital {
   id: string;
 }
 
+interface LayoutShiftEntry extends PerformanceEntry {
+  hadRecentInput: boolean;
+  value: number;
+}
+
 export interface ApiMetric {
   path: string;
   method: string;
@@ -82,8 +87,8 @@ function observeWebVital(entry: PerformanceEntry): void {
     value = (entry as PerformanceEventTiming).processingStart - entry.startTime;
   } else if (entry.entryType === 'layout-shift') {
     // CLS: only count if not caused by user input
-    if ((entry as any).hadRecentInput) return;
-    value = (entry as any).value;
+    if ((entry as LayoutShiftEntry).hadRecentInput) return;
+    value = (entry as LayoutShiftEntry).value;
   } else if (entry.entryType === 'paint') {
     value = entry.startTime;
   } else if (entry.entryType === 'navigation') {
