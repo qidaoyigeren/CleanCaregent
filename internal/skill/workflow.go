@@ -245,11 +245,6 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 		if orderNo == "" {
 			if request.Intent.Secondary == intent.WarrantyQuery && refersToPurchase(request.Query) {
 				args := map[string]any{"limit": 10}
-				if len(models) > 0 {
-					args["model"] = first(models)
-				} else if category := first(categoriesForQuery(request.Query)); category != "" {
-					args["category"] = category
-				}
 				value, executeErr := s.callTool(ctx, request, "user_purchase_history", args)
 				if executeErr != nil {
 					dynamicNotes = append(dynamicNotes, "购买记录暂时不可用，无法定位保修订单")
@@ -287,6 +282,9 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 					evidenceCitation(len(evidences)-len(warrantyCitations)),
 					strings.Join(compactValues(warrantyCitations), ""),
 				)
+				if note := purchaseWarrantyModelMismatchNote(first(models), warranties); note != "" {
+					deterministicAnswer = note + "\n\n" + deterministicAnswer
+				}
 				break
 			}
 			return &Result{
@@ -831,7 +829,7 @@ func diagnosisSkillResult(
 		if citation != "" {
 			answer += " " + citation
 		}
-		if decision.NeedHuman {
+		if decision.NeedHuman && decision.SafetyLevel != diagnosis.SafetyHigh {
 			answer += "\n\n需要我在您确认订单信息后帮您创建售后工单吗？"
 		}
 		return &Result{
@@ -1506,6 +1504,8 @@ func refersToPurchase(query string) bool {
 	for _, keyword := range []string{
 		"上周买", "上礼拜", "之前买", "以前买", "我买的", "买过", "购买记录",
 		"上次", "那个净化器", "查订单", "订单后", "买没买", "延保", "保到哪天", "还保不保",
+		"还在保", "在保", "保内",
+		"买的", "买了", "啥时候买", "什么时候买", "账号里", "记录里", "最近一单", "历史记录",
 	} {
 		if strings.Contains(query, keyword) {
 			return true
@@ -1534,25 +1534,45 @@ func purchaseOrderNos(records []model.PurchaseRecord, models []string) []string 
 	}
 	seen := map[string]struct{}{}
 	var result []string
+	var fallback []string
 	for _, record := range records {
 		if record.OrderNo == "" {
 			continue
+		}
+		if _, ok := seen[record.OrderNo]; ok {
+			continue
+		}
+		seen[record.OrderNo] = struct{}{}
+		if len(fallback) < 3 {
+			fallback = append(fallback, record.OrderNo)
 		}
 		if len(targets) > 0 {
 			if _, ok := targets[canonicalModel(record.Model)]; !ok {
 				continue
 			}
 		}
-		if _, ok := seen[record.OrderNo]; ok {
-			continue
-		}
-		seen[record.OrderNo] = struct{}{}
 		result = append(result, record.OrderNo)
 		if len(result) >= 3 {
 			break
 		}
 	}
+	if len(result) == 0 {
+		return fallback
+	}
 	return result
+}
+
+func purchaseWarrantyModelMismatchNote(targetModel string, warranties []model.WarrantyStatus) string {
+	targetModel = canonicalModel(targetModel)
+	if targetModel == "" || len(warranties) == 0 {
+		return ""
+	}
+	for _, item := range warranties {
+		if canonicalModel(item.Model) == targetModel {
+			return ""
+		}
+	}
+	return fmt.Sprintf("购买记录中未找到 %s 的可核验订单；以下仅列出当前账号已定位订单的保修结果，请以订单记录为准。", targetModel)
 }
 
 func buildPurchaseWarrantyAnswer(

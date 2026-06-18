@@ -146,7 +146,7 @@ func TestDefaultTemplateUserPlaceholdersRender(t *testing.T) {
 			"summary": "summary", "recent_messages": "messages", "query": "query",
 		},
 		ScenarioRewrite: {
-			"summary": "summary", "known_entities": "entities",
+			"summary": "summary", "recent_messages": "messages", "known_entities": "entities",
 			"intent_type": "intent", "query": "query",
 		},
 		ScenarioPlan: {

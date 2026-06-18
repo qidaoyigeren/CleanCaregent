@@ -201,6 +201,38 @@ func TestWarrantyModelMismatchNoteUsesOrderFacts(t *testing.T) {
 	}
 }
 
+func TestPurchaseOrderNosFallsBackToAvailableRecords(t *testing.T) {
+	records := []model.PurchaseRecord{
+		{OrderNo: "CC20260603001", Model: "P400"},
+		{OrderNo: "CC20250522008", Model: "T20"},
+	}
+	got := purchaseOrderNos(records, []string{"P500"})
+	if strings.Join(got, ",") != "CC20260603001,CC20250522008" {
+		t.Fatalf("order nos = %#v", got)
+	}
+}
+
+func TestPurchaseWarrantyModelMismatchNote(t *testing.T) {
+	note := purchaseWarrantyModelMismatchNote("P500", []model.WarrantyStatus{
+		{OrderNo: "CC20260603001", Model: "P400"},
+	})
+	if !strings.Contains(note, "P500") || !strings.Contains(note, "未找到") {
+		t.Fatalf("note = %q", note)
+	}
+}
+
+func TestRefersToPurchaseRecognizesInWarrantyPhrases(t *testing.T) {
+	for _, query := range []string{
+		"确认在保后我再决定建不建单",
+		"这台还在保吗",
+		"看看是不是保内",
+	} {
+		if !refersToPurchase(query) {
+			t.Fatalf("%q should refer to purchase context", query)
+		}
+	}
+}
+
 func TestAccessorySkillUsesCompatibilityDocumentsOnly(t *testing.T) {
 	got := skillDocTypes(AccessoryCompatibilitySkill)
 	if len(got) != 1 || got[0] != "accessory_compatibility" {

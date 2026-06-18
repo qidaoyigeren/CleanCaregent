@@ -464,6 +464,7 @@ var queryRewriter = &Template{
 5. search_queries 是否覆盖型号、参数词和领域同义词，且没有重复项？`,
 	User: `# 上下文
 对话摘要：{summary}
+最近消息：{recent_messages}
 已知实体：{known_entities}
 意图类型：{intent_type}
 

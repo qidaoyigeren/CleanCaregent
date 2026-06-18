@@ -163,6 +163,17 @@ func TestNormalizeExtractedArgumentsRejectsUnknownEntities(t *testing.T) {
 	}
 }
 
+func TestProductRefsForDynamicToolPreferAccessoryRefs(t *testing.T) {
+	refs := productRefsForDynamicTool(
+		"inventory_check",
+		"W300换C300步骤给我，配件现在有货不",
+		[]string{"W300", "C300"},
+	)
+	if len(refs) != 1 || refs[0] != "C300" {
+		t.Fatalf("refs = %#v, want only C300", refs)
+	}
+}
+
 func TestFormatToolAnswerMarksMockDynamicData(t *testing.T) {
 	answer := formatToolAnswer("price_query", map[string]any{
 		"items": []map[string]any{{

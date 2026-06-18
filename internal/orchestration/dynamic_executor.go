@@ -358,6 +358,7 @@ func (e *DynamicExecutor) buildArguments(
 	}
 	models = filteredModels
 	if len(models) > 0 {
+		models = productRefsForDynamicTool(logicalToolName, query, models)
 		arguments["product_refs"] = models
 		arguments["model"] = strings.Join(strings.Fields(models[0]), " ")
 	}
@@ -389,6 +390,28 @@ func (e *DynamicExecutor) buildArguments(
 		}
 	}
 	return normalizeToolArguments(arguments)
+}
+
+func productRefsForDynamicTool(toolName, query string, refs []string) []string {
+	switch tool.LogicalName(toolName) {
+	case "price_query", "inventory_check":
+	default:
+		return refs
+	}
+	if !containsAny(query, "配件", "耗材", "滤芯", "滚刷", "尘袋", "边刷") {
+		return refs
+	}
+	accessories := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		normalized := normalizeProductRef(ref)
+		if accessoryPattern.MatchString(normalized) {
+			accessories = append(accessories, normalized)
+		}
+	}
+	if len(accessories) > 0 {
+		return accessories
+	}
+	return refs
 }
 
 func ticketConfirmationPresent(query string) bool {

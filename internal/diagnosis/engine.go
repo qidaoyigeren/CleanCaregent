@@ -504,7 +504,7 @@ func (e *Engine) SafetyDecision(query string) (Decision, bool) {
 		if strings.Contains(query, keyword) {
 			return Decision{
 				NodeID:      "safety_stop",
-				Resolution:  "请立即停止使用并断开电源；涉及漏水的设备同时关闭进水阀。不要拆机或继续通电测试，请联系售后处理。",
+				Resolution:  "请立即停止使用并断开电源；涉及漏水的设备同时关闭进水阀。不要拆机、不要拔内部线缆，也不要继续通电测试，请联系售后处理。",
 				Terminal:    true,
 				NeedHuman:   true,
 				SafetyLevel: SafetyHigh,
@@ -535,7 +535,7 @@ func rootKey(modelName, symptom string) string {
 
 func normalizeSymptom(query string) string {
 	switch {
-	case containsAny(query, "充不进电", "无法充电", "不能充电", "充不上电"):
+	case containsAny(query, "充不进电", "充不进", "充不上电", "充不上", "无法充电", "不能充电"):
 		return "无法充电"
 	case containsAny(query, "配网", "连不上", "连接", "双频合一", "2.4g", "5g"):
 		if containsAny(query, "账号地区", "权限", "app", "配对", "绑定") {

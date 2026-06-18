@@ -29,6 +29,17 @@ func TestChargeDiagnosisAdvancesAcrossTurns(t *testing.T) {
 	}
 }
 
+func TestChargeDiagnosisUsesObservedStepsInInitialQuery(t *testing.T) {
+	engine := NewDefaultEngine()
+	state, decision, err := engine.Start("T20", "T20充电座灯亮，触点也擦了，还是充不进")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.FaultNodeID != "t20_charge_service" || !decision.Terminal || !decision.NeedHuman {
+		t.Fatalf("state = %#v, decision = %#v", state, decision)
+	}
+}
+
 func TestDiagnosisStopsOnSafetyRisk(t *testing.T) {
 	engine := NewDefaultEngine()
 	_, decision, err := engine.Start("T20", "充电时有烧焦味")
