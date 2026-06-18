@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -75,4 +76,38 @@ func EffectOf(value Tool) SideEffect {
 
 type CallLogStore interface {
 	SaveToolCall(ctx context.Context, call Call, result Result) error
+}
+
+// LogicalName returns the tool identity used by the agent policy layer.
+// Aggregated MCP tools are exposed as "server/tool"; the logical name remains
+// the remote tool name so existing intent policies can stay transport-agnostic.
+func LogicalName(name string) string {
+	name = strings.TrimSpace(name)
+	if server, remote, ok := strings.Cut(name, "/"); ok && strings.TrimSpace(server) != "" {
+		return strings.TrimSpace(remote)
+	}
+	return name
+}
+
+// NamesMatch compares exact tool names and aggregated "server/tool" aliases.
+func NamesMatch(allowedName, candidateName string) bool {
+	allowedName = strings.TrimSpace(allowedName)
+	candidateName = strings.TrimSpace(candidateName)
+	if allowedName == "" || candidateName == "" {
+		return false
+	}
+	return allowedName == candidateName ||
+		LogicalName(allowedName) == candidateName ||
+		allowedName == LogicalName(candidateName) ||
+		LogicalName(allowedName) == LogicalName(candidateName)
+}
+
+// NameAllowed reports whether a candidate tool is permitted by a policy list.
+func NameAllowed(allowed []string, candidateName string) bool {
+	for _, name := range allowed {
+		if NamesMatch(name, candidateName) {
+			return true
+		}
+	}
+	return false
 }

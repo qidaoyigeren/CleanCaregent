@@ -123,6 +123,11 @@ type Notification struct {
 	Params any    `json:"params,omitempty"`
 }
 
+type NotificationEvent struct {
+	ID           uint64
+	Notification Notification
+}
+
 type SessionInfo struct {
 	ID              string
 	ProtocolVersion string

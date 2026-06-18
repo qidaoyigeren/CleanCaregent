@@ -354,4 +354,146 @@ func TestAggregateClientPrefixesMultiServerTools(t *testing.T) {
 	if result.CallID != "call_aggregate" || result.Data == nil {
 		t.Fatalf("result = %#v", result)
 	}
+
+	shortResult, err := client.CallTool(context.Background(), tool.Call{
+		CallID:    "call_aggregate_short",
+		Name:      "price_query",
+		Arguments: map[string]any{"product_refs": []string{"T20"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shortResult.CallID != "call_aggregate_short" || shortResult.Data == nil {
+		t.Fatalf("short result = %#v", shortResult)
+	}
+}
+
+func TestServeStdioRejectsRequestsBeforeInitialized(t *testing.T) {
+	server, err := NewServer(fakeTool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"test","version":"1"}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/list","params":{}}`,
+		"",
+	}, "\n"))
+	var output bytes.Buffer
+	if err := ServeStdio(context.Background(), server, input, &output); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("stdio responses = %q", output.String())
+	}
+	var beforeInitialize rpcResponse
+	if err := json.Unmarshal([]byte(lines[0]), &beforeInitialize); err != nil {
+		t.Fatal(err)
+	}
+	if beforeInitialize.Error == nil || beforeInitialize.Error.Code != -32004 {
+		t.Fatalf("before initialize response = %#v", beforeInitialize)
+	}
+	var beforeInitialized rpcResponse
+	if err := json.Unmarshal([]byte(lines[2]), &beforeInitialized); err != nil {
+		t.Fatal(err)
+	}
+	if beforeInitialized.Error == nil || beforeInitialized.Error.Code != -32004 {
+		t.Fatalf("before initialized response = %#v", beforeInitialized)
+	}
+	var afterInitialized rpcResponse
+	if err := json.Unmarshal([]byte(lines[3]), &afterInitialized); err != nil {
+		t.Fatal(err)
+	}
+	if afterInitialized.Error != nil || len(afterInitialized.Result) == 0 {
+		t.Fatalf("after initialized response = %#v", afterInitialized)
+	}
+}
+
+func TestHTTPHandlerExpiresSessionsByTTL(t *testing.T) {
+	server, err := NewServer(fakeTool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHTTPHandler(server, HTTPHandlerConfig{
+		RequireSession: true,
+		SessionTTL:     time.Nanosecond,
+	})
+	initialize := httptest.NewRequest(
+		http.MethodPost,
+		"/mcp",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"test","version":"1"}}}`),
+	)
+	initialize.Header.Set("Content-Type", "application/json")
+	initializeRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(initializeRecorder, initialize)
+	if initializeRecorder.Code != http.StatusOK {
+		t.Fatalf("initialize status = %d, body = %s", initializeRecorder.Code, initializeRecorder.Body.String())
+	}
+	sessionID := initializeRecorder.Header().Get("Mcp-Session-Id")
+	version := initializeRecorder.Header().Get("MCP-Protocol-Version")
+	if sessionID == "" || version == "" {
+		t.Fatalf("missing session headers: %#v", initializeRecorder.Header())
+	}
+
+	time.Sleep(time.Millisecond)
+	list := httptest.NewRequest(
+		http.MethodPost,
+		"/mcp",
+		strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`),
+	)
+	list.Header.Set("Content-Type", "application/json")
+	list.Header.Set("Mcp-Session-Id", sessionID)
+	list.Header.Set("MCP-Protocol-Version", version)
+	listRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(listRecorder, list)
+	if listRecorder.Code != http.StatusNotFound {
+		t.Fatalf("list status = %d, body = %s", listRecorder.Code, listRecorder.Body.String())
+	}
+}
+
+func TestHTTPHandlerReplaysMissedSSENotifications(t *testing.T) {
+	server, err := NewServer(fakeTool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHTTPHandler(server, HTTPHandlerConfig{})
+	if err := server.AddResource(Resource{URI: "cleancare://replay", Name: "replay"}, ResourceContent{Text: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(server.ReplayNotifications(0)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for notification history")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "/mcp", nil).WithContext(ctx)
+	request.Header.Set("Accept", "text/event-stream")
+	request.Header.Set("Last-Event-ID", "0")
+	recorder := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(recorder, request)
+		close(done)
+	}()
+	deadline = time.Now().Add(time.Second)
+	for !strings.Contains(recorder.Body.String(), "notifications/resources/list_changed") {
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatalf("SSE body = %q", recorder.Body.String())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-done
+	if !strings.Contains(recorder.Body.String(), "id: ") {
+		t.Fatalf("SSE replay missing event id: %q", recorder.Body.String())
+	}
 }

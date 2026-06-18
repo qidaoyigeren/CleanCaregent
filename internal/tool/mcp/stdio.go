@@ -344,6 +344,8 @@ func ServeStdio(ctx context.Context, server *Server, input io.Reader, output io.
 	}
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxRPCBodyBytes)
+	initializeAccepted := false
+	initialized := false
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
@@ -371,10 +373,27 @@ func ServeStdio(ctx context.Context, server *Server, input io.Reader, output io.
 			continue
 		}
 		if len(request.ID) == 0 {
+			if request.Method == "notifications/initialized" {
+				if initializeAccepted {
+					initialized = true
+				}
+			}
 			_ = server.HandleNotification(ctx, request.Method, request.Params)
 			continue
 		}
+		if request.Method != "initialize" && request.Method != "ping" && !initialized {
+			writeStdioResponse(output, rpcResponse{
+				JSONRPC: "2.0",
+				ID:      request.ID,
+				Error:   &RPCError{Code: -32004, Message: "mcp session is not initialized"},
+			})
+			continue
+		}
 		result, rpcErr := server.HandleRequest(ctx, request.Method, request.Params)
+		if request.Method == "initialize" && rpcErr == nil {
+			initializeAccepted = true
+			initialized = false
+		}
 		response := rpcResponse{JSONRPC: "2.0", ID: request.ID}
 		if rpcErr != nil {
 			response.Error = rpcErr

@@ -23,7 +23,10 @@ import (
 	"CleanCaregent/internal/tool"
 )
 
-const maxRPCBodyBytes = 4 << 20
+const (
+	maxRPCBodyBytes       = 4 << 20
+	defaultHTTPSessionTTL = 30 * time.Minute
+)
 
 type ListToolsResult struct {
 	ResultType string `json:"resultType,omitempty"`
@@ -38,6 +41,7 @@ type HTTPHandlerConfig struct {
 	AllowedOrigins       []string
 	StreamResponses      bool
 	RequireSession       bool
+	SessionTTL           time.Duration
 	AuthorizationServers []string
 	Scopes               []string
 }
@@ -49,9 +53,13 @@ func NewHTTPHandler(server *Server, config HTTPHandlerConfig) http.Handler {
 		allowedOrigins:       make(map[string]struct{}, len(config.AllowedOrigins)),
 		streamResponses:      config.StreamResponses,
 		requireSession:       config.RequireSession,
+		sessionTTL:           config.SessionTTL,
 		authorizationServers: cleanStrings(config.AuthorizationServers),
 		scopes:               cleanStrings(config.Scopes),
 		sessions:             make(map[string]*SessionInfo),
+	}
+	if handler.sessionTTL <= 0 {
+		handler.sessionTTL = defaultHTTPSessionTTL
 	}
 	for _, origin := range config.AllowedOrigins {
 		origin = strings.TrimSpace(origin)
@@ -73,6 +81,7 @@ type httpHandler struct {
 	allowAnyOrigin       bool
 	streamResponses      bool
 	requireSession       bool
+	sessionTTL           time.Duration
 	authorizationServers []string
 	scopes               []string
 
@@ -82,6 +91,7 @@ type httpHandler struct {
 }
 
 func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.cleanupExpiredSessions(time.Now().UTC())
 	if r.Method == http.MethodOptions {
 		h.handleOptions(w, r)
 		return
@@ -202,23 +212,37 @@ func (h *httpHandler) handleSSEStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	flusher, _ := w.(http.Flusher)
+	lastEventID, replayRequested := parseLastEventID(r.Header.Get("Last-Event-ID"))
+	notifications, cancel := h.server.SubscribeNotifications()
+	defer cancel()
 	fmt.Fprintf(w, "retry: 1000\n")
-	fmt.Fprintf(w, "id: %s\n", h.nextEventID())
 	fmt.Fprintf(w, "data:\n\n")
 	if flusher != nil {
 		flusher.Flush()
 	}
-	notifications, cancel := h.server.SubscribeNotifications()
-	defer cancel()
+	lastSentID := lastEventID
+	if replayRequested {
+		for _, event := range h.server.ReplayNotifications(lastEventID) {
+			writeSSENotification(w, strconv.FormatUint(event.ID, 10), event.Notification)
+			lastSentID = maxUint64(lastSentID, event.ID)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case notification, ok := <-notifications:
+		case event, ok := <-notifications:
 			if !ok {
 				return
 			}
-			writeSSENotification(w, h.nextEventID(), notification)
+			if event.ID <= lastSentID {
+				continue
+			}
+			writeSSENotification(w, strconv.FormatUint(event.ID, 10), event.Notification)
+			lastSentID = event.ID
 			if flusher != nil {
 				flusher.Flush()
 			}
@@ -302,7 +326,12 @@ func (h *httpHandler) sessionFromRequest(r *http.Request) (*SessionInfo, bool) {
 	if !ok {
 		return nil, false
 	}
-	session.LastSeenAt = time.Now().UTC()
+	now := time.Now().UTC()
+	if h.sessionExpired(session, now) {
+		delete(h.sessions, sessionID)
+		return nil, false
+	}
+	session.LastSeenAt = now
 	return session, true
 }
 
@@ -337,6 +366,26 @@ func (h *httpHandler) markSessionInitialized(r *http.Request) {
 		session.Initialized = true
 		session.LastSeenAt = time.Now().UTC()
 	}
+}
+
+func (h *httpHandler) cleanupExpiredSessions(now time.Time) {
+	if h == nil || h.sessionTTL <= 0 {
+		return
+	}
+	h.sessionMu.Lock()
+	defer h.sessionMu.Unlock()
+	for id, session := range h.sessions {
+		if h.sessionExpired(session, now) {
+			delete(h.sessions, id)
+		}
+	}
+}
+
+func (h *httpHandler) sessionExpired(session *SessionInfo, now time.Time) bool {
+	if h == nil || h.sessionTTL <= 0 || session == nil || session.LastSeenAt.IsZero() {
+		return false
+	}
+	return now.Sub(session.LastSeenAt) > h.sessionTTL
 }
 
 func (h *httpHandler) wwwAuthenticate(r *http.Request) string {
@@ -480,6 +529,25 @@ func accepts(r *http.Request, mediaType string) bool {
 	return false
 }
 
+func parseLastEventID(value string) (uint64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	id, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
+func maxUint64(left, right uint64) uint64 {
+	if left > right {
+		return left
+	}
+	return right
+}
+
 func cleanStrings(values []string) []string {
 	cleaned := make([]string, 0, len(values))
 	for _, value := range values {
@@ -533,6 +601,9 @@ type RemoteClient struct {
 	cacheMu      sync.RWMutex
 	cachedTools  []tool.Definition
 	cacheExpires time.Time
+
+	notificationMu          sync.Mutex
+	lastNotificationEventID string
 }
 
 type NotificationHandler func(Notification)
@@ -780,6 +851,9 @@ func (c *RemoteClient) watchNotificationsOnce(ctx context.Context, handler Notif
 		return fmt.Errorf("create mcp notification stream request: %w", err)
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	if lastID := c.lastEventID(); lastID != "" {
+		req.Header.Set("Last-Event-ID", lastID)
+	}
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
@@ -805,7 +879,7 @@ func (c *RemoteClient) watchNotificationsOnce(ctx context.Context, handler Notif
 	if mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); mediaType != "text/event-stream" {
 		return fmt.Errorf("mcp notification stream returned content-type %q", resp.Header.Get("Content-Type"))
 	}
-	return readSSENotifications(body, handler)
+	return readSSENotifications(body, handler, c.storeLastEventID)
 }
 
 func (c *RemoteClient) rpcOnce(ctx context.Context, method string, params any, result any) error {
@@ -965,6 +1039,26 @@ func (c *RemoteClient) clearToolDefinitions() {
 	defer c.cacheMu.Unlock()
 	c.cachedTools = nil
 	c.cacheExpires = time.Time{}
+}
+
+func (c *RemoteClient) ClearToolDefinitions() {
+	c.clearToolDefinitions()
+}
+
+func (c *RemoteClient) lastEventID() string {
+	c.notificationMu.Lock()
+	defer c.notificationMu.Unlock()
+	return c.lastNotificationEventID
+}
+
+func (c *RemoteClient) storeLastEventID(id string) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return
+	}
+	c.notificationMu.Lock()
+	c.lastNotificationEventID = id
+	c.notificationMu.Unlock()
 }
 
 func definitionsFromMCPTools(values []Tool) []tool.Definition {
@@ -1140,14 +1234,16 @@ func decodeSSERPCResponse(body io.Reader) (rpcResponse, error) {
 	return rpcResponse{}, errors.New("mcp SSE response did not contain JSON-RPC result")
 }
 
-func readSSENotifications(body io.Reader, handler NotificationHandler) error {
+func readSSENotifications(body io.Reader, handler NotificationHandler, eventIDHandler func(string)) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxRPCBodyBytes)
 	var data strings.Builder
+	var eventID string
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
 			if data.Len() == 0 {
+				eventID = ""
 				continue
 			}
 			var request rpcRequest
@@ -1159,9 +1255,17 @@ func readSSENotifications(body io.Reader, handler NotificationHandler) error {
 				if len(request.Params) > 0 {
 					params = json.RawMessage(append([]byte(nil), request.Params...))
 				}
+				if eventIDHandler != nil {
+					eventIDHandler(eventID)
+				}
 				handler(Notification{Method: request.Method, Params: params})
 			}
 			data.Reset()
+			eventID = ""
+			continue
+		}
+		if strings.HasPrefix(line, "id:") {
+			eventID = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
 			continue
 		}
 		if strings.HasPrefix(line, "data:") {

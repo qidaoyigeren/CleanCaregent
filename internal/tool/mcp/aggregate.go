@@ -60,6 +60,7 @@ func (c *AggregateClient) ListTools(ctx context.Context) ([]tool.Definition, err
 	}
 	result := make([]tool.Definition, 0)
 	targets := make(map[string]aggregateTarget)
+	shortTargets := make(map[string]aggregateTarget)
 	prefix := len(c.clients) > 1
 	for _, entry := range c.clients {
 		definitions, err := entry.Client.ListTools(ctx)
@@ -77,7 +78,18 @@ func (c *AggregateClient) ListTools(ctx context.Context) ([]tool.Definition, err
 			}
 			definition.Name = alias
 			result = append(result, definition)
-			targets[alias] = aggregateTarget{client: entry.Client, name: remoteName}
+			target := aggregateTarget{client: entry.Client, name: remoteName}
+			targets[alias] = target
+			if _, exists := shortTargets[remoteName]; !exists {
+				shortTargets[remoteName] = target
+			}
+		}
+	}
+	if prefix {
+		for name, target := range shortTargets {
+			if _, exists := targets[name]; !exists {
+				targets[name] = target
+			}
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })

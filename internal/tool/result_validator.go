@@ -13,6 +13,7 @@ var ErrInvalidResult = errors.New("tool returned invalid result")
 // ValidateResult rejects semantically impossible or incomplete successful
 // responses before they can be used as answer evidence.
 func ValidateResult(name string, data any) error {
+	name = LogicalName(name)
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("%w: encode result: %v", ErrInvalidResult, err)

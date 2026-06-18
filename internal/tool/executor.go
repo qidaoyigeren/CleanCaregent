@@ -71,9 +71,9 @@ func (e *Executor) ListAllowed(ctx context.Context, names []string) ([]Definitio
 	if err != nil {
 		return nil, fmt.Errorf("mcp tools/list: %w", err)
 	}
-	result := make([]Definition, 0, len(names))
+	result := make([]Definition, 0, len(definitions))
 	for _, definition := range definitions {
-		if _, ok := allowed[definition.Name]; ok {
+		if _, ok := allowed[definition.Name]; ok || NameAllowed(names, definition.Name) {
 			result = append(result, definition)
 		}
 	}
@@ -91,7 +91,7 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 	defer span.End()
 	startedAt := time.Now().UTC()
 	result := Result{CallID: call.CallID, DataScope: e.dataScope, StartedAt: startedAt}
-	if !contains(allowed, call.Name) {
+	if !NameAllowed(allowed, call.Name) {
 		span.SetStatus(codes.Error, "tool not allowed")
 		return e.failAndLog(ctx, call, result, "TOOL_NOT_ALLOWED", ErrToolNotAllowed)
 	}
@@ -187,7 +187,7 @@ func (e *Executor) Execute(ctx context.Context, call Call, allowed []string) (Re
 		return executed, fmt.Errorf("execute tool %s: %w", call.Name, err)
 	}
 	resultCtx, resultSpan := otel.Tracer("clean-care-agent/tool").Start(ctx, "tool.validate_result")
-	if err := ValidateResult(call.Name, executed.Data); err != nil {
+	if err := ValidateResult(LogicalName(call.Name), executed.Data); err != nil {
 		resultSpan.RecordError(err)
 		resultSpan.SetStatus(codes.Error, err.Error())
 		resultSpan.End()
@@ -216,6 +216,11 @@ func (e *Executor) definition(ctx context.Context, name string) (Definition, boo
 	}
 	for _, definition := range definitions {
 		if definition.Name == name {
+			return definition, true, nil
+		}
+	}
+	for _, definition := range definitions {
+		if NamesMatch(name, definition.Name) {
 			return definition, true, nil
 		}
 	}
@@ -271,17 +276,12 @@ func (e *Executor) log(ctx context.Context, call Call, result Result) {
 
 func toolCallSignature(call Call) string {
 	raw, _ := json.Marshal(call.Arguments)
-	sum := sha256.Sum256(append([]byte(call.TraceID+"|"+call.Name+"|"), raw...))
+	sum := sha256.Sum256(append([]byte(call.TraceID+"|"+LogicalName(call.Name)+"|"), raw...))
 	return hex.EncodeToString(sum[:])
 }
 
 func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return NameAllowed(values, target)
 }
 
 func sortDefinitions(definitions []Definition) {

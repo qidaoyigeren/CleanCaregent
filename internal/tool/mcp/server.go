@@ -72,16 +72,20 @@ type Server struct {
 	resources map[string]staticResource
 	prompts   map[string]staticPrompt
 
-	notificationMu sync.RWMutex
-	subscribers    map[chan Notification]struct{}
+	notificationMu      sync.RWMutex
+	subscribers         map[chan NotificationEvent]struct{}
+	nextNotificationID  uint64
+	notificationHistory []NotificationEvent
 }
+
+const notificationHistoryLimit = 256
 
 func NewServer(values ...tool.Tool) (*Server, error) {
 	server := &Server{
 		tools:       make(map[string]tool.Tool, len(values)),
 		resources:   make(map[string]staticResource),
 		prompts:     make(map[string]staticPrompt),
-		subscribers: make(map[chan Notification]struct{}),
+		subscribers: make(map[chan NotificationEvent]struct{}),
 	}
 	for _, value := range values {
 		if err := server.AddTool(value); err != nil {
@@ -282,8 +286,8 @@ func (s *Server) GetPrompt(_ context.Context, name string) (GetPromptResult, err
 	return value.result, nil
 }
 
-func (s *Server) SubscribeNotifications() (<-chan Notification, func()) {
-	ch := make(chan Notification, 16)
+func (s *Server) SubscribeNotifications() (<-chan NotificationEvent, func()) {
+	ch := make(chan NotificationEvent, 16)
 	s.notificationMu.Lock()
 	s.subscribers[ch] = struct{}{}
 	s.notificationMu.Unlock()
@@ -298,15 +302,37 @@ func (s *Server) SubscribeNotifications() (<-chan Notification, func()) {
 	return ch, cancel
 }
 
-func (s *Server) publish(method string, params any) {
+func (s *Server) ReplayNotifications(afterID uint64) []NotificationEvent {
 	s.notificationMu.RLock()
 	defer s.notificationMu.RUnlock()
+	result := make([]NotificationEvent, 0, len(s.notificationHistory))
+	for _, event := range s.notificationHistory {
+		if event.ID > afterID {
+			result = append(result, event)
+		}
+	}
+	return result
+}
+
+func (s *Server) publish(method string, params any) {
+	s.notificationMu.Lock()
+	s.nextNotificationID++
+	event := NotificationEvent{
+		ID:           s.nextNotificationID,
+		Notification: Notification{Method: method, Params: params},
+	}
+	s.notificationHistory = append(s.notificationHistory, event)
+	if len(s.notificationHistory) > notificationHistoryLimit {
+		copy(s.notificationHistory, s.notificationHistory[len(s.notificationHistory)-notificationHistoryLimit:])
+		s.notificationHistory = s.notificationHistory[:notificationHistoryLimit]
+	}
 	for ch := range s.subscribers {
 		select {
-		case ch <- Notification{Method: method, Params: params}:
+		case ch <- event:
 		default:
 		}
 	}
+	s.notificationMu.Unlock()
 }
 
 type staticResource struct {

@@ -111,6 +111,60 @@ func TestExecutorWhitelistAndRepeatedCall(t *testing.T) {
 	}
 }
 
+func TestExecutorAllowsAggregatedToolByLogicalWhitelist(t *testing.T) {
+	client := newFakeMCPClient(fakeTool{
+		name: "primary/price_query",
+		data: map[string]any{"items": []any{map[string]any{
+			"sku_code":                    "SKU-T20",
+			"model":                       "T20",
+			"list_price_cents":            399900,
+			"current_price_cents":         359900,
+			"estimated_final_price_cents": 359900,
+			"currency":                    "CNY",
+		}}},
+	})
+	executor := NewExecutor(client, nil, time.Second)
+
+	definitions, err := executor.ListAllowed(context.Background(), []string{"price_query"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(definitions) != 1 || definitions[0].Name != "primary/price_query" {
+		t.Fatalf("definitions = %#v", definitions)
+	}
+
+	result, err := executor.Execute(context.Background(), Call{
+		TraceID: "tr_aggregate",
+		CallID:  "call_aggregate",
+		Name:    "primary/price_query",
+	}, []string{"price_query"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Success {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestToolCallSignatureUsesLogicalToolName(t *testing.T) {
+	shortName := Call{
+		TraceID:   "tr_aggregate",
+		Name:      "price_query",
+		Arguments: map[string]any{"product_refs": []any{"T20"}},
+	}
+	aggregatedName := shortName
+	aggregatedName.Name = "primary/price_query"
+	if toolCallSignature(shortName) != toolCallSignature(aggregatedName) {
+		t.Fatalf("logical tool aliases should share repeated-call signature")
+	}
+
+	changedArgs := aggregatedName
+	changedArgs.Arguments = map[string]any{"product_refs": []any{"P400"}}
+	if toolCallSignature(shortName) == toolCallSignature(changedArgs) {
+		t.Fatalf("different arguments should not share repeated-call signature")
+	}
+}
+
 func TestExecutorAnnotatesConfiguredDataScope(t *testing.T) {
 	executor := NewExecutor(newFakeMCPClient(fakeTool{name: "price_query"}), nil, time.Second).WithDataScope("sandbox")
 	result, err := executor.Execute(context.Background(), Call{
