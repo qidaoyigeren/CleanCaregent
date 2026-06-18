@@ -268,9 +268,12 @@ func (r *Runner) runCase(ctx context.Context, userID string, evalCase Case) Case
 	if err != nil {
 		return failedCase(evalCase, "", "create_conversation", startedAt, err)
 	}
-	askResult, err := r.conversations.Ask(ctx, userID, conversation.ID, evalCase.Query, nil)
-	if err != nil {
-		return failedCase(evalCase, "", "agent_execution", startedAt, err)
+	var askResult service.AskResult
+	for _, turn := range evalCase.ConversationTurns() {
+		askResult, err = r.conversations.Ask(ctx, userID, conversation.ID, turn, nil)
+		if err != nil {
+			return failedCase(evalCase, "", "agent_execution", startedAt, err)
+		}
 	}
 	traceRecord, err := r.traces.Get(ctx, askResult.Message.TraceID)
 	if err != nil {
@@ -368,7 +371,7 @@ func (r *Runner) runCaseWithoutTrace(
 	askResult service.AskResult,
 	startedAt time.Time,
 ) CaseResult {
-	route, err := r.router.Route(ctx, intent.RouteRequest{Query: evalCase.Query})
+	route, err := r.router.Route(ctx, intent.RouteRequest{Query: evalCase.EvaluationQuery()})
 	if err != nil {
 		return failedCase(evalCase, "", "intent_route", startedAt, err)
 	}
@@ -377,7 +380,7 @@ func (r *Runner) runCaseWithoutTrace(
 		Answer:     askResult.Result.Answer,
 		ToolParams: map[string]any{},
 		LatencyMS:  time.Since(startedAt).Milliseconds(),
-		TokenCount: estimateTokens(evalCase.Query + askResult.Result.Answer),
+		TokenCount: estimateTokens(evalCase.EvaluationQuery() + askResult.Result.Answer),
 		StepCount:  1,
 	}
 	for _, evidence := range askResult.Result.Evidences {

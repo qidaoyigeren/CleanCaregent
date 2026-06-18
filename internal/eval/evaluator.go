@@ -1,10 +1,14 @@
 package eval
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 type Case struct {
 	CaseID              string         `json:"case_id"`
 	Query               string         `json:"query"`
+	Turns               []string       `json:"turns,omitempty"`
 	Intent              string         `json:"intent"`
 	Difficulty          string         `json:"difficulty"`
 	ExpectedDocuments   []string       `json:"expected_docs"`
@@ -15,6 +19,27 @@ type Case struct {
 	ShouldReject        bool           `json:"should_reject"`
 	ExpectedEvidenceIDs []string       `json:"expected_evidence_ids"`
 	Tags                []string       `json:"tags"`
+}
+
+func (c Case) ConversationTurns() []string {
+	if len(c.Turns) == 0 {
+		return []string{c.Query}
+	}
+	turns := make([]string, 0, len(c.Turns))
+	for _, turn := range c.Turns {
+		if turn = strings.TrimSpace(turn); turn != "" {
+			turns = append(turns, turn)
+		}
+	}
+	if len(turns) == 0 {
+		return []string{c.Query}
+	}
+	return turns
+}
+
+func (c Case) EvaluationQuery() string {
+	turns := c.ConversationTurns()
+	return turns[len(turns)-1]
 }
 
 type AgentOutput struct {

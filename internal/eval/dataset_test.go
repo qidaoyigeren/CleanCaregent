@@ -55,3 +55,32 @@ func TestDefaultCasesDistribution(t *testing.T) {
 		t.Fatalf("colloquial cases = %d, want at least 130", colloquial)
 	}
 }
+
+func TestCaseConversationTurnsFallsBackToSingleQuery(t *testing.T) {
+	item := Case{Query: "T20 吸力多大"}
+	turns := item.ConversationTurns()
+	if len(turns) != 1 || turns[0] != item.Query {
+		t.Fatalf("turns = %#v", turns)
+	}
+	if item.EvaluationQuery() != item.Query {
+		t.Fatalf("evaluation query = %q", item.EvaluationQuery())
+	}
+}
+
+func TestCaseConversationTurnsUsesFinalTurnForEvaluation(t *testing.T) {
+	item := Case{
+		Query: "扫地机器人",
+		Turns: []string{
+			"家庭地面，100平",
+			"预算5000",
+			"扫地机器人",
+		},
+	}
+	turns := item.ConversationTurns()
+	if len(turns) != 3 {
+		t.Fatalf("turns = %#v", turns)
+	}
+	if item.EvaluationQuery() != "扫地机器人" {
+		t.Fatalf("evaluation query = %q", item.EvaluationQuery())
+	}
+}

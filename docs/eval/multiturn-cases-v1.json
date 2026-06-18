@@ -1,0 +1,402 @@
+[
+  {
+    "case_id": "MT-001",
+    "turns": ["家庭地面，100平", "预算5000", "扫地机器人"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "100平", "budget": "5000"},
+    "required_query_terms": ["扫地机器人", "100平", "5000"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型", "请提供房屋面积", "无法直接为您推荐具体型号"]
+  },
+  {
+    "case_id": "MT-002",
+    "turns": ["家里120平，主要做地面清洁", "养猫，还有短毛地毯", "预算6000，哪款适合"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "120平", "budget": "6000", "pets": "true", "has_carpet": "true"},
+    "required_query_terms": ["扫地机器人", "120平", "6000", "宠物毛发", "地毯"],
+    "forbidden_answer_terms": ["未提供房屋面积", "预算范围是多少"]
+  },
+  {
+    "case_id": "MT-003",
+    "turns": ["硬质地板80平", "预算3000以内", "扫拖机器人"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "80平", "budget": "3000"},
+    "required_query_terms": ["扫地机器人", "80平", "3000"],
+    "forbidden_answer_terms": ["请提供房屋面积", "无法直接为您推荐具体型号"]
+  },
+  {
+    "case_id": "MT-004",
+    "turns": ["地面清洁，150平", "预算8000", "有宠物狗毛，推荐"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "150平", "budget": "8000", "pets": "true"},
+    "required_query_terms": ["扫地机器人", "150平", "8000", "狗毛"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型", "请提供预算"]
+  },
+  {
+    "case_id": "MT-005",
+    "turns": ["我家90平，要清理家庭地面", "预算先按4000", "预算改成5000", "扫地机器人"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "90平", "budget": "5000"},
+    "required_query_terms": ["扫地机器人", "90平", "5000"],
+    "forbidden_answer_terms": ["预算范围是多少", "请提供房屋面积"]
+  },
+  {
+    "case_id": "MT-006",
+    "turns": ["家里70平硬质地板", "预算2500元", "扫地机怎么选"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "70平", "budget": "2500"},
+    "required_query_terms": ["扫地机器人", "70平", "2500"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-007",
+    "turns": ["地面清洁，110平", "有地毯", "预算4500，扫拖"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "110平", "budget": "4500", "has_carpet": "true"},
+    "required_query_terms": ["扫地机器人", "110平", "4500", "地毯"],
+    "forbidden_answer_terms": ["请提供房屋面积"]
+  },
+  {
+    "case_id": "MT-008",
+    "turns": ["扫地机器人", "房子130平", "预算5000以内"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "130平", "budget": "5000"},
+    "required_query_terms": ["扫地机器人", "130平", "5000"],
+    "forbidden_answer_terms": ["未提供房屋面积"]
+  },
+  {
+    "case_id": "MT-009",
+    "turns": ["家庭地面，60平", "预算2000", "有猫毛"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "60平", "budget": "2000", "pets": "true"},
+    "required_query_terms": ["扫地机器人", "60平", "2000", "猫毛"],
+    "forbidden_answer_terms": ["想了解关于扫地机器人的哪方面"]
+  },
+  {
+    "case_id": "MT-010",
+    "turns": ["我想看地面清洁", "面积100平", "预算3500，推荐"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "100平", "budget": "3500"},
+    "required_query_terms": ["扫地机器人", "100平", "3500"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-011",
+    "turns": ["家庭地面先按80平", "更正，实际100平", "预算5000，扫地机器人"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "100平", "budget": "5000"},
+    "required_query_terms": ["扫地机器人", "100平", "5000"],
+    "forbidden_answer_terms": ["80平", "请提供房屋面积"]
+  },
+  {
+    "case_id": "MT-012",
+    "turns": ["扫拖，140平", "有长毛毯", "预算7000"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "140平", "budget": "7000", "has_carpet": "true"},
+    "required_query_terms": ["扫地机器人", "140平", "7000", "地毯"],
+    "forbidden_answer_terms": ["预算范围是多少"]
+  },
+  {
+    "case_id": "MT-013",
+    "turns": ["家庭地面，95平", "猫毛比较多", "预算4000"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "95平", "budget": "4000", "pets": "true"},
+    "required_query_terms": ["扫地机器人", "95平", "4000", "宠物毛发"],
+    "forbidden_answer_terms": ["未提供房屋面积"]
+  },
+  {
+    "case_id": "MT-014",
+    "turns": ["地面清洁，125平", "预算5000", "短毛毯也要能处理"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "125平", "budget": "5000", "has_carpet": "true"},
+    "required_query_terms": ["扫地机器人", "125平", "5000", "地毯"],
+    "forbidden_answer_terms": ["想了解关于扫地机器人的哪方面"]
+  },
+  {
+    "case_id": "MT-015",
+    "turns": ["扫地机器人", "面积75平", "预算不超过2800"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "75平", "budget": "2800"},
+    "required_query_terms": ["扫地机器人", "75平", "2800"],
+    "forbidden_answer_terms": ["请提供预算范围"]
+  },
+  {
+    "case_id": "MT-016",
+    "turns": ["家里空气净化，90平", "预算3000", "空气净化器"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "air_purifier", "area": "90平", "budget": "3000"},
+    "required_query_terms": ["空气净化器", "90平", "3000"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型", "请提供房屋面积"]
+  },
+  {
+    "case_id": "MT-017",
+    "turns": ["卧室30平想净化空气", "预算2000元", "净化器怎么选"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "air_purifier", "area": "30平", "budget": "2000"},
+    "required_query_terms": ["空气净化器", "30平", "2000"],
+    "forbidden_answer_terms": ["预算范围是多少"]
+  },
+  {
+    "case_id": "MT-018",
+    "turns": ["客厅50平，需要净化器", "预算4000以内", "哪款适合"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "air_purifier", "area": "50平", "budget": "4000"},
+    "required_query_terms": ["空气净化器", "50平", "4000"],
+    "forbidden_answer_terms": ["未提供房屋面积"]
+  },
+  {
+    "case_id": "MT-019",
+    "turns": ["空气净化器", "家里110平", "预算6000"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "air_purifier", "area": "110平", "budget": "6000"},
+    "required_query_terms": ["空气净化器", "110平", "6000"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-020",
+    "turns": ["新房空气净化，120平", "预算5000", "净化器推荐"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "air_purifier", "area": "120平", "budget": "5000"},
+    "required_query_terms": ["空气净化器", "120平", "5000"],
+    "forbidden_answer_terms": ["请提供房屋面积"]
+  },
+  {
+    "case_id": "MT-021",
+    "turns": ["净化器先看60平", "更正是80平", "预算3000"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "air_purifier", "area": "80平", "budget": "3000"},
+    "required_query_terms": ["空气净化器", "80平", "3000"],
+    "forbidden_answer_terms": ["60平", "预算范围是多少"]
+  },
+  {
+    "case_id": "MT-022",
+    "turns": ["空气净化，40平卧室", "预算1500", "净化器"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "air_purifier", "area": "40平", "budget": "1500"},
+    "required_query_terms": ["空气净化器", "40平", "1500"],
+    "forbidden_answer_terms": ["请提供房屋面积"]
+  },
+  {
+    "case_id": "MT-023",
+    "turns": ["家里有猫，空气净化器", "面积70平", "预算3500"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "air_purifier", "area": "70平", "budget": "3500", "pets": "true"},
+    "required_query_terms": ["空气净化器", "70平", "3500", "宠物毛发"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-024",
+    "turns": ["空气净化器", "预算2500", "覆盖45平"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "air_purifier", "area": "45平", "budget": "2500"},
+    "required_query_terms": ["空气净化器", "45平", "2500"],
+    "forbidden_answer_terms": ["预算范围是多少"]
+  },
+  {
+    "case_id": "MT-025",
+    "turns": ["客厅空气净化，65平", "预算不超过3200", "推荐"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "air_purifier", "area": "65平", "budget": "3200"},
+    "required_query_terms": ["空气净化器", "65平", "3200"],
+    "forbidden_answer_terms": ["未提供房屋面积"]
+  },
+  {
+    "case_id": "MT-026",
+    "turns": ["厨房净水器", "预算2500", "净水器"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "water_purifier", "budget": "2500"},
+    "required_query_terms": ["净水器", "2500"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-027",
+    "turns": ["家里想装净水器", "预算4000以内", "哪款适合"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "water_purifier", "budget": "4000"},
+    "required_query_terms": ["净水器", "4000"],
+    "forbidden_answer_terms": ["预算范围是多少"]
+  },
+  {
+    "case_id": "MT-028",
+    "turns": ["水质净化", "预算3000元", "净水器推荐"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "water_purifier", "budget": "3000"},
+    "required_query_terms": ["净水器", "3000"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-029",
+    "turns": ["净水器", "预算先按2000", "预算改成3500"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "water_purifier", "budget": "3500"},
+    "required_query_terms": ["净水器", "3500"],
+    "forbidden_answer_terms": ["2000", "预算范围是多少"]
+  },
+  {
+    "case_id": "MT-030",
+    "turns": ["家用净水", "厨房20平", "预算5000"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "water_purifier", "area": "20平", "budget": "5000"},
+    "required_query_terms": ["净水器", "20平", "5000"],
+    "forbidden_answer_terms": ["未提供房屋面积"]
+  },
+  {
+    "case_id": "MT-031",
+    "turns": ["净水器", "预算1800", "想要省心一点"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "water_purifier", "budget": "1800"},
+    "required_query_terms": ["净水器", "1800"],
+    "forbidden_answer_terms": ["请提供预算范围"]
+  },
+  {
+    "case_id": "MT-032",
+    "turns": ["水质净化，家用", "预算6000", "推荐型号"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "water_purifier", "budget": "6000"},
+    "required_query_terms": ["净水器", "6000"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-033",
+    "turns": ["厨房净水器", "预算最多2800", "买哪款"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "water_purifier", "budget": "2800"},
+    "required_query_terms": ["净水器", "2800"],
+    "forbidden_answer_terms": ["预算范围是多少"]
+  },
+  {
+    "case_id": "MT-034",
+    "turns": ["家里水质净化", "预算4500", "净水器怎么选"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "water_purifier", "budget": "4500"},
+    "required_query_terms": ["净水器", "4500"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-035",
+    "turns": ["净水器", "厨房15平", "预算2500"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "water_purifier", "area": "15平", "budget": "2500"},
+    "required_query_terms": ["净水器", "15平", "2500"],
+    "forbidden_answer_terms": ["请提供房屋面积"]
+  },
+  {
+    "case_id": "MT-036",
+    "turns": ["北方卧室加湿，25平", "预算800", "加湿器"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "humidifier", "area": "25平", "budget": "800"},
+    "required_query_terms": ["加湿器", "25平", "800"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-037",
+    "turns": ["客厅40平要加湿", "预算1500元", "加湿器推荐"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "humidifier", "area": "40平", "budget": "1500"},
+    "required_query_terms": ["加湿器", "40平", "1500"],
+    "forbidden_answer_terms": ["请提供房屋面积"]
+  },
+  {
+    "case_id": "MT-038",
+    "turns": ["加湿器", "面积20平", "预算500"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "humidifier", "area": "20平", "budget": "500"},
+    "required_query_terms": ["加湿器", "20平", "500"],
+    "forbidden_answer_terms": ["预算范围是多少"]
+  },
+  {
+    "case_id": "MT-039",
+    "turns": ["卧室35平", "预算1000", "加湿器怎么选"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "humidifier", "area": "35平", "budget": "1000"},
+    "required_query_terms": ["加湿器", "35平", "1000"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-040",
+    "turns": ["婴儿房加湿器", "房间18平", "预算1200"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "humidifier", "area": "18平", "budget": "1200"},
+    "required_query_terms": ["加湿器", "18平", "1200"],
+    "forbidden_answer_terms": ["请提供房屋面积"]
+  },
+  {
+    "case_id": "MT-041",
+    "turns": ["加湿器先看30平", "实际是45平客厅", "预算1800"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "humidifier", "area": "45平", "budget": "1800"},
+    "required_query_terms": ["加湿器", "45平", "1800"],
+    "forbidden_answer_terms": ["30平", "预算范围是多少"]
+  },
+  {
+    "case_id": "MT-042",
+    "turns": ["北方干燥，想买加湿器", "卧室28平", "预算700"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "humidifier", "area": "28平", "budget": "700"},
+    "required_query_terms": ["加湿器", "28平", "700"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-043",
+    "turns": ["加湿器", "预算900", "覆盖30平"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "humidifier", "area": "30平", "budget": "900"},
+    "required_query_terms": ["加湿器", "30平", "900"],
+    "forbidden_answer_terms": ["预算范围是多少"]
+  },
+  {
+    "case_id": "MT-044",
+    "turns": ["客厅加湿，55平", "预算2000以内", "推荐"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "humidifier", "area": "55平", "budget": "2000"},
+    "required_query_terms": ["加湿器", "55平", "2000"],
+    "forbidden_answer_terms": ["请提供房屋面积"]
+  },
+  {
+    "case_id": "MT-045",
+    "turns": ["老人房加湿器", "面积22平", "预算600"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "humidifier", "area": "22平", "budget": "600"},
+    "required_query_terms": ["加湿器", "22平", "600"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-046",
+    "turns": ["空气净化器", "其实我想看加湿器", "卧室25平，预算900"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "humidifier", "area": "25平", "budget": "900"},
+    "required_query_terms": ["加湿器", "25平", "900"],
+    "forbidden_answer_terms": ["空气净化器 25平", "预算范围是多少"]
+  },
+  {
+    "case_id": "MT-047",
+    "turns": ["净水器", "不对，还是扫地机器人", "面积100平，预算5000"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "100平", "budget": "5000"},
+    "required_query_terms": ["扫地机器人", "100平", "5000"],
+    "forbidden_answer_terms": ["净水器 100平", "请提供房屋面积"]
+  },
+  {
+    "case_id": "MT-048",
+    "turns": ["空气净化，70平", "预算3000", "改成扫地机器人，100平"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "100平", "budget": "3000"},
+    "required_query_terms": ["扫地机器人", "100平", "3000"],
+    "forbidden_answer_terms": ["空气净化器 100平"]
+  },
+  {
+    "case_id": "MT-049",
+    "turns": ["家庭地面，85平", "预算3500", "其实还养狗"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "robot_vacuum", "area": "85平", "budget": "3500", "pets": "true"},
+    "required_query_terms": ["扫地机器人", "85平", "3500", "养狗"],
+    "forbidden_answer_terms": ["未说明具体想购买哪种类型"]
+  },
+  {
+    "case_id": "MT-050",
+    "turns": ["空气净化器，60平", "预算2500", "改预算到3500"],
+    "expected_intent": "purchase_recommendation",
+    "expected_entities": {"category": "air_purifier", "area": "60平", "budget": "3500"},
+    "required_query_terms": ["空气净化器", "60平", "3500"],
+    "forbidden_answer_terms": ["2500", "请提供房屋面积"]
+  }
+]

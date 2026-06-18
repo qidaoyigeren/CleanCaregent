@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import re
 
 
 def request_json(method, base_url, path, payload=None, timeout=60):
@@ -269,6 +270,12 @@ def parse_args():
     parser.add_argument("--run-no", default=os.environ.get("EVAL_RUN_NO", ""))
     parser.add_argument("--max-cases", type=int, default=int(os.environ.get("EVAL_MAX_CASES", "200")))
     parser.add_argument("--case-id", action="append", default=[])
+    parser.add_argument(
+        "--case-id-range",
+        action="append",
+        default=[],
+        help="Inclusive case id range such as EVAL-101:EVAL-200. Can be repeated.",
+    )
     parser.add_argument("--output", default=os.environ.get("EVAL_OUTPUT", "docs/eval/mcp-regression-report.md"))
     parser.add_argument("--json-output", default=os.environ.get("EVAL_JSON_OUTPUT", ""))
     parser.add_argument("--poll-interval", type=float, default=float(os.environ.get("EVAL_POLL_INTERVAL", "5")))
@@ -284,8 +291,32 @@ def parse_args():
     return parser.parse_args()
 
 
+def expand_case_id_ranges(ranges):
+    case_ids = []
+    pattern = re.compile(r"^([A-Za-z_-]*?)(\d+):([A-Za-z_-]*?)(\d+)$")
+    for spec in ranges:
+        spec = spec.strip()
+        if not spec:
+            continue
+        match = pattern.match(spec)
+        if not match:
+            raise ValueError(f"invalid --case-id-range {spec!r}; expected EVAL-101:EVAL-200")
+        start_prefix, start_num, end_prefix, end_num = match.groups()
+        if end_prefix and end_prefix != start_prefix:
+            raise ValueError(f"range prefixes differ in {spec!r}")
+        width = max(len(start_num), len(end_num))
+        start = int(start_num)
+        end = int(end_num)
+        if end < start:
+            raise ValueError(f"range end precedes start in {spec!r}")
+        for value in range(start, end + 1):
+            case_ids.append(f"{start_prefix}{value:0{width}d}")
+    return case_ids
+
+
 def main():
     args = parse_args()
+    args.case_id.extend(expand_case_id_ranges(args.case_id_range))
     if args.run_no:
         run_no = args.run_no
     else:

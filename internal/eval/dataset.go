@@ -3,6 +3,7 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	evaldata "CleanCaregent/docs/eval"
 )
@@ -29,6 +30,11 @@ func validateCases(cases []Case) error {
 		if item.CaseID == "" || item.Query == "" || item.Intent == "" ||
 			item.Difficulty == "" || item.StandardAnswer == "" {
 			return fmt.Errorf("evaluation case at index %d is missing required fields", index)
+		}
+		for turnIndex, turn := range item.Turns {
+			if strings.TrimSpace(turn) == "" {
+				return fmt.Errorf("evaluation case %s has blank turn at index %d", item.CaseID, turnIndex)
+			}
 		}
 		if _, exists := seen[item.CaseID]; exists {
 			return fmt.Errorf("evaluation dataset contains duplicate case_id %q", item.CaseID)
