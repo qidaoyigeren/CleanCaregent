@@ -152,12 +152,230 @@ func NewDefaultEngine() *Engine {
 			SafetyLevel:   SafetyLow,
 			EvidenceDocID: "kb_fault_x20_tangle",
 		},
+		{
+			ID:            "p400_noise_filter",
+			ProductModel:  "P400",
+			Symptom:       "异响",
+			Question:      "滤芯塑封是否已拆除，并且进出风口没有被遮挡？",
+			Guidance:      "请先断电，重新检查滤芯安装方向、塑封膜和进出风口，不要拆电机仓。",
+			YesNext:       "p400_noise_service",
+			NoNext:        "p400_noise_fix",
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_p400_noise",
+		},
+		{
+			ID:            "p400_noise_fix",
+			ProductModel:  "P400",
+			Symptom:       "异响",
+			Resolution:    "先拆除滤芯塑封、按箭头方向复装滤芯，并清理进出风口遮挡物；复装后短时试机。",
+			Terminal:      true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_p400_noise",
+		},
+		{
+			ID:            "p400_noise_service",
+			ProductModel:  "P400",
+			Symptom:       "异响",
+			Resolution:    "滤芯和风道已排除后仍持续异响，可能涉及风机或电机部件。请停止使用并联系售后检测，不要自行拆机。",
+			Terminal:      true,
+			NeedHuman:     true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_p400_noise",
+		},
+		{
+			ID:            "p500_sensor_clean",
+			ProductModel:  "P500",
+			Symptom:       "传感器异常",
+			Question:      "传感器窗口是否已断电清洁并重启，数值仍然不变吗？",
+			Guidance:      "请用干燥软布清洁传感器窗口，重启后观察 PM2.5 数值是否恢复变化。",
+			YesNext:       "p500_sensor_service",
+			NoNext:        "p500_sensor_fix",
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_p500_sensor",
+		},
+		{
+			ID:            "p500_sensor_fix",
+			ProductModel:  "P500",
+			Symptom:       "传感器异常",
+			Resolution:    "清洁传感器窗口并重启后继续观察；若环境变化时数值恢复波动，暂不需要拆机。",
+			Terminal:      true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_p500_sensor",
+		},
+		{
+			ID:            "p500_sensor_service",
+			ProductModel:  "P500",
+			Symptom:       "传感器异常",
+			Resolution:    "清洁传感器窗口并重启后数值仍固定异常，可能涉及传感器模块。请记录环境、数值和错误码，联系售后检测，不要拆机。",
+			Terminal:      true,
+			NeedHuman:     true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_p500_sensor",
+		},
+		{
+			ID:            "w300_leak_stop",
+			ProductModel:  "W300",
+			Symptom:       "漏水",
+			Question:      "是否已经关闭进水阀并断开电源？",
+			Guidance:      "先关闭进水阀、断电并擦干地面积水；不要带压拆卸接头。",
+			YesNext:       "w300_leak_service",
+			NoNext:        "w300_leak_stop_now",
+			SafetyLevel:   SafetyHigh,
+			EvidenceDocID: "kb_fault_w300_leak",
+		},
+		{
+			ID:            "w300_leak_stop_now",
+			ProductModel:  "W300",
+			Symptom:       "漏水",
+			Resolution:    "请立即关闭进水阀并断开电源，擦干地面积水；不要带压拆卸接头。",
+			Terminal:      true,
+			NeedHuman:     true,
+			SafetyLevel:   SafetyHigh,
+			EvidenceDocID: "kb_fault_w300_leak",
+		},
+		{
+			ID:            "w300_leak_service",
+			ProductModel:  "W300",
+			Symptom:       "漏水",
+			Resolution:    "已关阀断电后仍滴水，需停止使用并安排售后检测；请准备订单、安装照片和漏水位置照片。",
+			Terminal:      true,
+			NeedHuman:     true,
+			SafetyLevel:   SafetyHigh,
+			EvidenceDocID: "kb_fault_w300_leak",
+		},
+		{
+			ID:            "t20_wifi_band",
+			ProductModel:  "T20",
+			Symptom:       "网络连接",
+			Question:      "手机当前是否连接 2.4GHz Wi-Fi，并且主机已重新进入配网模式？",
+			Guidance:      "T20 配网应使用 2.4GHz Wi-Fi；双频合一路由器需临时拆分频段或关闭 5GHz 后再重试。",
+			YesNext:       "t20_wifi_router",
+			NoNext:        "t20_wifi_set_band",
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_t20_wifi",
+		},
+		{
+			ID:            "t20_wifi_set_band",
+			ProductModel:  "T20",
+			Symptom:       "网络连接",
+			Resolution:    "请先把手机连到 2.4GHz Wi-Fi，并长按联网键让主机重新进入配网模式；双频合一时建议临时拆分 2.4GHz/5GHz。",
+			Terminal:      true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_t20_wifi",
+		},
+		{
+			ID:            "t20_wifi_router",
+			ProductModel:  "T20",
+			Symptom:       "网络连接",
+			Resolution:    "若 2.4GHz 和配网模式已确认仍失败，请检查路由器 AP 隔离、黑名单和 App 错误码，再联系售后。",
+			Terminal:      true,
+			NeedHuman:     true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_t20_wifi",
+		},
+		{
+			ID:            "x20_app_region",
+			ProductModel:  "X20 Pro",
+			Symptom:       "App配对",
+			Question:      "账号地区是否与设备销售地区一致，并且 App 已允许蓝牙和定位权限？",
+			Guidance:      "建议顺序：先核对账号地区，再开启蓝牙/定位权限，最后重新进入配网模式。",
+			YesNext:       "x20_app_service",
+			NoNext:        "x20_app_fix",
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_x20_app_pair",
+		},
+		{
+			ID:            "x20_app_fix",
+			ProductModel:  "X20 Pro",
+			Symptom:       "App配对",
+			Resolution:    "请按账号地区、蓝牙/定位权限、重新进入配网模式的顺序排查；不要反复绑定同一失败流程。",
+			Terminal:      true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_x20_app_pair",
+		},
+		{
+			ID:            "x20_app_service",
+			ProductModel:  "X20 Pro",
+			Symptom:       "App配对",
+			Resolution:    "账号地区、权限和配网模式都确认后仍失败，请记录 App 错误码并联系售后。",
+			Terminal:      true,
+			NeedHuman:     true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_x20_app_pair",
+		},
+		{
+			ID:            "r20_noise_check",
+			ProductModel:  "R20",
+			Symptom:       "异响",
+			Question:      "是否已经关机检查主刷、边刷、万向轮和轴端毛发？",
+			Guidance:      "请关机后清理主刷、边刷和万向轮异物；若是持续金属摩擦声，不要继续长时间试跑。",
+			YesNext:       "r20_noise_service",
+			NoNext:        "r20_noise_clean",
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_r20_noise",
+		},
+		{
+			ID:            "r20_noise_clean",
+			ProductModel:  "R20",
+			Symptom:       "异响",
+			Resolution:    "请先关机清理主刷、边刷、万向轮和轴端毛发，复装后只做短时验证。",
+			Terminal:      true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_r20_noise",
+		},
+		{
+			ID:            "r20_noise_service",
+			ProductModel:  "R20",
+			Symptom:       "异响",
+			Resolution:    "清理毛发后仍有持续金属摩擦声，不建议继续跑一圈；请停止使用并联系售后检测。",
+			Terminal:      true,
+			NeedHuman:     true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_r20_noise",
+		},
+		{
+			ID:            "h200_runtime_check",
+			ProductModel:  "H200",
+			Symptom:       "续航下降",
+			Question:      "当前目标湿度、档位和水箱水位是否正常？是否发现漏水？",
+			Guidance:      "先核对目标湿度和档位，再检查水箱实际容量、漏水和雾化组件清洁状态。",
+			YesNext:       "h200_runtime_service",
+			NoNext:        "h200_runtime_fix",
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_h200_runtime",
+		},
+		{
+			ID:            "h200_runtime_fix",
+			ProductModel:  "H200",
+			Symptom:       "续航下降",
+			Resolution:    "请先降低不必要的高档位，核对水箱水位并清洁雾化组件；记录满水后的实际运行时长。",
+			Terminal:      true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_h200_runtime",
+		},
+		{
+			ID:            "h200_runtime_service",
+			ProductModel:  "H200",
+			Symptom:       "续航下降",
+			Resolution:    "档位、水箱和雾化组件都排除后仍续航明显变短，请记录运行时长并联系售后核验保修。",
+			Terminal:      true,
+			NeedHuman:     true,
+			SafetyLevel:   SafetyLow,
+			EvidenceDocID: "kb_fault_h200_runtime",
+		},
 	}
 	engine := &Engine{
 		nodes: make(map[string]Node, len(nodes)),
 		roots: map[string]string{
-			rootKey("T20", "无法充电"):     "t20_charge_power",
-			rootKey("X20 Pro", "滚刷缠绕"): "x20_tangle_poweroff",
+			rootKey("T20", "无法充电"):      "t20_charge_power",
+			rootKey("X20 Pro", "滚刷缠绕"):  "x20_tangle_poweroff",
+			rootKey("P400", "异响"):       "p400_noise_filter",
+			rootKey("P500", "传感器异常"):    "p500_sensor_clean",
+			rootKey("W300", "漏水"):       "w300_leak_stop",
+			rootKey("T20", "网络连接"):      "t20_wifi_band",
+			rootKey("X20 Pro", "App配对"): "x20_app_region",
+			rootKey("R20", "异响"):        "r20_noise_check",
+			rootKey("H200", "续航下降"):     "h200_runtime_check",
 		},
 		safety: []string{"漏电", "冒烟", "烧焦味", "起火", "电线破损", "漏水"},
 	}
@@ -176,6 +394,7 @@ func (e *Engine) Start(modelName, query string) (memory.DiagnosisState, Decision
 	if rootID == "" {
 		return memory.DiagnosisState{}, Decision{}, ErrNoMatchingTree
 	}
+	rootID = e.advanceRootFromObservedSteps(rootID, query)
 	node := e.nodes[rootID]
 	state := memory.DiagnosisState{
 		ProductModel: modelName,
@@ -183,6 +402,70 @@ func (e *Engine) Start(modelName, query string) (memory.DiagnosisState, Decision
 		Answers:      map[string]string{},
 	}
 	return state, decisionFromNode(node, false), nil
+}
+
+func (e *Engine) InferModel(query string) string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	switch {
+	case containsAny(query, "pm2.5", "传感器", "数值"):
+		return "P500"
+	case containsAny(query, "双频合一", "2.4g", "5g") && containsAny(query, "配网", "连不上", "连接"):
+		return "T20"
+	case containsAny(query, "账号地区", "权限", "app") && containsAny(query, "配网", "配对", "绑定"):
+		return "X20 Pro"
+	case containsAny(query, "金属摩擦", "万向轮"):
+		return "R20"
+	case containsAny(query, "毛发", "猫毛", "滚刷", "咔咔响"):
+		return "X20 Pro"
+	case containsAny(query, "滤芯", "风口", "嗡嗡", "响"):
+		return "P400"
+	case containsAny(query, "漏水", "滴水", "关阀"):
+		return "W300"
+	case containsAny(query, "续航", "水箱", "运行时长"):
+		return "H200"
+	default:
+		return ""
+	}
+}
+
+func (e *Engine) advanceRootFromObservedSteps(rootID, query string) string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	switch rootID {
+	case "t20_charge_power":
+		if containsAny(query, "灯是亮", "灯亮", "指示灯亮", "亮的") &&
+			containsAny(query, "触点也擦", "触点擦", "清洁触点", "还是充不进", "仍然充不进") {
+			return "t20_charge_service"
+		}
+		if containsAny(query, "灯是亮", "灯亮", "指示灯亮", "亮的") {
+			return "t20_charge_contact"
+		}
+	case "x20_tangle_poweroff":
+		if containsAny(query, "毛发清完", "清完", "清理") &&
+			containsAny(query, "还异响", "还是响", "持续异响") {
+			return "x20_tangle_service"
+		}
+	case "p400_noise_filter":
+		if containsAny(query, "重装", "复装", "装过") &&
+			containsAny(query, "还", "仍然", "不行") {
+			return "p400_noise_service"
+		}
+	case "p500_sensor_clean":
+		if containsAny(query, "擦过", "清洁过") &&
+			containsAny(query, "还不变", "仍不变", "一直是0") {
+			return "p500_sensor_service"
+		}
+	case "w300_leak_stop":
+		if containsAny(query, "关了", "关阀", "断电") &&
+			containsAny(query, "还是", "仍然", "滴水") {
+			return "w300_leak_service"
+		}
+	case "r20_noise_check":
+		if containsAny(query, "清完", "清理") &&
+			containsAny(query, "金属摩擦", "还响", "仍然响") {
+			return "r20_noise_service"
+		}
+	}
+	return rootID
 }
 
 func (e *Engine) Advance(
@@ -254,8 +537,23 @@ func normalizeSymptom(query string) string {
 	switch {
 	case containsAny(query, "充不进电", "无法充电", "不能充电", "充不上电"):
 		return "无法充电"
+	case containsAny(query, "配网", "连不上", "连接", "双频合一", "2.4g", "5g"):
+		if containsAny(query, "账号地区", "权限", "app", "配对", "绑定") {
+			return "App配对"
+		}
+		return "网络连接"
 	case containsAny(query, "滚刷缠绕", "毛发缠绕", "滚刷异响", "滚刷卡住"):
 		return "滚刷缠绕"
+	case containsAny(query, "毛发", "猫毛", "咔咔响"):
+		return "滚刷缠绕"
+	case containsAny(query, "pm2.5", "pm 2.5", "传感器", "数值", "一直是0", "一直为0"):
+		return "传感器异常"
+	case containsAny(query, "漏水", "滴水", "关阀"):
+		return "漏水"
+	case containsAny(query, "续航", "运行时长", "水箱"):
+		return "续航下降"
+	case containsAny(query, "异响", "嗡嗡", "响", "金属摩擦", "万向轮"):
+		return "异响"
 	default:
 		return strings.TrimSpace(query)
 	}

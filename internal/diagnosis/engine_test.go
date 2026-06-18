@@ -39,3 +39,47 @@ func TestDiagnosisStopsOnSafetyRisk(t *testing.T) {
 		t.Fatalf("decision = %#v", decision)
 	}
 }
+
+func TestDiagnosisStartsAdditionalFaultFamilies(t *testing.T) {
+	engine := NewDefaultEngine()
+	tests := []struct {
+		model     string
+		query     string
+		wantDoc   string
+		terminal  bool
+		needHuman bool
+	}{
+		{"P400", "滤芯重装过，P400还是响，接着怎么查", "kb_fault_p400_noise", true, true},
+		{"P500", "P500显示的PM2.5一直是0，屋里明明有烟", "kb_fault_p500_sensor", false, false},
+		{"W300", "阀门关了也断电了，W300接口还是滴水", "kb_fault_w300_leak", true, true},
+		{"T20", "T20连不上家里网，路由器只有双频合一咋办", "kb_fault_t20_wifi", false, false},
+		{"X20 Pro", "X20 Pro配网一直失败，账号地区和权限我该按啥顺序查", "kb_fault_x20_app_pair", false, false},
+		{"R20", "R20清完毛还是金属摩擦声，能继续跑一圈试试吗", "kb_fault_r20_noise", true, true},
+		{"H200", "H200续航变短，按档位水箱排查", "kb_fault_h200_runtime", false, false},
+	}
+	for _, test := range tests {
+		_, decision, err := engine.Start(test.model, test.query)
+		if err != nil {
+			t.Fatalf("%s Start() error = %v", test.query, err)
+		}
+		if decision.EvidenceDocID != test.wantDoc ||
+			decision.Terminal != test.terminal ||
+			decision.NeedHuman != test.needHuman {
+			t.Fatalf("%s decision = %#v", test.query, decision)
+		}
+	}
+}
+
+func TestDiagnosisInfersModelFromSpecificSymptoms(t *testing.T) {
+	engine := NewDefaultEngine()
+	tests := map[string]string{
+		"毛发清完了还异响，下一步检查啥":     "X20 Pro",
+		"传感器窗口擦过了数值还不变，能拆机看吗": "P500",
+		"H200续航变短，水箱正常":       "H200",
+	}
+	for query, want := range tests {
+		if got := engine.InferModel(query); got != want {
+			t.Fatalf("%q inferred model = %q, want %q", query, got, want)
+		}
+	}
+}
