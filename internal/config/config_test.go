@@ -250,6 +250,46 @@ reranker:
 	}
 }
 
+func TestLoadEnvOverridesBlankAPIKeys(t *testing.T) {
+	t.Setenv("CLEANCARE_LLM_API_KEY", "llm-env-key")
+	t.Setenv("CLEANCARE_EMBEDDING_API_KEY", "embedding-env-key")
+	path := filepath.Join(t.TempDir(), "blank-keys.yaml")
+	content := []byte(`
+embedding:
+  provider: openai_compatible
+  endpoint: https://api.siliconflow.cn/v1/embeddings
+  api_key: ""
+  model: BAAI/bge-large-zh-v1.5
+reranker:
+  provider: openai_compatible
+  endpoint: https://api.siliconflow.cn/v1/rerank
+  api_key: ""
+  model: BAAI/bge-reranker-v2-m3
+llm:
+  provider: openai_compatible
+  endpoint: https://api.deepseek.com/v1/chat/completions
+  api_key: ""
+  model: deepseek-chat
+`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LLM.APIKey != "llm-env-key" {
+		t.Fatalf("llm api key = %q, want env override", cfg.LLM.APIKey)
+	}
+	if cfg.Embedding.APIKey != "embedding-env-key" {
+		t.Fatalf("embedding api key = %q, want env override", cfg.Embedding.APIKey)
+	}
+	if cfg.Reranker.APIKey != "embedding-env-key" {
+		t.Fatalf("reranker api key = %q, want inherited embedding key", cfg.Reranker.APIKey)
+	}
+}
+
 func TestLoadDoesNotShareProviderKeyAcrossHosts(t *testing.T) {
 	t.Setenv("CLEANCARE_EMBEDDING_API_KEY", "embedding-only-key")
 	t.Setenv("CLEANCARE_RERANKER_API_KEY", "")

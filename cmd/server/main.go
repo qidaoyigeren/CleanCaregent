@@ -654,6 +654,7 @@ func buildSingleToolClient(
 			zap.String("endpoint", firstNonEmpty(serverConfig.Endpoint, base.Endpoint)),
 			zap.Int("tool_count", len(definitions)),
 		)
+		startRemoteNotificationWatcher(ctx, client, logger, firstNonEmpty(serverConfig.Name, "default"))
 		return client, nil
 	case "stdio":
 		client, err := toolmcp.NewStdioClient(toolmcp.StdioClientConfig{
@@ -680,6 +681,40 @@ func buildSingleToolClient(
 	default:
 		return nil, fmt.Errorf("unsupported mcp transport %q", transport)
 	}
+}
+
+func startRemoteNotificationWatcher(
+	ctx context.Context,
+	client *toolmcp.RemoteClient,
+	logger *zap.Logger,
+	serverName string,
+) {
+	if client == nil {
+		return
+	}
+	go func() {
+		err := client.WatchNotifications(ctx, func(notification toolmcp.Notification) {
+			switch notification.Method {
+			case "notifications/tools/list_changed":
+				client.ClearToolDefinitions()
+				logger.Info("mcp tools/list cache invalidated",
+					zap.String("server", serverName),
+					zap.String("notification", notification.Method),
+				)
+			default:
+				logger.Debug("mcp notification received",
+					zap.String("server", serverName),
+					zap.String("notification", notification.Method),
+				)
+			}
+		})
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			logger.Warn("mcp notification watcher stopped",
+				zap.String("server", serverName),
+				zap.Error(err),
+			)
+		}
+	}()
 }
 
 func firstNonEmpty(values ...string) string {

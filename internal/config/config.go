@@ -309,6 +309,7 @@ func Load(path string) (Config, error) {
 	v.SetEnvPrefix("CLEANCARE")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
+	bindEnvOverrides(v)
 
 	if path == "" {
 		path = strings.TrimSpace(os.Getenv("CLEANCARE_CONFIG_FILE"))
@@ -339,6 +340,24 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func bindEnvOverrides(v *viper.Viper) {
+	for _, key := range []string{
+		"auth.admin_api_key",
+		"auth.jwt_secret",
+		"mysql.dsn",
+		"redis.address",
+		"redis.password",
+		"qdrant.api_key",
+		"embedding.api_key",
+		"reranker.api_key",
+		"llm.api_key",
+		"tool.mcp.api_key",
+		"tool.mcp.server_api_key",
+	} {
+		_ = v.BindEnv(key)
+	}
 }
 
 func inheritSameProviderCredentials(cfg *Config) {
