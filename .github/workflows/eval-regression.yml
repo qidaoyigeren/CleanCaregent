@@ -1,0 +1,69 @@
+name: eval-regression
+
+on:
+  workflow_dispatch:
+    inputs:
+      system_version:
+        description: System version label for the eval run
+        required: false
+        default: agentic-mcp-http-manual
+      max_cases:
+        description: Number of eval cases to run
+        required: false
+        default: "200"
+  schedule:
+    - cron: "0 20 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  eval-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: cleancare
+          MYSQL_USER: cleancare
+          MYSQL_PASSWORD: cleancare
+          MYSQL_ROOT_PASSWORD: root-cleancare
+          TZ: UTC
+        ports:
+          - 13306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ucleancare -pcleancare"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run MCP eval regression
+        shell: bash
+        run: |
+          system_version="${{ github.event.inputs.system_version }}"
+          max_cases="${{ github.event.inputs.max_cases }}"
+          if [[ -z "$system_version" ]]; then
+            system_version="agentic-mcp-http-${GITHUB_RUN_ID}"
+          fi
+          if [[ -z "$max_cases" ]]; then
+            max_cases="200"
+          fi
+          E2E_RUN_EVAL=true \
+          E2E_EVAL_SYSTEM_VERSION="$system_version" \
+          E2E_EVAL_MAX_CASES="$max_cases" \
+          bash scripts/e2e-agentic-mcp.sh
+      - name: Upload eval artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-eval-regression
+          path: |
+            .e2e/
+            docs/eval/mcp-regression-report.md
+          if-no-files-found: ignore

@@ -105,6 +105,8 @@ func isClarification(answer string) bool {
 	prefix := firstRunes(answer, 160)
 	return strings.HasPrefix(answer, "请补充") ||
 		strings.HasPrefix(answer, "请提供") ||
+		strings.HasPrefix(answer, "请问您") ||
+		strings.HasPrefix(answer, "您是想") ||
 		strings.HasPrefix(answer, "需要您补充") ||
 		strings.HasPrefix(answer, "为了继续判断，请") ||
 		strings.HasPrefix(answer, "当前信息不足") ||

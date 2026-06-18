@@ -56,6 +56,22 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     needs: [backend, frontend, container]
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: cleancare
+          MYSQL_USER: cleancare
+          MYSQL_PASSWORD: cleancare
+          MYSQL_ROOT_PASSWORD: root-cleancare
+          TZ: UTC
+        ports:
+          - 13306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ucleancare -pcleancare"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

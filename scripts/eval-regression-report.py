@@ -3,6 +3,8 @@ import argparse
 import datetime as dt
 import json
 import os
+import socket
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -29,23 +31,51 @@ def request_json(method, base_url, path, payload=None, timeout=60):
         raise RuntimeError(f"{method} {path} returned {error.code}: {body}") from error
 
 
-def wait_for_run(base_url, run_no, poll_interval, timeout_seconds):
+def wait_for_run(base_url, run_no, poll_interval, timeout_seconds, request_timeout):
     deadline = time.monotonic() + timeout_seconds
     last = None
+    last_error = None
     while time.monotonic() < deadline:
-        _, envelope = request_json(
-            "GET",
-            base_url,
-            f"/api/v1/admin/eval/runs/{run_no}?include_failures=true",
-            timeout=60,
-        )
+        try:
+            _, envelope = request_json(
+                "GET",
+                base_url,
+                f"/api/v1/admin/eval/runs/{run_no}?include_failures=false",
+                timeout=request_timeout,
+            )
+            last_error = None
+        except (TimeoutError, urllib.error.URLError, ConnectionError, socket.timeout, OSError, RuntimeError) as error:
+            last_error = error
+            time.sleep(poll_interval)
+            continue
         if envelope.get("code") != "OK":
             raise RuntimeError(f"eval query failed: {envelope}")
         last = envelope["data"]
         if last.get("status") in {"completed", "failed"}:
             return last
         time.sleep(poll_interval)
-    raise TimeoutError(f"timed out waiting for eval run {run_no}; last={last}")
+    raise TimeoutError(f"timed out waiting for eval run {run_no}; last={last}; last_error={last_error}")
+
+
+def fetch_failures(base_url, run_no, request_timeout, retries):
+    last_error = None
+    for attempt in range(max(1, retries)):
+        try:
+            _, envelope = request_json(
+                "GET",
+                base_url,
+                f"/api/v1/admin/eval/runs/{run_no}?include_failures=true",
+                timeout=request_timeout,
+            )
+            if envelope.get("code") != "OK":
+                raise RuntimeError(f"eval query failed: {envelope}")
+            return envelope["data"]
+        except (TimeoutError, urllib.error.URLError, ConnectionError, socket.timeout, OSError, RuntimeError) as error:
+            last_error = error
+            if attempt + 1 < max(1, retries):
+                time.sleep(2)
+    print(f"warning: failed to fetch eval failure details for {run_no}: {last_error}", file=sys.stderr)
+    return None
 
 
 def number(value, default=0):
@@ -236,12 +266,16 @@ def parse_args():
         "--system-version",
         default=os.environ.get("SYSTEM_VERSION", f"agentic-mcp-http-{today}"),
     )
+    parser.add_argument("--run-no", default=os.environ.get("EVAL_RUN_NO", ""))
     parser.add_argument("--max-cases", type=int, default=int(os.environ.get("EVAL_MAX_CASES", "200")))
     parser.add_argument("--case-id", action="append", default=[])
     parser.add_argument("--output", default=os.environ.get("EVAL_OUTPUT", "docs/eval/mcp-regression-report.md"))
     parser.add_argument("--json-output", default=os.environ.get("EVAL_JSON_OUTPUT", ""))
     parser.add_argument("--poll-interval", type=float, default=float(os.environ.get("EVAL_POLL_INTERVAL", "5")))
     parser.add_argument("--timeout-seconds", type=int, default=int(os.environ.get("EVAL_TIMEOUT_SECONDS", "7200")))
+    parser.add_argument("--poll-request-timeout", type=float, default=float(os.environ.get("EVAL_POLL_REQUEST_TIMEOUT", "30")))
+    parser.add_argument("--result-request-timeout", type=float, default=float(os.environ.get("EVAL_RESULT_REQUEST_TIMEOUT", "180")))
+    parser.add_argument("--result-retries", type=int, default=int(os.environ.get("EVAL_RESULT_RETRIES", "2")))
     parser.add_argument("--failure-limit", type=int, default=int(os.environ.get("EVAL_FAILURE_LIMIT", "50")))
     parser.add_argument("--baseline-label", default=os.environ.get("EVAL_BASELINE_LABEL", ""))
     parser.add_argument("--baseline-pass-rate", type=float, default=env_float("EVAL_BASELINE_PASS_RATE"))
@@ -252,18 +286,25 @@ def parse_args():
 
 def main():
     args = parse_args()
-    payload = {
-        "dataset_version": args.dataset_version,
-        "system_version": args.system_version,
-        "max_cases": args.max_cases,
-    }
-    if args.case_id:
-        payload["case_ids"] = args.case_id
-    status, envelope = request_json("POST", args.base_url, "/api/v1/admin/eval/runs", payload, timeout=60)
-    if status != 202 or envelope.get("code") != "OK":
-        raise RuntimeError(f"eval start failed: {envelope}")
-    run_no = envelope["data"]["run_no"]
-    run = wait_for_run(args.base_url, run_no, args.poll_interval, args.timeout_seconds)
+    if args.run_no:
+        run_no = args.run_no
+    else:
+        payload = {
+            "dataset_version": args.dataset_version,
+            "system_version": args.system_version,
+            "max_cases": args.max_cases,
+        }
+        if args.case_id:
+            payload["case_ids"] = args.case_id
+        status, envelope = request_json("POST", args.base_url, "/api/v1/admin/eval/runs", payload, timeout=60)
+        if status != 202 or envelope.get("code") != "OK":
+            raise RuntimeError(f"eval start failed: {envelope}")
+        run_no = envelope["data"]["run_no"]
+    run = wait_for_run(args.base_url, run_no, args.poll_interval, args.timeout_seconds, args.poll_request_timeout)
+    if run.get("status") in {"completed", "failed"}:
+        detailed_run = fetch_failures(args.base_url, run_no, args.result_request_timeout, args.result_retries)
+        if detailed_run is not None:
+            run = detailed_run
     if args.json_output:
         ensure_parent(args.json_output)
         with open(args.json_output, "w", encoding="utf-8") as raw:
