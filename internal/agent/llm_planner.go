@@ -271,7 +271,7 @@ func (p *LLMPlanner) validateCompleteSteps(
 			step.Params["search_queries"] = queries
 			step.Params["doc_types"] = allowedDocTypes(value.DocTypes)
 		case ActionCallTool:
-			if !containsString(request.AllowedTools, step.ToolName) {
+			if !tool.NameAllowed(request.AllowedTools, step.ToolName) {
 				return nil, fmt.Errorf("complete plan selected non-whitelisted tool %q", step.ToolName)
 			}
 			if !toolRequestedForPlan(request, step.ToolName) {
@@ -314,7 +314,7 @@ func (p *LLMPlanner) validateCompleteSteps(
 }
 
 func toolRequestedForPlan(request PlanRequest, toolName string) bool {
-	switch toolName {
+	switch tool.LogicalName(toolName) {
 	case "price_query":
 		return request.Intent.Secondary == intent.PriceQuery ||
 			containsIntent(request.Intent.SecondaryIntents, intent.PriceQuery) ||
@@ -519,7 +519,7 @@ func (p *LLMPlanner) NextStep(
 			"thought":        llmOut.Thought,
 		}
 	case ActionCallTool:
-		if !containsString(request.AllowedTools, llmOut.ActionDetail.ToolName) {
+		if !tool.NameAllowed(request.AllowedTools, llmOut.ActionDetail.ToolName) {
 			return nil, fmt.Errorf("llm selected non-whitelisted tool %q", llmOut.ActionDetail.ToolName)
 		}
 		step.ToolName = llmOut.ActionDetail.ToolName
@@ -571,10 +571,10 @@ func (p *LLMPlanner) ValidateNextStep(
 	switch candidate.Action {
 	case ActionRetrieve, ActionReflect, ActionClarify, ActionFinish:
 	case ActionCallTool:
-		if !containsString(request.AllowedTools, candidate.ToolName) {
+		if !tool.NameAllowed(request.AllowedTools, candidate.ToolName) {
 			return fmt.Errorf("下一步选择了非白名单工具 %q", candidate.ToolName)
 		}
-		if definition, ok := p.toolDefinitions[candidate.ToolName]; ok {
+		if definition, ok := p.toolDefinition(candidate.ToolName); ok {
 			if err := tool.ValidateArguments(definition.ParamsSchema, candidate.Params); err != nil {
 				return fmt.Errorf("下一步工具参数不符合 Schema: %w", err)
 			}
@@ -817,23 +817,16 @@ func hasDependencyCycle(steps []PlanStep) bool {
 }
 
 func (p *LLMPlanner) allowedToolDefinitions(allowed []string) string {
-	definitions := make([]tool.Definition, 0, len(allowed))
-	for _, name := range allowed {
-		if definition, ok := p.toolDefinitions[name]; ok {
-			definitions = append(definitions, definition)
-			continue
-		}
-		definitions = append(definitions, tool.Definition{Name: name})
-	}
+	definitions := p.definitionsForAllowed(allowed)
 	raw, _ := json.Marshal(definitions)
 	return string(raw)
 }
 
 func (p *LLMPlanner) allowedLLMToolDefinitions(allowed []string) []llm.ToolDefinition {
-	definitions := make([]llm.ToolDefinition, 0, len(allowed))
-	for _, name := range allowed {
-		definition, ok := p.toolDefinitions[name]
-		if !ok {
+	allowedDefinitions := p.definitionsForAllowed(allowed)
+	definitions := make([]llm.ToolDefinition, 0, len(allowedDefinitions))
+	for _, definition := range allowedDefinitions {
+		if len(definition.ParamsSchema) == 0 {
 			continue
 		}
 		definitions = append(definitions, llm.ToolDefinition{
@@ -843,6 +836,58 @@ func (p *LLMPlanner) allowedLLMToolDefinitions(allowed []string) []llm.ToolDefin
 		})
 	}
 	return definitions
+}
+
+func (p *LLMPlanner) toolDefinition(name string) (tool.Definition, bool) {
+	if p == nil {
+		return tool.Definition{}, false
+	}
+	if definition, ok := p.toolDefinitions[name]; ok {
+		return definition, true
+	}
+	for _, definition := range p.toolDefinitions {
+		if tool.NamesMatch(name, definition.Name) {
+			return definition, true
+		}
+	}
+	return tool.Definition{}, false
+}
+
+func (p *LLMPlanner) definitionsForAllowed(allowed []string) []tool.Definition {
+	if p == nil {
+		return nil
+	}
+	definitions := make([]tool.Definition, 0, len(p.toolDefinitions)+len(allowed))
+	seen := make(map[string]struct{}, len(p.toolDefinitions)+len(allowed))
+	for _, allowedName := range allowed {
+		matched := false
+		if definition, ok := p.toolDefinitions[allowedName]; ok {
+			definitions = appendDefinitionOnce(definitions, seen, definition)
+			matched = true
+		}
+		for _, definition := range p.toolDefinitions {
+			if tool.NameAllowed([]string{allowedName}, definition.Name) {
+				definitions = appendDefinitionOnce(definitions, seen, definition)
+				matched = true
+			}
+		}
+		if !matched {
+			definitions = appendDefinitionOnce(definitions, seen, tool.Definition{Name: allowedName})
+		}
+	}
+	return definitions
+}
+
+func appendDefinitionOnce(
+	definitions []tool.Definition,
+	seen map[string]struct{},
+	definition tool.Definition,
+) []tool.Definition {
+	if _, ok := seen[definition.Name]; ok {
+		return definitions
+	}
+	seen[definition.Name] = struct{}{}
+	return append(definitions, definition)
 }
 
 func allowedDocTypes(values []string) []string {

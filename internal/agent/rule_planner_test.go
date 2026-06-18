@@ -210,6 +210,11 @@ func TestCompoundAfterSalesSkillCarriesTargetIntent(t *testing.T) {
 	if got := warrantyStep.Params["target_intent"]; got != string(intent.WarrantyQuery) {
 		t.Fatalf("target_intent = %#v", got)
 	}
+	for _, step := range plan.Steps[0].SubSteps {
+		if step.Action == ActionCallTool && step.ToolName == "user_purchase_history" {
+			t.Fatalf("warranty flow should own purchase-history lookup, got duplicate order substep: %#v", plan.Steps[0].SubSteps)
+		}
+	}
 }
 
 func TestCompoundComparisonDoesNotDuplicateParameterRetrieval(t *testing.T) {

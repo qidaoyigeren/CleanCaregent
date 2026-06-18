@@ -358,6 +358,29 @@ func TestAllowedToolsForRouteIncludesSecondaryIntents(t *testing.T) {
 	}
 }
 
+func TestAllowedToolsForRouteKeepsTerminalIntentsToolless(t *testing.T) {
+	tools := allowedToolsForRoute(intent.Result{
+		Secondary:        intent.OutOfScope,
+		SecondaryIntents: []intent.Type{intent.OrderQuery},
+	})
+	if len(tools) != 0 {
+		t.Fatalf("tools = %v, want no tools for out-of-scope route", tools)
+	}
+}
+
+func TestActionSignatureUsesLogicalToolName(t *testing.T) {
+	shortName := PlanStep{
+		Action:   ActionCallTool,
+		ToolName: "user_purchase_history",
+		Params:   map[string]any{"category": "air_purifier"},
+	}
+	aggregatedName := shortName
+	aggregatedName.ToolName = "primary/user_purchase_history"
+	if actionSignature(shortName) != actionSignature(aggregatedName) {
+		t.Fatalf("aggregated tool alias should share action signature")
+	}
+}
+
 func TestRuntimeTokenUsageDoesNotTreatCumulativeBillingAsContext(t *testing.T) {
 	got := runtimeTokenUsage(
 		100,

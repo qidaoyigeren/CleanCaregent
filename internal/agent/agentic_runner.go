@@ -19,6 +19,7 @@ import (
 	"CleanCaregent/internal/observability"
 	"CleanCaregent/internal/prompt"
 	"CleanCaregent/internal/rag"
+	toolpkg "CleanCaregent/internal/tool"
 	"CleanCaregent/internal/trace"
 
 	"go.opentelemetry.io/otel"
@@ -513,7 +514,7 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 			stepMetadata["output"] = map[string]any{"new_evidence_count": len(searchResults) - beforeCount}
 
 		case ActionCallTool, ActionRunSkill:
-			if planStep.Action == ActionCallTool && !containsString(toolWhitelist, planStep.ToolName) {
+			if planStep.Action == ActionCallTool && !toolpkg.NameAllowed(toolWhitelist, planStep.ToolName) {
 				stepStatus = "blocked"
 				r.appendTraceStep(ctx, request.TraceID, planStep, stepStatus, stepStartedAt, stepMetadata)
 				return Result{}, fmt.Errorf("tool %s is not allowed for intent %s", planStep.ToolName, route.Secondary)
@@ -1261,7 +1262,7 @@ func (r *AgenticRunner) executeParallelStep(
 				results[index].err = err
 			case ActionCallTool, ActionRunSkill:
 				if configured.Action == ActionCallTool &&
-					!containsString(toolWhitelist, configured.ToolName) {
+					!toolpkg.NameAllowed(toolWhitelist, configured.ToolName) {
 					results[index].err = fmt.Errorf(
 						"并行工具 %s 不允许用于意图 %s",
 						configured.ToolName,
@@ -1355,7 +1356,7 @@ func (r *AgenticRunner) executeParallelStep(
 }
 
 func isCommittedSideEffectTool(toolName string) bool {
-	return toolName == "create_after_sales_ticket"
+	return toolpkg.LogicalName(toolName) == "create_after_sales_ticket"
 }
 
 func removeStaleDynamicClaims(answer, toolName string) string {
@@ -1363,7 +1364,7 @@ func removeStaleDynamicClaims(answer, toolName string) string {
 		return answer
 	}
 	var subject string
-	switch toolName {
+	switch toolpkg.LogicalName(toolName) {
 	case "price_query":
 		subject = "价格"
 	case "inventory_check":
@@ -1677,7 +1678,7 @@ func actionSignature(step PlanStep) string {
 		"params":    step.Params,
 		"sub_steps": step.SubSteps,
 	})
-	return string(step.Action) + "|" + step.ToolName + "|" + step.SkillName + "|" + step.Query + "|" + string(raw)
+	return string(step.Action) + "|" + toolpkg.LogicalName(step.ToolName) + "|" + step.SkillName + "|" + step.Query + "|" + string(raw)
 }
 
 func allowedTools(intentType intent.Type) []string {
@@ -1706,6 +1707,10 @@ func allowedTools(intentType intent.Type) []string {
 }
 
 func allowedToolsForRoute(route intent.Result) []string {
+	switch route.Secondary {
+	case intent.Chitchat, intent.OutOfScope, intent.Clarification:
+		return nil
+	}
 	result := append([]string(nil), allowedTools(route.Secondary)...)
 	for _, secondary := range route.SecondaryIntents {
 		for _, toolName := range allowedTools(secondary) {
@@ -1831,7 +1836,7 @@ func hasToolEvidence(evidences []Evidence, toolName string) bool {
 		if evidence.Kind != "tool_result" || evidence.Metadata == nil {
 			continue
 		}
-		if name, _ := evidence.Metadata["tool_name"].(string); name == toolName {
+		if name, _ := evidence.Metadata["tool_name"].(string); toolpkg.NamesMatch(toolName, name) {
 			return true
 		}
 	}

@@ -64,6 +64,30 @@ func TestValidateNextStepChecksToolSchema(t *testing.T) {
 	}
 }
 
+func TestValidateNextStepAcceptsAggregatedToolDefinition(t *testing.T) {
+	planner := NewLLMPlanner(nil, nil, tool.Definition{
+		Name: "primary/price_query",
+		ParamsSchema: json.RawMessage(
+			`{"type":"object","required":["product_refs"],"properties":{"product_refs":{"type":"array"}}}`,
+		),
+	})
+	err := planner.ValidateNextStep(context.Background(), PlanRequest{
+		Intent:       intent.Result{Secondary: intent.PriceQuery},
+		AllowedTools: []string{"price_query"},
+	}, PlanStep{
+		Action:   ActionCallTool,
+		ToolName: "primary/price_query",
+		Params:   map[string]any{"product_refs": []string{"T20"}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitions := planner.allowedLLMToolDefinitions([]string{"price_query"})
+	if len(definitions) != 1 || definitions[0].Name != "primary/price_query" {
+		t.Fatalf("definitions = %#v", definitions)
+	}
+}
+
 func TestValidateNextStepAcceptsParallelRetrievalAndTool(t *testing.T) {
 	planner := NewLLMPlanner(nil, nil, tool.Definition{
 		Name: "price_query",

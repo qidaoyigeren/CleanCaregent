@@ -23,7 +23,7 @@ type NaiveRAGRunner struct {
 	config    NaiveRAGConfig
 }
 
-var productModelPattern = regexp.MustCompile(`(?i)\b[A-Z]+[0-9]+(?:\s+Pro)?\b`)
+var productModelPattern = regexp.MustCompile(`(?i)\b[A-Z]+[0-9]+(?:\s*Pro)?\b`)
 
 func NewNaiveRAGRunner(
 	retriever rag.Retriever,
@@ -112,7 +112,7 @@ func extractProductModels(query string) []string {
 	seen := make(map[string]struct{}, len(matches))
 	models := make([]string, 0, len(matches))
 	for _, match := range matches {
-		match = strings.Join(strings.Fields(match), " ")
+		match = normalizeProductModel(match)
 		key := strings.ToLower(match)
 		if _, ok := seen[key]; ok {
 			continue
@@ -121,4 +121,12 @@ func extractProductModels(query string) []string {
 		models = append(models, match)
 	}
 	return models
+}
+
+func normalizeProductModel(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if strings.EqualFold(strings.ReplaceAll(value, " ", ""), "X20Pro") {
+		return "X20 Pro"
+	}
+	return strings.ToUpper(value)
 }
