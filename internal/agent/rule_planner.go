@@ -219,8 +219,6 @@ func compoundPlan(request PlanRequest) []PlanStep {
 	intents := append([]intent.Type{request.Intent.Secondary}, request.Intent.SecondaryIntents...)
 	subSteps := make([]PlanStep, 0, len(intents)+1)
 	seen := map[string]struct{}{}
-	hasWarrantyFlow := request.Intent.Secondary == intent.WarrantyQuery ||
-		containsIntent(request.Intent.SecondaryIntents, intent.WarrantyQuery)
 	for _, intentType := range intents {
 		if request.Intent.Secondary == intent.PurchaseRecommendation &&
 			(intentType == intent.PriceQuery || intentType == intent.InventoryQuery) {
@@ -236,9 +234,6 @@ func compoundPlan(request PlanRequest) []PlanStep {
 		}
 		if request.Intent.Secondary == intent.CreateAfterSalesTicket &&
 			intentType == intent.Troubleshooting {
-			continue
-		}
-		if intentType == intent.OrderQuery && hasWarrantyFlow {
 			continue
 		}
 		if intentType == intent.CreateAfterSalesTicket {

@@ -1678,7 +1678,7 @@ func actionSignature(step PlanStep) string {
 		"params":    step.Params,
 		"sub_steps": step.SubSteps,
 	})
-	return string(step.Action) + "|" + toolpkg.LogicalName(step.ToolName) + "|" + step.SkillName + "|" + step.Query + "|" + string(raw)
+	return string(step.Action) + "|" + step.ToolName + "|" + step.SkillName + "|" + step.Query + "|" + string(raw)
 }
 
 func allowedTools(intentType intent.Type) []string {
@@ -1707,10 +1707,6 @@ func allowedTools(intentType intent.Type) []string {
 }
 
 func allowedToolsForRoute(route intent.Result) []string {
-	switch route.Secondary {
-	case intent.Chitchat, intent.OutOfScope, intent.Clarification:
-		return nil
-	}
 	result := append([]string(nil), allowedTools(route.Secondary)...)
 	for _, secondary := range route.SecondaryIntents {
 		for _, toolName := range allowedTools(secondary) {
