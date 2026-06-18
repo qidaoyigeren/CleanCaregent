@@ -57,6 +57,11 @@ func (r *HybridRouter) Route(ctx context.Context, request RouteRequest) (Result,
 	if ruleResult.Secondary == OutOfScope || ruleResult.Secondary == Chitchat {
 		return ruleResult, nil
 	}
+	if ruleResult.Secondary == Clarification &&
+		ruleResult.NeedClarify &&
+		ruleResult.Confidence >= 0.9 {
+		return ruleResult, nil
+	}
 
 	// If rule confidence is high enough and no clarification is needed, use rule result.
 	if ruleResult.Confidence >= r.MinRuleConfidence && !ruleResult.NeedClarify {
@@ -81,12 +86,13 @@ func (r *HybridRouter) Route(ctx context.Context, request RouteRequest) (Result,
 		return ruleResult, nil
 	}
 
-	return reconcileRuleAndLLM(ruleResult, llmResult), nil
+	return reconcileRuleAndLLM(request.Query, ruleResult, llmResult), nil
 }
 
-func reconcileRuleAndLLM(ruleResult, llmResult Result) Result {
+func reconcileRuleAndLLM(query string, ruleResult, llmResult Result) Result {
 	if ruleResult.Secondary == Clarification ||
 		len(ruleResult.RouteTrace.MatchedKeywords) == 0 {
+		llmResult.SecondaryIntents = filterNegatedSecondaryIntents(query, llmResult.SecondaryIntents)
 		return llmResult
 	}
 
@@ -106,6 +112,7 @@ func reconcileRuleAndLLM(ruleResult, llmResult Result) Result {
 		result.SecondaryIntents,
 		llmResult.SecondaryIntents...,
 	)
+	result.SecondaryIntents = filterNegatedSecondaryIntents(query, result.SecondaryIntents)
 	if llmResult.Secondary != "" &&
 		llmResult.Secondary != Clarification &&
 		llmResult.Secondary != result.Secondary {
@@ -159,7 +166,7 @@ func (r *HybridRouter) classifyWithLLM(ctx context.Context, request RouteRequest
 
 	entities := make(map[string]string)
 	if raw, ok := llmOut.Entities["models"]; ok {
-		entities["models"] = flattenStringSlice(raw)
+		entities["models"] = normalizeModelCSV(flattenStringSlice(raw))
 	}
 	if raw, ok := llmOut.Entities["categories"]; ok {
 		entities["categories"] = flattenStringSlice(raw)
@@ -168,7 +175,7 @@ func (r *HybridRouter) classifyWithLLM(ctx context.Context, request RouteRequest
 		}
 	}
 	if raw, ok := llmOut.Entities["accessory_refs"]; ok {
-		entities["accessory_refs"] = flattenStringSlice(raw)
+		entities["accessory_refs"] = normalizeAccessoryCSV(flattenStringSlice(raw))
 	}
 	if raw, ok := llmOut.Entities["order_numbers"]; ok {
 		entities["order_no"] = flattenStringSlice(raw)
@@ -184,6 +191,15 @@ func (r *HybridRouter) classifyWithLLM(ctx context.Context, request RouteRequest
 	// Merge rule entities as fallback (rule is better at regex-based model/order extraction).
 	if entities["models"] == "" && ruleResult.Entities["models"] != "" {
 		entities["models"] = ruleResult.Entities["models"]
+	}
+	if entities["accessory_refs"] == "" && ruleResult.Entities["accessory_refs"] != "" {
+		entities["accessory_refs"] = ruleResult.Entities["accessory_refs"]
+	}
+	if entities["categories"] == "" && ruleResult.Entities["categories"] != "" {
+		entities["categories"] = ruleResult.Entities["categories"]
+	}
+	if entities["category"] == "" && ruleResult.Entities["category"] != "" {
+		entities["category"] = ruleResult.Entities["category"]
 	}
 	if entities["order_no"] == "" && ruleResult.Entities["order_no"] != "" {
 		entities["order_no"] = ruleResult.Entities["order_no"]
@@ -212,6 +228,7 @@ func (r *HybridRouter) classifyWithLLM(ctx context.Context, request RouteRequest
 			normalizeIntentTypes(strings.Split(raw, ","), secondary)...,
 		)
 	}
+	secondaryIntents = filterNegatedSecondaryIntents(request.Query, secondaryIntents)
 	return Result{
 		Primary:           primary,
 		Secondary:         secondary,
@@ -230,6 +247,21 @@ func (r *HybridRouter) classifyWithLLM(ctx context.Context, request RouteRequest
 			ConfidenceBasis: fmt.Sprintf("LLM 置信度 %.2f；规则置信度 %.2f", confidence, ruleResult.Confidence),
 		},
 	}, nil
+}
+
+func filterNegatedSecondaryIntents(query string, values []Type) []Type {
+	if len(values) == 0 {
+		return values
+	}
+	lower := strings.ToLower(strings.TrimSpace(query))
+	output := values[:0]
+	for _, value := range values {
+		if value == PriceQuery && !priceRequested(lower) {
+			continue
+		}
+		output = append(output, value)
+	}
+	return output
 }
 
 func normalizePrimaryType(raw string) PrimaryType {
@@ -316,6 +348,32 @@ func flattenStringSlice(value any) string {
 		return strings.Join(v, ",")
 	}
 	return ""
+}
+
+func normalizeModelCSV(value string) string {
+	var models []string
+	for _, item := range strings.Split(value, ",") {
+		if normalized := normalizeModelName(item); normalized != "" {
+			models = append(models, normalized)
+		}
+	}
+	return strings.Join(compactStrings(models), ",")
+}
+
+func normalizeAccessoryCSV(value string) string {
+	var refs []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if accessoryPattern.MatchString(item) {
+			refs = append(refs, normalizeAccessoryRef(item))
+			continue
+		}
+		refs = append(refs, item)
+	}
+	return strings.Join(compactStrings(refs), ",")
 }
 
 func scalarString(value any) string {

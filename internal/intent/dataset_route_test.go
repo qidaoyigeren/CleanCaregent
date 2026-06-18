@@ -40,6 +40,7 @@ func TestRuleRouterCoversCanonicalEvaluationIntents(t *testing.T) {
 
 func TestReconcileRuleAndLLMKeepsExplicitBusinessIntent(t *testing.T) {
 	result := reconcileRuleAndLLM(
+		"这个多少钱",
 		Result{
 			Primary:     PrimaryPresales,
 			Secondary:   PriceQuery,
@@ -68,6 +69,7 @@ func TestReconcileRuleAndLLMKeepsExplicitBusinessIntent(t *testing.T) {
 
 func TestReconcileKeepsMandatoryTicketClarification(t *testing.T) {
 	result := reconcileRuleAndLLM(
+		"帮我建售后单",
 		Result{
 			Primary:     PrimaryAftersales,
 			Secondary:   CreateAfterSalesTicket,

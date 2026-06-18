@@ -10,7 +10,8 @@ type RuleRouter struct{}
 
 var (
 	orderNumberPattern = regexp.MustCompile(`(?i)\b(?:CC|ORDER)[0-9]{6,}\b`)
-	modelPattern       = regexp.MustCompile(`(?i)\b(?:T20|X20\s+Pro|R10|R20|P400|P500|W300|W500|H100|H200)\b`)
+	modelPattern       = regexp.MustCompile(`(?i)\b(?:T20|X20\s*Pro|R10|R20|P400|P500|W300|W500|H100|H200)\b`)
+	accessoryPattern   = regexp.MustCompile(`(?i)\b(?:F|DB|RB|C)[0-9]{2,}[A-Z0-9-]*\b`)
 )
 
 func NewRuleRouter() *RuleRouter {
@@ -59,14 +60,17 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		"漏水", "冒烟", "充不上电", "配网失败", "绑不上", "连不上", "问题仍在",
 		"下一步", "传感器异常", "数值异常", "还是0%", "咔咔响",
 		"嗡嗡响", "pm2.5一直", "金属摩擦声", "续航变短", "拆开看看",
+		"配网一直失败",
 	):
 		result.Primary, result.Secondary = PrimaryDiagnosis, Troubleshooting
 	case entities["order_no"] != "" && containsAny(lower, "出水小", "出水越来越小", "续航变短"):
 		result.Primary, result.Secondary = PrimaryDiagnosis, Troubleshooting
 	case containsAny(lower, "保修", "在保", "保修期", "过保", "延保"):
 		result.Primary, result.Secondary = PrimaryAftersales, WarrantyQuery
-	case containsAny(lower, "滤芯", "尘袋", "滚刷", "边刷", "配件") &&
-		containsAny(lower, "上周买", "之前买", "我买的", "上次买", "购买记录") &&
+	case accessoryIntentRequested(lower, entities):
+		result.Primary, result.Secondary = PrimaryPresales, AccessoryCompatibility
+	case containsAny(lower, "滤芯", "尘袋", "滚刷", "边刷", "配件", "耗材", "换芯", "替换滤芯") &&
+		containsAny(lower, "上周买", "之前买", "我买的", "上次买", "购买记录", "上礼拜", "买过") &&
 		containsAny(lower, "多少钱", "价格", "售价", "优惠", "券"):
 		result.Primary, result.Secondary = PrimaryPresales, AccessoryCompatibility
 	case containsAny(lower, "各多少钱", "价格一起查", "优惠后价格", "只查价格", "先给今天的"):
@@ -80,6 +84,16 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		entities["models"] = "W300,W500"
 	case explicitComparisonRequested(lower, entities):
 		result.Primary, result.Secondary = PrimaryPresales, ProductComparison
+	case singleModelConfigurationQuestion(lower, entities):
+		result.Primary, result.Secondary = PrimaryPresales, ProductParameter
+	case purchaseHistoryRequested(lower) && !usageInstructionRequested(lower) && !troubleshootingProcedureRequested(lower):
+		result.Primary, result.Secondary = PrimaryAftersales, OrderQuery
+	case networkBandChoiceRequested(lower):
+		result.Primary, result.Secondary = PrimaryPresales, UsageInstruction
+	case usageInstructionRequested(lower) && !troubleshootingProcedureRequested(lower):
+		result.Primary, result.Secondary = PrimaryPresales, UsageInstruction
+	case troubleshootingProcedureRequested(lower):
+		result.Primary, result.Secondary = PrimaryDiagnosis, Troubleshooting
 	case containsAny(lower,
 		"预算", "筛完", "先推荐", "满足流量后", "租房想装", "不够就换",
 		"适合北方", "合适的话", "新房刚装", "五口人", "四口之家",
@@ -94,10 +108,10 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 				"预算", "想少加", "少折腾", "想要安静", "适合我家", "这档够不够",
 			):
 		result.Primary, result.Secondary = PrimaryPresales, ProductComparison
-	case containsAny(lower,
+	case !networkBandChoiceRequested(lower) && (containsAny(lower,
 		"推荐", "怎么选", "选哪", "选什么", "筛完", "预算", "租房想装",
 		"哪款", "少折腾", "想要安静", "想少加", "适合我家", "这档够不够",
-	) || recommendationPairingRequested(lower):
+	) || recommendationPairingRequested(lower)):
 		result.Primary, result.Secondary = PrimaryPresales, PurchaseRecommendation
 	case containsAny(lower,
 		"首次使用", "使用前", "刚拆箱", "重新安装", "重新联网", "怎么冲洗",
@@ -108,7 +122,8 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		"直接灌", "关灯", "自动控制", "寿命在哪", "自己调风量",
 		"第一次开机", "第一次用", "刚到家", "重新装", "建图", "连网",
 		"第一次冲洗", "咋拆", "水冲", "关阀泄压", "泡洗", "咋清理",
-		"显示30%", "掉到10%", "滤芯显示",
+		"显示30%", "掉到10%", "滤芯显示", "加水", "纯净水", "自来水",
+		"硬水", "软水",
 	):
 		result.Primary, result.Secondary = PrimaryPresales, UsageInstruction
 	case containsAny(lower, "兼容", "能装", "适配", "该买", "装不进", "配件", "滤芯", "尘袋", "滚刷", "边刷") &&
@@ -122,21 +137,15 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		"够不够", "够用不", "够用吗", "适合多大", "适用面积", "主机有啥区别",
 		"覆盖得过来", "会不会中途没电", "会不会太小", "开一夜够吗",
 		"合适不", "参数一样不", "换硬件", "参数表", "都列一下", "参数发我",
-		"废水比", "滤芯配置", "加湿量", "缺水保护",
+		"废水比", "滤芯配置", "加湿量", "缺水保护", "出水", "每分钟",
+		"一分钟", "多少水", "400g", "600g", "800g", "1000g", "多少pa",
 	):
 		result.Primary, result.Secondary = PrimaryPresales, ProductParameter
-	case containsAny(lower,
-		"订单", "买的啥", "购买记录", "上周买", "什么时候买", "哪天签收",
-		"最近一单", "啥状态", "走到哪", "最近买过", "过去一年买", "订单号忘了",
-		"商品明细", "型号和数量", "状态都查", "具体是哪款", "型号给我翻",
-	):
+	case purchaseHistoryRequested(lower):
 		result.Primary, result.Secondary = PrimaryAftersales, OrderQuery
 	case containsAny(lower, "库存", "现货", "有货", "还有几台", "能直接下单", "能下单几台", "当天发", "剩多少"):
 		result.Primary, result.Secondary = PrimaryPresales, InventoryQuery
-	case containsAny(lower,
-		"多少钱", "价格", "售价", "优惠", "券后", "报价", "到手价",
-		"最终要付", "啥价", "到手得", "标价", "有活动", "今天价格",
-	):
+	case priceRequested(lower):
 		result.Primary, result.Secondary = PrimaryPresales, PriceQuery
 	case containsAny(lower, "怎么用", "如何使用", "重置", "联网", "安装", "清洁方法", "更换方法"):
 		result.Primary, result.Secondary = PrimaryPresales, UsageInstruction
@@ -145,6 +154,7 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 	case containsAny(lower,
 		"吸力", "噪声", "噪音", "cadr", "面积", "水箱", "功率", "参数",
 		"规格", "续航", "越障", "流量", "通量", "导航", "集尘",
+		"出水", "每分钟", "一分钟", "多少水", "多少pa", "400g",
 	):
 		result.Primary, result.Secondary = PrimaryPresales, ProductParameter
 	default:
@@ -152,7 +162,7 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		result.NeedClarify = true
 	}
 
-	result.SecondaryIntents = detectSecondaryIntents(lower, result.Secondary)
+	result.SecondaryIntents = detectSecondaryIntents(lower, result.Secondary, entities)
 	result.NeedDecomposition = len(result.SecondaryIntents) > 0
 	result.RouteTrace = RouteTrace{
 		Source:          "rule",
@@ -191,7 +201,7 @@ func ticketConfirmationPresent(query string) bool {
 	return containsAny(query, "我确认", "确认创建", "确认提交", "确认给", "确认了")
 }
 
-func detectSecondaryIntents(query string, primary Type) []Type {
+func detectSecondaryIntents(query string, primary Type, entities map[string]string) []Type {
 	var candidates []Type
 	add := func(value Type, matched bool) {
 		if !matched || value == primary {
@@ -207,42 +217,84 @@ func detectSecondaryIntents(query string, primary Type) []Type {
 	add(Troubleshooting, containsAny(query,
 		"充不进电", "无法充电", "异响", "漏水", "冒烟", "报错", "配网失败", "绑不上",
 	))
-	add(ProductComparison, containsAny(query, "对比", "比较", "区别", "差在哪", "哪个更", "哪个好", "放一张表"))
+	add(ProductComparison,
+		!singleModelConfigurationQuestion(query, entities) &&
+			containsAny(query, "对比", "比较", "区别", "差在哪", "哪个更", "哪个好", "放一张表"),
+	)
 	add(PurchaseRecommendation,
-		containsAny(query, "推荐", "怎么选", "选哪", "预算", "筛完", "租房想装") ||
-			recommendationPairingRequested(query),
+		!networkBandChoiceRequested(query) &&
+			(containsAny(query, "推荐", "怎么选", "选哪", "预算", "筛完", "租房想装") ||
+				recommendationPairingRequested(query)),
 	)
 	add(ProductParameter, containsAny(query,
 		"吸力", "噪声", "噪音", "cadr", "面积", "水箱", "功率", "参数",
 		"规格", "续航", "越障", "流量", "通量", "够不够", "够用不",
+		"出水", "每分钟", "一分钟", "多少pa", "400g",
 	))
-	add(AccessoryCompatibility, accessoryIntentRequested(query))
-	add(UsageInstruction, containsAny(query,
-		"怎么用", "如何", "安装", "清洁", "配网", "联网", "重置", "怎么设",
-		"咋设", "咋开", "步骤", "冲洗", "白醋", "撕掉",
-	))
-	add(PriceQuery, containsAny(
-		query,
-		"多少钱", "价格", "售价", "优惠", "券后", "报价", "到手价",
-		"查价", "今天价格", "实时价", "总价", "哪个便宜",
-	))
+	add(AccessoryCompatibility, accessoryIntentRequested(query, entities))
+	add(UsageInstruction,
+		(!troubleshootingProcedureRequested(query) || networkBandChoiceRequested(query)) &&
+			containsAny(query,
+				"怎么用", "如何", "安装", "清洁", "配网", "联网", "重置", "怎么设",
+				"咋设", "咋开", "步骤", "冲洗", "白醋", "撕掉", "纯净水", "自来水",
+				"硬水",
+			),
+	)
+	add(PriceQuery, priceRequested(query))
 	add(InventoryQuery, containsAny(query, "库存", "现货", "有货", "还有几台"))
-	add(OrderQuery, containsAny(query, "订单", "购买记录", "什么时候买", "哪天签收", "最近一单"))
+	add(OrderQuery, purchaseHistoryRequested(query))
 	add(WarrantyQuery, containsAny(query, "保修", "在保", "保修期"))
 	add(ReturnEligibility, containsAny(query, "退货", "换货", "还能退", "能退吗"))
 	add(CreateAfterSalesTicket, containsAny(query, "创建工单", "售后工单", "申请维修", "帮我报修"))
 	return candidates
 }
 
-func accessoryIntentRequested(query string) bool {
-	hasAccessory := containsAny(query, "滤芯", "尘袋", "滚刷", "边刷", "配件")
+func accessoryIntentRequested(query string, entities map[string]string) bool {
+	hasAccessory := containsAny(query, "滤芯", "尘袋", "滚刷", "边刷", "配件", "耗材", "换芯", "替换滤芯") ||
+		strings.TrimSpace(entities["accessory_refs"]) != ""
 	hasRelationship := containsAny(
 		query,
 		"兼容", "能装", "适配", "该买", "装不进", "行不行", "只配",
 		"分别买什么", "对应哪些", "能用吧", "能不能给", "直接装",
-		"换芯买", "买什么型号", "哪个滤芯", "型号别给错", "合适吗",
+		"换芯买", "换芯该买", "买什么型号", "哪个滤芯", "型号别给错", "合适吗",
+		"能用哪个", "装上", "塞", "接口一样", "通用",
 	)
 	return hasAccessory && hasRelationship
+}
+
+func purchaseHistoryRequested(query string) bool {
+	return containsAny(
+		query,
+		"订单", "买的啥", "购买记录", "上周买", "上礼拜买", "之前买", "以前买",
+		"什么时候买", "哪天签收", "最近一单", "啥状态", "走到哪", "最近买过",
+		"过去一年买", "订单号忘了", "商品明细", "型号和数量", "状态都查",
+		"具体是哪款", "型号给我翻", "买过",
+	)
+}
+
+func troubleshootingProcedureRequested(query string) bool {
+	return containsAny(query, "接着怎么查", "怎么查", "排查", "下一步", "仍然", "还是响", "还不行") ||
+		(containsAny(query, "配网", "连接", "连不上") &&
+			containsAny(query, "一直失败", "老失败", "账号地区", "权限", "双频合一"))
+}
+
+func usageInstructionRequested(query string) bool {
+	return containsAny(
+		query,
+		"首次", "咋做", "怎么做", "怎么用", "如何", "冲洗", "清理",
+		"更换", "清洁", "配网", "联网", "安装", "模式咋", "怎么设",
+	)
+}
+
+func priceRequested(query string) bool {
+	if containsAny(query, "别给我报价格", "不要报价", "不查价格", "别报价格", "不用报价格") {
+		return false
+	}
+	return containsAny(
+		query,
+		"多少钱", "价格", "售价", "优惠", "券后", "报价", "到手价",
+		"查价", "今天价格", "实时价", "总价", "哪个便宜",
+	)
 }
 
 func matchedKeywords(query string, intentType Type) []string {
@@ -276,6 +328,18 @@ func matchedKeywords(query string, intentType Type) []string {
 
 func recommendationPairingRequested(query string) bool {
 	return strings.Contains(query, "怎么配") && !strings.Contains(query, "怎么配网")
+}
+
+func networkBandChoiceRequested(query string) bool {
+	return containsAny(query, "2.4g", "5g", "双频合一") &&
+		containsAny(query, "配网", "联网", "连接", "连不上") &&
+		containsAny(query, "选哪", "选哪个", "怎么选", "到底选")
+}
+
+func singleModelConfigurationQuestion(query string, entities map[string]string) bool {
+	return modelCount(entities) == 1 &&
+		containsAny(query, "套装", "主机", "配置") &&
+		containsAny(query, "区别", "差异", "有什么不同", "有啥区别")
 }
 
 func explicitComparisonRequested(query string, entities map[string]string) bool {
@@ -315,7 +379,7 @@ func confidenceBasis(confidence float64, entities map[string]string, needClarify
 
 func canResolveFromPurchaseHistory(query string, intentType Type) bool {
 	return intentType == AccessoryCompatibility &&
-		containsAny(query, "上周买", "之前买", "我买的", "上次买", "购买记录")
+		containsAny(query, "上周买", "之前买", "我买的", "上次买", "购买记录", "上礼拜", "买过")
 }
 
 func modelCount(entities map[string]string) int {
@@ -335,7 +399,7 @@ func extractEntities(query string) map[string]string {
 	if models := modelPattern.FindAllString(query, -1); len(models) > 0 {
 		filtered := models[:0]
 		for index := range models {
-			models[index] = strings.Join(strings.Fields(models[index]), " ")
+			models[index] = normalizeModelName(models[index])
 			if strings.EqualFold(models[index], orderNo) {
 				continue
 			}
@@ -347,6 +411,18 @@ func extractEntities(query string) map[string]string {
 	}
 	if orderNo != "" {
 		entities["order_no"] = orderNo
+	}
+	var accessoryRefs []string
+	for _, ref := range accessoryPattern.FindAllString(query, -1) {
+		accessoryRefs = append(accessoryRefs, normalizeAccessoryRef(ref))
+	}
+	for _, ref := range []string{"滤芯", "尘袋", "滚刷", "边刷", "配件", "耗材", "换芯"} {
+		if strings.Contains(lower, ref) {
+			accessoryRefs = append(accessoryRefs, ref)
+		}
+	}
+	if accessoryRefs = compactStrings(accessoryRefs); len(accessoryRefs) > 0 {
+		entities["accessory_refs"] = strings.Join(accessoryRefs, ",")
 	}
 	switch {
 	case containsAny(lower, "扫地机器人", "扫地机", "扫拖机器人"):
@@ -371,6 +447,18 @@ func extractEntities(query string) map[string]string {
 		entities["category"] = modelCategories[0]
 	}
 	return entities
+}
+
+func normalizeModelName(value string) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if strings.EqualFold(strings.ReplaceAll(value, " ", ""), "X20Pro") {
+		return "X20 Pro"
+	}
+	return strings.ToUpper(value)
+}
+
+func normalizeAccessoryRef(value string) string {
+	return strings.ToUpper(strings.Join(strings.Fields(strings.TrimSpace(value)), ""))
 }
 
 func categoryForModels(models string) string {
