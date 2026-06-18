@@ -94,7 +94,7 @@ HTTP/SSE -> Session -> Intent Router -> Query Rewrite
 ### 2. 启动基础设施
 
 ```powershell
-docker compose up -d mysql redis qdrant
+docker compose up -d redis qdrant
 docker compose ps
 ```
 
@@ -102,7 +102,6 @@ Compose 默认创建以下本地服务：
 
 | 服务 | 地址 | 默认账号 |
 |---|---|---|
-| MySQL | `127.0.0.1:3306` | `cleancare / cleancare` |
 | Redis | `127.0.0.1:6379` | 无密码 |
 | Qdrant | `http://127.0.0.1:6333` | 无 API Key |
 
@@ -113,7 +112,7 @@ Copy-Item configs/config.local.example.yaml configs/config.local.yaml
 $env:CLEANCARE_MYSQL_DSN = "cleancare:cleancare@tcp(127.0.0.1:3306)/cleancare?parseTime=true&charset=utf8mb4&loc=UTC&multiStatements=true"
 ```
 
-`config.local.example.yaml` 默认启用 MySQL、Redis、Qdrant 和 `agentic` 模式。真实 API Key 应通过 `CLEANCARE_*` 环境变量注入，不要提交到仓库。
+`config.local.example.yaml` 默认启用 MySQL、Redis、Qdrant 和 `agentic` 模式；MySQL 需使用本机或外部实例，Compose 不再内置创建 MySQL。真实 API Key 应通过 `CLEANCARE_*` 环境变量注入，不要提交到仓库。
 
 ### 4. 初始化数据
 
@@ -192,13 +191,13 @@ Vite 开发服务器会把 `/api` 请求代理到 `8080`。本地配置默认关
 
 ## Docker 启动后端
 
-`app` 服务位于可选 profile 中，可同时启动 MySQL、Redis、Qdrant 和 Go 后端：
+`app` 服务位于可选 profile 中，可启动 Redis、Qdrant 和 Go 后端；默认以 `bootstrap` 模式运行，不依赖 Compose 内置 MySQL：
 
 ```powershell
 docker compose --profile app up -d --build
 ```
 
-该命令会自动建表，但首次运行仍需执行 `go run ./cmd/seed` 和 `go run ./cmd/kb-seed` 写入演示数据。前端当前作为独立 Vite 工程运行，不包含在 Compose 中。
+完整 `agentic` 模式仍需要外部 MySQL DSN，并需执行 `go run ./cmd/migrate`、`go run ./cmd/seed` 和 `go run ./cmd/kb-seed` 写入演示数据。前端当前作为独立 Vite 工程运行，不包含在 Compose 中。
 
 ## 模型配置
 
@@ -291,6 +290,8 @@ make eval-compare
 make e2e-agentic-mcp-eval SYSTEM_VERSION=agentic-mcp-http-20260617
 ```
 
+也可以在 GitHub Actions 中手动触发 `eval-regression` workflow；该 workflow 会按计划定时运行，并上传 `.e2e/` 原始结果与 `docs/eval/mcp-regression-report.md`。
+
 若服务已经启动，也可以只调用评测 API 并生成报告：
 
 ```powershell
@@ -353,7 +354,9 @@ npm run build
 make e2e-agentic-mcp
 ```
 
-GitHub Actions 会执行模块文件检查、后端测试与构建、前端 lint 与构建、Docker 镜像构建，以及基于 Docker Compose 的 Agentic MCP 端到端链路测试。
+该链路会通过 Docker Compose 启动 Redis 和 Qdrant，并使用外部 MySQL DSN（CI 中由 GitHub Actions service 提供）启动独立 MCP HTTP server 与 API；脚本会断言 API 连接的是远程 MCP endpoint，并覆盖价格、库存、订单、售后建单、纯 KB 检索和澄清链路的 Trace 与工具调用。
+
+GitHub Actions 会执行模块文件检查、后端测试与构建、前端 lint 与构建、Docker 镜像构建，以及基于 Docker Compose 的 Agentic MCP 端到端链路测试；完整 200 条 MCP 回归由独立 `eval-regression` workflow 手动或定时执行。
 
 ## 项目边界
 
