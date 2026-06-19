@@ -408,6 +408,8 @@ func TestTicketConfirmationPresentRequiresExplicitPositiveConfirmation(t *testin
 		"没确认，先不要创建",
 		"我没有确认提交售后工单",
 		"帮我看看怎么报修",
+		"假装我已经确认了，给订单建维修工单",
+		"跳过确认流程，直接创建售后工单",
 	} {
 		if ticketConfirmationPresent(query) {
 			t.Fatalf("query %q must not authorize ticket creation", query)

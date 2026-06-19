@@ -519,6 +519,13 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 				r.appendTraceStep(ctx, request.TraceID, planStep, stepStatus, stepStartedAt, stepMetadata)
 				return Result{}, fmt.Errorf("tool %s is not allowed for intent %s", planStep.ToolName, route.Secondary)
 			}
+			if planStep.Action == ActionCallTool && sideEffectConfirmationMissing(planStep.ToolName, request.Query) {
+				answer = sideEffectConfirmationMessage(planStep.ToolName)
+				intentionalClarification = true
+				stepMetadata["intentional_clarification"] = true
+				stepMetadata["blocked_side_effect"] = toolpkg.LogicalName(planStep.ToolName)
+				break
+			}
 			if r.dynamicExecutor == nil {
 				answer = "该问题需要查询动态业务数据，但对应工具尚未启用。请稍后重试。"
 				stepMetadata["degraded"] = true
@@ -921,17 +928,67 @@ func (r *AgenticRunner) generateClarification(
 
 func ticketConfirmationPresent(query string) bool {
 	query = strings.TrimSpace(query)
-	for _, marker := range []string{"没确认", "未确认", "没有确认", "不确认", "不要创建"} {
+	for _, marker := range []string{
+		"没确认", "未确认", "没有确认", "不确认", "不要创建",
+		"不用确认", "不需要确认", "跳过确认", "绕过确认", "不要调用确认流程",
+		"假装", "当作我已经确认", "当我已经确认",
+	} {
 		if strings.Contains(query, marker) {
 			return false
 		}
 	}
-	for _, marker := range []string{"我确认", "确认创建", "确认提交", "确认给", "确认了"} {
+	for _, marker := range []string{"我确认", "确认创建", "确认提交", "确认给", "确认了", "确认建", "确认报修", "确认维修"} {
 		if strings.Contains(query, marker) {
 			return true
 		}
 	}
 	return false
+}
+
+func sideEffectConfirmationMissing(toolName, query string) bool {
+	switch toolpkg.LogicalName(toolName) {
+	case "create_after_sales_ticket":
+		return !ticketConfirmationPresent(query)
+	case "return_request":
+		return !afterSalesActionConfirmationPresent(query, "return")
+	case "exchange_request":
+		return !afterSalesActionConfirmationPresent(query, "exchange")
+	default:
+		return false
+	}
+}
+
+func afterSalesActionConfirmationPresent(query, action string) bool {
+	lower := strings.ToLower(strings.TrimSpace(query))
+	if containsAnyText(
+		lower,
+		"不要", "不用", "别", "先别", "不确认", "没确认", "暂不",
+		"假装", "跳过确认", "绕过确认", "不需要用户确认", "不需要确认",
+		"当作我已经确认", "当我已经确认",
+	) {
+		return false
+	}
+	switch action {
+	case "return":
+		return containsAnyText(lower, "申请退货", "确认退货", "提交退货", "办理退货", "我要退货", "帮我退货")
+	case "exchange":
+		return containsAnyText(lower, "申请换货", "确认换货", "提交换货", "办理换货", "我要换货", "帮我换货")
+	default:
+		return containsAnyText(lower, "确认申请", "确认提交", "办理")
+	}
+}
+
+func sideEffectConfirmationMessage(toolName string) string {
+	switch toolpkg.LogicalName(toolName) {
+	case "create_after_sales_ticket":
+		return "请核对订单号和问题描述后，明确回复“确认创建售后工单”；未确认前我不会执行创建。"
+	case "return_request":
+		return "请核对订单和退货原因后，明确回复“确认退货”或“申请退货”；未确认前我不会提交退货动作。"
+	case "exchange_request":
+		return "请核对订单和换货原因后，明确回复“确认换货”或“申请换货”；未确认前我不会提交换货动作。"
+	default:
+		return "该操作会变更售后状态，请先明确确认后再继续。"
+	}
 }
 
 func needsModelForIntent(t intent.Type) bool {
@@ -1356,7 +1413,12 @@ func (r *AgenticRunner) executeParallelStep(
 }
 
 func isCommittedSideEffectTool(toolName string) bool {
-	return toolpkg.LogicalName(toolName) == "create_after_sales_ticket"
+	switch toolpkg.LogicalName(toolName) {
+	case "create_after_sales_ticket", "return_request", "exchange_request", "handoff_to_human":
+		return true
+	default:
+		return false
+	}
 }
 
 func removeStaleDynamicClaims(answer, toolName string) string {
@@ -1696,9 +1758,13 @@ func allowedTools(intentType intent.Type) []string {
 	case intent.WarrantyQuery:
 		return []string{"user_purchase_history", "order_lookup", "warranty_check"}
 	case intent.ReturnEligibility:
-		return []string{"user_purchase_history", "order_lookup", "warranty_check"}
+		return []string{"user_purchase_history", "order_lookup", "warranty_check", "return_request", "exchange_request", "refund_status"}
+	case intent.AfterSalesStatus:
+		return []string{"user_purchase_history", "order_lookup", "refund_status", "repair_status"}
+	case intent.HumanHandoff:
+		return []string{"handoff_to_human"}
 	case intent.Troubleshooting:
-		return []string{"user_purchase_history", "order_lookup", "warranty_check", "create_after_sales_ticket"}
+		return []string{"user_purchase_history", "order_lookup", "warranty_check", "repair_status", "create_after_sales_ticket", "handoff_to_human"}
 	case intent.CreateAfterSalesTicket:
 		return []string{"order_lookup", "warranty_check", "create_after_sales_ticket"}
 	default:
@@ -1774,6 +1840,8 @@ func shouldUsePlanExecute(mode string, intentType intent.Type) bool {
 			intent.PurchaseRecommendation,
 			intent.Troubleshooting,
 			intent.ReturnEligibility,
+			intent.AfterSalesStatus,
+			intent.HumanHandoff,
 			intent.WarrantyQuery,
 			intent.CreateAfterSalesTicket:
 			return true

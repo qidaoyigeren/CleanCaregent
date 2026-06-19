@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/platform/id"
@@ -78,6 +79,12 @@ func (p *RulePlanner) Plan(ctx context.Context, request PlanRequest) (*Plan, err
 	case intent.ReturnEligibility, intent.WarrantyQuery:
 		plan.Mode = "react"
 		plan.Steps = skillPlan("after_sales_judgement", request.Query, request.Intent.Entities)
+	case intent.AfterSalesStatus:
+		plan.Mode = "react"
+		plan.Steps = dynamicPlan(afterSalesStatusTool(request.Query), request.Query, request.Intent.Entities)
+	case intent.HumanHandoff:
+		plan.Mode = "react"
+		plan.Steps = dynamicPlan("handoff_to_human", request.Query, request.Intent.Entities)
 	case intent.PriceQuery:
 		plan.Mode = "react"
 		plan.Steps = dynamicPlan("price_query", request.Query, request.Intent.Entities)
@@ -311,6 +318,10 @@ func compoundSubStep(intentType intent.Type, request PlanRequest) (PlanStep, boo
 	case intent.WarrantyQuery, intent.ReturnEligibility:
 		params["target_intent"] = string(intentType)
 		return newPlanStep(1, ActionRunSkill, "", "after_sales_judgement", request.Query, params, "compound_after_sales"), true
+	case intent.AfterSalesStatus:
+		return newPlanStep(1, ActionCallTool, afterSalesStatusTool(request.Query), "", request.Query, params, "compound_after_sales_status"), true
+	case intent.HumanHandoff:
+		return newPlanStep(1, ActionCallTool, "handoff_to_human", "", request.Query, params, "compound_human_handoff"), true
 	case intent.PriceQuery:
 		return newPlanStep(1, ActionCallTool, "price_query", "", request.Query, params, "compound_price"), true
 	case intent.InventoryQuery:
@@ -365,6 +376,14 @@ func stringMapToAny(source map[string]string) map[string]any {
 		result[key] = value
 	}
 	return result
+}
+
+func afterSalesStatusTool(query string) string {
+	lower := strings.ToLower(query)
+	if strings.Contains(lower, "退款") || strings.Contains(lower, "退货") || strings.Contains(lower, "refund") {
+		return "refund_status"
+	}
+	return "repair_status"
 }
 
 var _ PlanAndExecutePlanner = (*RulePlanner)(nil)

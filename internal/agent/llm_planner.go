@@ -146,6 +146,8 @@ func preferRuleCompletePlan(intentType intent.Type) bool {
 		intent.Troubleshooting,
 		intent.WarrantyQuery,
 		intent.ReturnEligibility,
+		intent.AfterSalesStatus,
+		intent.HumanHandoff,
 		intent.CreateAfterSalesTicket:
 		return true
 	default:
@@ -637,6 +639,13 @@ func guardedToolForIntent(result intent.Result) string {
 			return "user_purchase_history"
 		}
 		return "order_lookup"
+	case intent.AfterSalesStatus:
+		if result.Entities["after_sales_status_type"] == "refund" {
+			return "refund_status"
+		}
+		return "repair_status"
+	case intent.HumanHandoff:
+		return "handoff_to_human"
 	default:
 		return ""
 	}

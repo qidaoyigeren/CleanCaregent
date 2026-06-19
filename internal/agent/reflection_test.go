@@ -138,6 +138,23 @@ func TestGroundingReflectorAcceptsThousandsPriceAndWarrantyMonths(t *testing.T) 
 	}
 }
 
+func TestGroundingReflectorAcceptsPolicyThresholdsByPolicyEvidence(t *testing.T) {
+	reflector := NewGroundingReflector()
+	result := reflector.Review(
+		"订单用了二十多天还能换货吗",
+		intent.ReturnEligibility,
+		"超过 7 天无理由退货期后，如有质量问题可进入 15 天质量换货或保修判断。[E1][E2]",
+		[]Evidence{
+			{ID: "E1", Kind: "kb_chunk", SourceID: "kb_policy_return_7d", Content: "CleanCare 退换货政策"},
+			{ID: "E2", Kind: "kb_chunk", SourceID: "kb_policy_quality_exchange", Content: "CleanCare 质量问题换货政策"},
+			{ID: "E3", Kind: "tool_result", Content: `{"order_no":"CC20250522008","status":"delivered"}`},
+		},
+	)
+	if len(result.UnsupportedClaims) > 0 || result.ShouldTransfer {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestGroundingReflectorAcceptsUserAreaAndBudgetWithoutRepeatedUnits(t *testing.T) {
 	reflector := NewGroundingReflector()
 	result := reflector.Review(

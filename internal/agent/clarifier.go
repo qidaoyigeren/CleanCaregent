@@ -138,6 +138,15 @@ func (c *Clarifier) clarifyWithRules(
 		}
 		return "请补充说明：您退换货/保修的具体原因是什么？（比如质量问题、不想要了、配件缺失等）"
 
+	case intent.AfterSalesStatus:
+		if !hasOrder {
+			return "查询退款、退货、换货或维修进度前，请提供订单号。拿到订单号后，我会只查询当前账号下的售后状态。"
+		}
+		return "请说明您想查的是退款/退货进度，还是维修/售后工单进度。"
+
+	case intent.HumanHandoff:
+		return "可以为您转人工。请明确回复“转人工客服”，我会把当前对话上下文排入人工接管队列。"
+
 	case intent.OrderQuery:
 		return "我需要确认一下：\n1. 您的订单号是多少？（可以在 APP 的'我的订单'里找到）\n2. 或者您可以告诉我大概什么时候购买的、是什么产品，我帮您查一下记录。"
 

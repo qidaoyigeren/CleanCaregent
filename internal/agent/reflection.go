@@ -225,6 +225,9 @@ func numericClaimGrounded(
 			strings.Contains(normalizedSources, `"warranty_months":`+number) ||
 			strings.Contains(normalizedSources, `"replacement_months":`+number)
 	case "天":
+		if policyDayClaimGrounded(number, normalizedSources) {
+			return true
+		}
 		return strings.Contains(normalizedSources, number+"天") ||
 			strings.Contains(normalizedSources, `"elapsed_days":`+number)
 	}
@@ -244,6 +247,17 @@ func numericClaimGrounded(
 			strings.Contains(normalizedSources, "suction_pa")
 	default:
 		return strings.Contains(normalizedSources, unit)
+	}
+}
+
+func policyDayClaimGrounded(number, normalizedSources string) bool {
+	switch number {
+	case "7":
+		return strings.Contains(normalizedSources, "kb_policy_return_7d")
+	case "15":
+		return strings.Contains(normalizedSources, "kb_policy_quality_exchange")
+	default:
+		return false
 	}
 }
 

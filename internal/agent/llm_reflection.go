@@ -148,7 +148,8 @@ func shouldUseGroundingOnly(intentType intent.Type, ground ReflectionResult) boo
 		intent.UsageInstruction,
 		intent.Troubleshooting,
 		intent.PriceQuery, intent.InventoryQuery, intent.OrderQuery,
-		intent.WarrantyQuery, intent.ReturnEligibility, intent.CreateAfterSalesTicket,
+		intent.WarrantyQuery, intent.ReturnEligibility, intent.AfterSalesStatus,
+		intent.HumanHandoff, intent.CreateAfterSalesTicket,
 		intent.Chitchat, intent.OutOfScope, intent.Clarification:
 		return true
 	default:
