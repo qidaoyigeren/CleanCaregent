@@ -290,6 +290,11 @@ func main() {
 				"order_lookup",
 				"warranty_check",
 				"create_after_sales_ticket",
+				"return_request",
+				"exchange_request",
+				"refund_status",
+				"repair_status",
+				"handoff_to_human",
 			})
 			if listToolsErr != nil {
 				logger.Fatal("list mcp tools", zap.Error(listToolsErr))

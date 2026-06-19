@@ -1754,6 +1754,78 @@ a:focus-visible {
   color: var(--color-success);
 }
 
+.service-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+
+.service-card {
+  min-height: 70px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.service-card--order {
+  border-left-color: #2563eb;
+}
+
+.service-card--warranty {
+  border-left-color: #059669;
+}
+
+.service-card--fault {
+  border-left-color: #d97706;
+}
+
+.service-card--handoff {
+  border-left-color: #7c3aed;
+}
+
+.service-card__label {
+  margin-bottom: 5px;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.service-card__detail {
+  color: var(--color-text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.chat-input__handoff {
+  height: 36px;
+  min-width: 48px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+
+.chat-input__handoff:hover:not(:disabled) {
+  border-color: #7c3aed;
+  color: #5b21b6;
+  background: color-mix(in srgb, #7c3aed 8%, var(--color-surface));
+}
+
+.chat-input__handoff:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 /* Message Actions Menu */
 .message-actions {
   position: relative;

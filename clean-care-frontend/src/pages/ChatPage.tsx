@@ -211,6 +211,10 @@ export default function ChatPage() {
     handleSend(text);
   };
 
+  const handleHandoff = useCallback(() => {
+    handleSend('请转人工客服接管当前问题');
+  }, [handleSend]);
+
   return (
     <div className="chat-page">
       {/* Top bar: pipeline status + connection */}
@@ -269,6 +273,7 @@ export default function ChatPage() {
         <ChatInput
           onSend={handleSend}
           onAbort={handleAbort}
+          onHandoff={handleHandoff}
           isStreaming={isStreaming}
         />
       </div>
