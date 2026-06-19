@@ -1,0 +1,461 @@
+[
+  {
+    "case_id": "AFTER-MT-001",
+    "turns": ["我上个月买了空气净化器", "帮我看订单状态", "订单号 CC20260603001"],
+    "expected_intent": "order_query",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["order_lookup"],
+    "required_answer_terms": ["CC20260603001"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-002",
+    "turns": ["我想核对下订单", "是扫地机器人那单", "CC20250522008 商品明细和状态"],
+    "expected_intent": "order_query",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["order_lookup"],
+    "required_answer_terms": ["CC20250522008"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-003",
+    "turns": ["帮我查一下最近买过什么", "主要看空气净化器", "CC20260603001 这单到哪了"],
+    "expected_intent": "order_query",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["order_lookup"],
+    "required_answer_terms": ["订单"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-004",
+    "turns": ["我要确认售后前的订单信息", "单号稍后给你", "CC20250522008 的签收时间和商品一起查"],
+    "expected_intent": "order_query",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["order_lookup"],
+    "required_answer_terms": ["CC20250522008"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-005",
+    "turns": ["上次买的 P400 想查状态", "不是配件，是主机订单", "订单 CC20260603001"],
+    "expected_intent": "order_query",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["order_lookup"],
+    "required_answer_terms": ["P400"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-006",
+    "turns": ["我准备报修前先查下订单", "T20 那个", "CC20250522008 当前状态"],
+    "expected_intent": "order_query",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["order_lookup"],
+    "required_answer_terms": ["订单"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-007",
+    "turns": ["售后说要订单号", "我找到了", "CC20260603001 帮我核对商品型号"],
+    "expected_intent": "order_query",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["order_lookup"],
+    "required_answer_terms": ["商品"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-008",
+    "turns": ["我要看去年那台扫地机器人", "可能是 T20", "订单 CC20250522008 明细"],
+    "expected_intent": "order_query",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["order_lookup"],
+    "required_answer_terms": ["T20"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-009",
+    "turns": ["我想知道这单是不是已送达", "空气净化器", "CC20260603001"],
+    "expected_intent": "order_query",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["order_lookup"],
+    "required_answer_terms": ["delivered"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-010",
+    "turns": ["售后前先查一下", "机器人那单", "订单号 CC20250522008 到底是什么状态"],
+    "expected_intent": "order_query",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["order_lookup"],
+    "required_answer_terms": ["CC20250522008"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-011",
+    "turns": ["机器坏了想看保修", "P400 空气净化器", "订单 CC20260603001 还在保吗"],
+    "expected_intent": "warranty_query",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["warranty_check"],
+    "required_answer_terms": ["保修"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-012",
+    "turns": ["T20 最近充不上电", "先别建单", "CC20250522008 看看是不是过保"],
+    "expected_intent": "warranty_query",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["warranty_check"],
+    "forbidden_tools": ["create_after_sales_ticket"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["保修"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-013",
+    "turns": ["净化器有异响", "想知道保修截止时间", "订单号 CC20260603001"],
+    "expected_intent": "warranty_query",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["warranty_check"],
+    "required_answer_terms": ["保修"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-014",
+    "turns": ["我这单还有延保吗", "扫地机器人", "CC20250522008"],
+    "expected_intent": "warranty_query",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["warranty_check"],
+    "required_answer_terms": ["保修"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-015",
+    "turns": ["售后问我是否在保", "我买的是 P400", "帮查 CC20260603001 保修状态"],
+    "expected_intent": "warranty_query",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["warranty_check"],
+    "required_answer_terms": ["P400"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-016",
+    "turns": ["去年买的机器人还能免费修吗", "型号 T20", "订单 CC20250522008 按今天算"],
+    "expected_intent": "warranty_query",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["warranty_check"],
+    "required_answer_terms": ["保修"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-017",
+    "turns": ["先别说政策，查工具为准", "P400 的订单", "CC20260603001 保不保"],
+    "expected_intent": "warranty_query",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["warranty_check"],
+    "required_answer_terms": ["保"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-018",
+    "turns": ["扫地机出问题", "我想知道能不能保修", "单号 CC20250522008"],
+    "expected_intent": "warranty_query",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["warranty_check"],
+    "required_answer_terms": ["保修"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-019",
+    "turns": ["空气净化器风量变小", "保修先查一下", "CC20260603001"],
+    "expected_intent": "warranty_query",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["warranty_check"],
+    "required_answer_terms": ["保修"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-020",
+    "turns": ["T20 现在故障了", "我不确定保不保", "订单 CC20250522008"],
+    "expected_intent": "warranty_query",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["warranty_check"],
+    "required_answer_terms": ["保修"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-021",
+    "turns": ["我想退货", "包装拆了", "订单 CC20250522008 能不能退"],
+    "expected_intent": "return_eligibility",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["order_lookup"],
+    "forbidden_tools": ["return_request", "exchange_request"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["退"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-022",
+    "turns": ["新买的 P400 不想要了", "包装都在", "CC20260603001 退货条件是什么"],
+    "expected_intent": "return_eligibility",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["order_lookup"],
+    "forbidden_tools": ["return_request"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["退货"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-023",
+    "turns": ["机器人有质量问题", "超过七天了", "订单 CC20250522008 能换货吗"],
+    "expected_intent": "return_eligibility",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["order_lookup"],
+    "forbidden_tools": ["exchange_request"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["质量"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-024",
+    "turns": ["我要正式退货", "订单 CC20260603001", "确认申请退货，原因是不想要了，包装完整"],
+    "expected_intent": "return_eligibility",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["return_request"],
+    "required_answer_terms": ["工单"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-025",
+    "turns": ["P400 到货后有异常", "想换一台", "订单 CC20260603001，确认申请换货"],
+    "expected_intent": "return_eligibility",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["exchange_request"],
+    "required_answer_terms": ["换货"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-026",
+    "turns": ["T20 用了很久现在坏了", "不是不想要，是质量问题", "CC20250522008 能不能走换货或保修"],
+    "expected_intent": "return_eligibility",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["order_lookup"],
+    "forbidden_tools": ["exchange_request"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["保修"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-027",
+    "turns": ["我先咨询退货条件", "不要直接提交", "订单 CC20260603001"],
+    "expected_intent": "return_eligibility",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["order_lookup"],
+    "forbidden_tools": ["return_request"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["条件"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-028",
+    "turns": ["我要退款", "先看售后规则", "CC20250522008 拆封用了二十多天"],
+    "expected_intent": "return_eligibility",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["order_lookup"],
+    "forbidden_tools": ["return_request"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["退"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-029",
+    "turns": ["确认办理退货", "订单是 CC20260603001", "申请退货，原因是未使用且包装完整"],
+    "expected_intent": "return_eligibility",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["return_request"],
+    "required_answer_terms": ["退货"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-030",
+    "turns": ["收到的机器传感器异常", "我想换货", "CC20260603001 确认换货"],
+    "expected_intent": "return_eligibility",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["exchange_request"],
+    "required_answer_terms": ["工单"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-031",
+    "turns": ["T20 充不上电", "充电座灯不亮", "先一步步排查，别建单"],
+    "expected_intent": "troubleshooting",
+    "forbidden_tools": ["create_after_sales_ticket"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["排查"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-032",
+    "turns": ["W300 出水变小", "滤芯刚换过", "下一步怎么查"],
+    "expected_intent": "troubleshooting",
+    "forbidden_tools": ["create_after_sales_ticket"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["排查"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-033",
+    "turns": ["P400 有异响", "没有焦味", "先告诉我安全排查步骤"],
+    "expected_intent": "troubleshooting",
+    "forbidden_tools": ["create_after_sales_ticket"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["排查"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-034",
+    "turns": ["扫地机器人配网失败", "2.4G 网络也试了", "T20 下一步查什么"],
+    "expected_intent": "troubleshooting",
+    "forbidden_tools": ["create_after_sales_ticket"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["配网"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-035",
+    "turns": ["净水器漏水", "我已经关了水阀", "W500 现在怎么处理"],
+    "expected_intent": "troubleshooting",
+    "forbidden_tools": ["create_after_sales_ticket"],
+    "forbid_state_change": true,
+    "required_answer_terms": ["水阀"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-036",
+    "turns": ["T20 充不上电，排查过了", "订单 CC20250522008", "确认创建售后工单，故障是充不上电"],
+    "expected_intent": "create_after_sales_ticket",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["create_after_sales_ticket"],
+    "required_answer_terms": ["工单"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-037",
+    "turns": ["P400 异响一直没解决", "单号 CC20260603001", "我确认提交维修工单"],
+    "expected_intent": "create_after_sales_ticket",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["create_after_sales_ticket"],
+    "required_answer_terms": ["工单"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-038",
+    "turns": ["W300 出水小排查后仍不行", "订单 CC20260603001", "确认建维修单"],
+    "expected_intent": "create_after_sales_ticket",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["create_after_sales_ticket"],
+    "required_answer_terms": ["工单"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-039",
+    "turns": ["X20 Pro App 绑不上", "我试过重置", "订单 CC20250522008，确认创建售后工单"],
+    "expected_intent": "create_after_sales_ticket",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["create_after_sales_ticket"],
+    "required_answer_terms": ["工单"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-040",
+    "turns": ["P400 报错需要维修", "CC20260603001", "我确认提交，问题是传感器数值异常"],
+    "expected_intent": "create_after_sales_ticket",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["create_after_sales_ticket"],
+    "required_answer_terms": ["工单"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-041",
+    "turns": ["我想查售后进度", "订单 CC20260603001", "维修进度到哪了"],
+    "expected_intent": "after_sales_status",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["repair_status"],
+    "required_answer_terms": ["进度"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-042",
+    "turns": ["刚才提交过退货", "订单是 CC20260603001", "退款状态查一下"],
+    "expected_intent": "after_sales_status",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["refund_status"],
+    "required_answer_terms": ["退款"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-043",
+    "turns": ["售后一直没消息", "CC20250522008", "工单进度现在怎样"],
+    "expected_intent": "after_sales_status",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["repair_status"],
+    "required_answer_terms": ["进度"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-044",
+    "turns": ["换货申请提交后", "订单 CC20260603001", "换货进度帮我查"],
+    "expected_intent": "after_sales_status",
+    "expected_entities": {"order_no": "CC20260603001"},
+    "expected_tools": ["repair_status"],
+    "required_answer_terms": ["售后"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-045",
+    "turns": ["维修说要排队", "CC20250522008", "售后状态是什么"],
+    "expected_intent": "after_sales_status",
+    "expected_entities": {"order_no": "CC20250522008"},
+    "expected_tools": ["repair_status"],
+    "required_answer_terms": ["状态"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-046",
+    "turns": ["我不想继续机器人回答", "这个售后比较复杂", "请转人工客服接管"],
+    "expected_intent": "human_handoff",
+    "expected_tools": ["handoff_to_human"],
+    "required_answer_terms": ["人工"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-047",
+    "turns": ["退货规则我看不懂", "订单 CC20260603001", "转人工处理"],
+    "expected_intent": "human_handoff",
+    "expected_tools": ["handoff_to_human"],
+    "required_answer_terms": ["人工"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-048",
+    "turns": ["故障排查我做不了", "T20 充不上电", "人工客服帮我处理"],
+    "expected_intent": "human_handoff",
+    "expected_tools": ["handoff_to_human"],
+    "required_answer_terms": ["人工"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-049",
+    "turns": ["售后进度查不到", "我有点着急", "真人客服接管吧"],
+    "expected_intent": "human_handoff",
+    "expected_tools": ["handoff_to_human"],
+    "required_answer_terms": ["人工"],
+    "forbid_pii": true
+  },
+  {
+    "case_id": "AFTER-MT-050",
+    "turns": ["P400 报错反复出现", "我不想继续自助流程", "请人工接管当前对话"],
+    "expected_intent": "human_handoff",
+    "expected_tools": ["handoff_to_human"],
+    "required_answer_terms": ["人工"],
+    "forbid_pii": true
+  }
+]
