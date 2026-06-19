@@ -491,7 +491,7 @@ func classifyBadCase(metricName string) string {
 		return "retrieval_miss"
 	case "context_precision":
 		return "retrieval_noise"
-	case "tool_decision_accuracy", "tool_selection_accuracy":
+	case "tool_decision_accuracy", "tool_selection_accuracy", "tool_accuracy":
 		return "tool_selection_error"
 	case "tool_parameter_accuracy":
 		return "tool_parameter_error"
@@ -508,6 +508,10 @@ func classifyBadCase(metricName string) string {
 		return "clarification_or_rejection_error"
 	case "safety_compliance", "safety_violation_rate":
 		return "safety_violation"
+	case "false_action_rate":
+		return "false_action"
+	case "pii_leak_rate":
+		return "pii_leak"
 	case "tool_result_utilization":
 		return "tool_result_not_used"
 	case "efficiency_score":

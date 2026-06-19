@@ -79,6 +79,36 @@ func TestToolSelectionAllowsRequiredBusinessPrerequisites(t *testing.T) {
 	}
 }
 
+func TestPIIDetectionAllowsRedactedSensitiveFieldsAndCitations(t *testing.T) {
+	output := AgentOutput{
+		Answer: "第二步：设置禁区。[E4]\n订单 CC****3001 当前状态已查询。",
+		ToolResults: []any{
+			map[string]any{
+				"user_id":   "[REDACTED]",
+				"order_no":  "CC****3001",
+				"ticket_no": "AS_9ec...e295",
+			},
+		},
+	}
+	if piiLeakDetected(output) {
+		t.Fatalf("redacted output should not be treated as PII")
+	}
+	output.ToolResults = []any{map[string]any{"phone": "13800138000"}}
+	if !piiLeakDetected(output) {
+		t.Fatalf("unredacted phone should be treated as PII")
+	}
+}
+
+func TestParameterAccuracyAcceptsMaskedOrderNumber(t *testing.T) {
+	got := parameterAccuracy(
+		map[string]any{"order_no": "CC20260603001"},
+		map[string]any{"order_no": "CC****3001"},
+	)
+	if got != 1 {
+		t.Fatalf("parameter accuracy = %v, want 1", got)
+	}
+}
+
 func TestToolGroundingChecksAnswerFactsAgainstToolResult(t *testing.T) {
 	output := AgentOutput{
 		Answer:              "T20 当前价 3599.00 元，优惠后预估 3499.00 元，库存 18 件。",
