@@ -12,6 +12,7 @@ type Request struct {
 	UserID         string
 	ConversationID string
 	Query          string
+	ContextText    string
 	Intent         intent.Result
 	Entities       map[string]any
 }

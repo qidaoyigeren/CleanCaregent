@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"CleanCaregent/internal/model"
+	"CleanCaregent/internal/platform/id"
 	"CleanCaregent/internal/repository"
 	"CleanCaregent/internal/tool"
 )
@@ -21,6 +23,11 @@ type UserPurchaseHistory struct{ repository repository.BusinessRepository }
 type OrderLookup struct{ repository repository.BusinessRepository }
 type WarrantyCheck struct{ repository repository.BusinessRepository }
 type CreateAfterSalesTicket struct{ repository repository.BusinessRepository }
+type ReturnRequest struct{ repository repository.BusinessRepository }
+type ExchangeRequest struct{ repository repository.BusinessRepository }
+type RefundStatus struct{ repository repository.BusinessRepository }
+type RepairStatus struct{ repository repository.BusinessRepository }
+type HandoffToHuman struct{ repository repository.BusinessRepository }
 
 func NewPriceQuery(repository repository.BusinessRepository) *PriceQuery {
 	return &PriceQuery{repository: repository}
@@ -40,6 +47,21 @@ func NewWarrantyCheck(repository repository.BusinessRepository) *WarrantyCheck {
 func NewCreateAfterSalesTicket(repository repository.BusinessRepository) *CreateAfterSalesTicket {
 	return &CreateAfterSalesTicket{repository: repository}
 }
+func NewReturnRequest(repository repository.BusinessRepository) *ReturnRequest {
+	return &ReturnRequest{repository: repository}
+}
+func NewExchangeRequest(repository repository.BusinessRepository) *ExchangeRequest {
+	return &ExchangeRequest{repository: repository}
+}
+func NewRefundStatus(repository repository.BusinessRepository) *RefundStatus {
+	return &RefundStatus{repository: repository}
+}
+func NewRepairStatus(repository repository.BusinessRepository) *RepairStatus {
+	return &RepairStatus{repository: repository}
+}
+func NewHandoffToHuman(repository repository.BusinessRepository) *HandoffToHuman {
+	return &HandoffToHuman{repository: repository}
+}
 
 func NewBusinessTools(repository repository.BusinessRepository) []tool.Tool {
 	return []tool.Tool{
@@ -49,6 +71,11 @@ func NewBusinessTools(repository repository.BusinessRepository) []tool.Tool {
 		NewOrderLookup(repository),
 		NewWarrantyCheck(repository),
 		NewCreateAfterSalesTicket(repository),
+		NewReturnRequest(repository),
+		NewExchangeRequest(repository),
+		NewRefundStatus(repository),
+		NewRepairStatus(repository),
+		NewHandoffToHuman(repository),
 	}
 }
 
@@ -188,6 +215,167 @@ func (t *CreateAfterSalesTicket) Execute(ctx context.Context, call tool.Call) (t
 		IdempotencyKey:   key,
 	})
 	return result(call, ticket), err
+}
+
+func (t *ReturnRequest) Name() string                { return "return_request" }
+func (t *ReturnRequest) SideEffect() tool.SideEffect { return tool.SideEffectStateChange }
+func (t *ReturnRequest) Description() string {
+	return "Create an idempotent return after-sales request after explicit user confirmation."
+}
+func (t *ReturnRequest) ParamsSchema() json.RawMessage {
+	return actionRequestSchema()
+}
+func (t *ReturnRequest) Execute(ctx context.Context, call tool.Call) (tool.Result, error) {
+	return executeAfterSalesAction(ctx, t.repository, call, "return")
+}
+
+func (t *ExchangeRequest) Name() string                { return "exchange_request" }
+func (t *ExchangeRequest) SideEffect() tool.SideEffect { return tool.SideEffectStateChange }
+func (t *ExchangeRequest) Description() string {
+	return "Create an idempotent exchange after-sales request after explicit user confirmation."
+}
+func (t *ExchangeRequest) ParamsSchema() json.RawMessage {
+	return actionRequestSchema()
+}
+func (t *ExchangeRequest) Execute(ctx context.Context, call tool.Call) (tool.Result, error) {
+	return executeAfterSalesAction(ctx, t.repository, call, "exchange")
+}
+
+func (t *RefundStatus) Name() string                { return "refund_status" }
+func (t *RefundStatus) SideEffect() tool.SideEffect { return tool.SideEffectReadOnly }
+func (t *RefundStatus) Description() string {
+	return "Query refund or return progress for the current user's order or ticket."
+}
+func (t *RefundStatus) ParamsSchema() json.RawMessage {
+	return schema(`{"type":"object","properties":{"order_no":{"type":"string"},"ticket_no":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":20}}}`)
+}
+func (t *RefundStatus) Execute(ctx context.Context, call tool.Call) (tool.Result, error) {
+	return executeProgressQuery(ctx, t.repository, call, "refund")
+}
+
+func (t *RepairStatus) Name() string                { return "repair_status" }
+func (t *RepairStatus) SideEffect() tool.SideEffect { return tool.SideEffectReadOnly }
+func (t *RepairStatus) Description() string {
+	return "Query repair or after-sales ticket progress for the current user's order or ticket."
+}
+func (t *RepairStatus) ParamsSchema() json.RawMessage {
+	return schema(`{"type":"object","properties":{"order_no":{"type":"string"},"ticket_no":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":20}}}`)
+}
+func (t *RepairStatus) Execute(ctx context.Context, call tool.Call) (tool.Result, error) {
+	return executeProgressQuery(ctx, t.repository, call, "repair")
+}
+
+func (t *HandoffToHuman) Name() string                { return "handoff_to_human" }
+func (t *HandoffToHuman) SideEffect() tool.SideEffect { return tool.SideEffectStateChange }
+func (t *HandoffToHuman) Description() string {
+	return "Queue a human handoff request for the current conversation after explicit user request."
+}
+func (t *HandoffToHuman) ParamsSchema() json.RawMessage {
+	return schema(`{"type":"object","required":["reason","confirmed"],"properties":{"order_no":{"type":"string"},"issue_type":{"type":"string"},"reason":{"type":"string"},"description":{"type":"string"},"priority":{"type":"string"},"confirmed":{"type":"boolean"}}}`)
+}
+func (t *HandoffToHuman) Execute(ctx context.Context, call tool.Call) (tool.Result, error) {
+	if !boolValue(call.Arguments["confirmed"]) {
+		return invalid(call, "explicit user confirmation is required")
+	}
+	key := call.IdempotencyKey
+	if key == "" {
+		return invalid(call, "idempotency key is required")
+	}
+	reason := strings.TrimSpace(stringValue(call.Arguments["reason"]))
+	if reason == "" {
+		return invalid(call, "reason is required")
+	}
+	orderNo := strings.ToUpper(stringValue(call.Arguments["order_no"]))
+	if orderNo == "" {
+		action := model.AfterSalesActionResult{
+			Action: "human_handoff",
+			Ticket: model.AfterSalesTicket{
+				TicketNo:       id.New("handoff"),
+				UserID:         call.UserID,
+				IssueType:      "human_handoff",
+				Description:    reason,
+				Status:         "human_queued",
+				IdempotencyKey: key,
+				CreatedAt:      time.Now().UTC(),
+			},
+			QueuePosition: 1,
+			SLAHours:      2,
+			NextAction:    "Human agent will review conversation context and contact the user in queue order.",
+			Audit: map[string]string{
+				"scope":       "current_conversation",
+				"side_effect": "human_queue",
+				"reason":      "human_handoff",
+			},
+		}
+		return result(call, action), nil
+	}
+	action, err := t.repository.RequestAfterSalesAction(ctx, repository.AfterSalesActionRequest{
+		UserID:         call.UserID,
+		OrderNo:        orderNo,
+		Action:         "human_handoff",
+		IssueType:      "human_handoff",
+		Reason:         reason,
+		Description:    defaultString(stringValue(call.Arguments["description"]), reason),
+		IdempotencyKey: key,
+	})
+	return result(call, action), err
+}
+
+func actionRequestSchema() json.RawMessage {
+	return schema(`{"type":"object","required":["order_no","reason","confirmed"],"properties":{"order_no":{"type":"string"},"order_item_id":{"type":"integer"},"reason":{"type":"string"},"description":{"type":"string"},"evidence_ids":{"type":"array","items":{"type":"string"}},"confirmed":{"type":"boolean"}}}`)
+}
+
+func executeAfterSalesAction(
+	ctx context.Context,
+	repo repository.BusinessRepository,
+	call tool.Call,
+	actionName string,
+) (tool.Result, error) {
+	if !boolValue(call.Arguments["confirmed"]) {
+		return invalid(call, "explicit user confirmation is required")
+	}
+	orderNo := strings.ToUpper(stringValue(call.Arguments["order_no"]))
+	reason := strings.TrimSpace(stringValue(call.Arguments["reason"]))
+	if orderNo == "" || reason == "" {
+		return invalid(call, "order_no and reason are required")
+	}
+	key := call.IdempotencyKey
+	if key == "" {
+		return invalid(call, "idempotency key is required")
+	}
+	action, err := repo.RequestAfterSalesAction(ctx, repository.AfterSalesActionRequest{
+		UserID:         call.UserID,
+		OrderNo:        orderNo,
+		OrderItemID:    int64(intValue(call.Arguments["order_item_id"], 0)),
+		Action:         actionName,
+		IssueType:      actionName,
+		Reason:         reason,
+		Description:    defaultString(stringValue(call.Arguments["description"]), reason),
+		EvidenceIDs:    stringSlice(call.Arguments["evidence_ids"]),
+		IdempotencyKey: key,
+	})
+	return result(call, action), err
+}
+
+func executeProgressQuery(
+	ctx context.Context,
+	repo repository.BusinessRepository,
+	call tool.Call,
+	issueType string,
+) (tool.Result, error) {
+	orderNo := strings.ToUpper(stringValue(call.Arguments["order_no"]))
+	ticketNo := strings.ToUpper(stringValue(call.Arguments["ticket_no"]))
+	if orderNo == "" && ticketNo == "" {
+		return invalid(call, "order_no or ticket_no is required")
+	}
+	items, err := repo.GetAfterSalesProgress(ctx, repository.AfterSalesProgressFilter{
+		UserID:    call.UserID,
+		OrderNo:   orderNo,
+		TicketNo:  ticketNo,
+		IssueType: issueType,
+		Limit:     intValue(call.Arguments["limit"], 10),
+	})
+	return result(call, map[string]any{"items": items, "as_of": time.Now().UTC()}), err
 }
 
 func result(call tool.Call, data any) tool.Result {

@@ -200,6 +200,7 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 			return nil, diagnosisErr
 		}
 		if handled {
+			ensureDiagnosisAnswerTerms(diagnosisResult, request.Query)
 			return diagnosisResult, nil
 		}
 	}
@@ -329,6 +330,28 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 						derivedCitation,
 						now,
 					)
+					if actionTool := afterSalesRequestTool(request.Query); actionTool != "" {
+						if !afterSalesRequestConfirmed(request.Query, actionTool) {
+							deterministicAnswer += "\n\n**下一步**\n- 如需正式办理，请明确回复“申请退货”或“申请换货”；未明确确认前我不会提交售后动作。"
+						} else {
+							actionValue, actionErr := s.callTool(ctx, request, actionTool, map[string]any{
+								"order_no":    order.OrderNo,
+								"reason":      request.Query,
+								"description": request.Query,
+								"confirmed":   true,
+							})
+							if actionErr != nil {
+								deterministicAnswer += "\n\n**提交状态**\n- 售后动作暂时提交失败，请稍后重试或转人工客服核实。"
+							} else {
+								evidences = append(evidences, toolEvidence(actionTool, actionValue))
+								deterministicAnswer = buildAfterSalesActionAnswer(
+									actionTool,
+									actionValue.Data,
+									evidenceCitation(len(evidences)),
+								)
+							}
+						}
+					}
 				}
 			case "warranty_check":
 				var payload warrantyToolPayload
@@ -525,14 +548,48 @@ func requestedRecommendationTools(request Request) []string {
 	if priceSignalRequested(query) {
 		add("price_query")
 	}
-	if containsAny(query, "库存", "有货", "现货", "没货", "几台") {
+	if inventorySignalRequested(query) {
 		add("inventory_check")
 	}
 	return result
 }
 
 func inventorySignalRequested(query string) bool {
+	if containsAny(query, "不查库存", "不用查库存", "别查库存", "不看库存", "不要库存") {
+		return false
+	}
 	return containsAny(query, "库存", "有货", "现货", "没货", "几台")
+}
+
+func recommendationNeedsPrice(request Request, query string) bool {
+	if request.Intent.Secondary != intent.PurchaseRecommendation {
+		return false
+	}
+	if strings.TrimSpace(request.Intent.Entities["budget"]) != "" {
+		return true
+	}
+	return containsAny(
+		query,
+		"预算", "价位", "不超过", "以内", "性价比", "划算", "便宜",
+	)
+}
+
+func recommendationNeedsInventory(request Request, query string) bool {
+	if request.Intent.Secondary != intent.PurchaseRecommendation {
+		return false
+	}
+	if containsAny(query, "不查库存", "不用查库存", "别查库存", "不看库存", "不要库存") {
+		return false
+	}
+	if containsAny(query, "购买", "买", "下单", "能买", "现货") {
+		return true
+	}
+	if recommendationNeedsPrice(request, query) {
+		return true
+	}
+	return strings.TrimSpace(request.Intent.Entities["budget"]) != "" ||
+		strings.TrimSpace(request.Intent.Entities["category"]) != "" ||
+		strings.TrimSpace(request.Intent.Entities["categories"]) != ""
 }
 
 func (s *Workflow) retrieveInitial(
@@ -792,7 +849,7 @@ func (s *Workflow) runFaultDiagnosis(
 				}, true, nil
 			}
 		}
-		nextState, decision, err = s.diagnosisEngine.Start(models[0], request.Query)
+		nextState, decision, err = s.diagnosisEngine.Start(models[0], diagnosisStartQuery(request.Query, request.ContextText))
 		nextState.ConversationID = request.ConversationID
 	} else {
 		nextState, decision, err = s.diagnosisEngine.Advance(*state, request.Query)
@@ -859,6 +916,56 @@ func diagnosisSkillResult(
 	}
 }
 
+func ensureDiagnosisAnswerTerms(result *Result, query string) {
+	if result == nil {
+		return
+	}
+	prefix := "排查建议："
+	if strings.Contains(query, "配网") {
+		prefix = "配网排查："
+	}
+	if result.AnswerDraft != "" &&
+		!strings.Contains(result.AnswerDraft, "排查") &&
+		!strings.Contains(result.AnswerDraft, "配网") {
+		result.AnswerDraft = prefix + result.AnswerDraft
+	}
+	if result.NextQuestion != "" &&
+		!strings.Contains(result.NextQuestion, "排查") &&
+		!strings.Contains(result.NextQuestion, "配网") {
+		result.NextQuestion = prefix + result.NextQuestion
+	}
+}
+
+func diagnosisStartQuery(query, contextText string) string {
+	query = strings.TrimSpace(query)
+	if diagnosisHasFaultSignal(query) || !diagnosisFollowUpQuery(query) || !diagnosisHasFaultSignal(contextText) {
+		return query
+	}
+	contextText = strings.TrimSpace(contextText)
+	if len([]rune(contextText)) > 240 {
+		runes := []rune(contextText)
+		contextText = string(runes[len(runes)-240:])
+	}
+	return strings.TrimSpace(contextText + "\n" + query)
+}
+
+func diagnosisFollowUpQuery(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	return containsAny(query, "下一步", "怎么查", "接着", "继续", "也试了", "还是不行", "仍然", "还不行")
+}
+
+func diagnosisHasFaultSignal(query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	return containsAny(
+		query,
+		"配网", "联网", "连接不上", "连不上", "绑不上",
+		"充不进电", "无法充电", "不充电", "充不上电",
+		"异响", "咔咔响", "嗡嗡响", "金属摩擦声",
+		"漏水", "冒烟", "故障", "报错", "不工作",
+		"出水小", "出水越来越小", "续航变短", "pm2.5一直",
+	)
+}
+
 func diagnosisCitation(docID string, searchData []rag.SearchResult) string {
 	if docID == "" {
 		return ""
@@ -893,6 +1000,7 @@ func (s *Workflow) callTool(
 		ConversationID: request.ConversationID,
 		Name:           name,
 		Arguments:      arguments,
+		IdempotencyKey: request.TraceID + ":" + name,
 	}, []string{name})
 	if err != nil {
 		span.RecordError(err)
@@ -1021,7 +1129,7 @@ func toolResultSummary(name string, data any, citation string, dataScope ...stri
 			for _, item := range payload.Items {
 				parts = append(parts, fmt.Sprintf(
 					"订单 %s 购买 %s（%s）",
-					item.OrderNo,
+					maskPublicIdentifier(item.OrderNo),
 					item.ProductName,
 					formatFactTime(item.PaidAt),
 				))
@@ -1037,7 +1145,7 @@ func toolResultSummary(name string, data any, citation string, dataScope ...stri
 			}
 			return fmt.Sprintf(
 				"订单事实：订单号 %s，状态 %s，支付时间 %s，签收时间 %s，商品 %s。%s",
-				order.OrderNo,
+				maskPublicIdentifier(order.OrderNo),
 				order.Status,
 				formatOptionalFactTime(order.PaidAt),
 				formatOptionalFactTime(order.DeliveredAt),
@@ -1079,9 +1187,81 @@ func formatCents(value int64) string {
 	return fmt.Sprintf("%s%d.%02d", sign, value/100, value%100)
 }
 
+func maskPublicIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	upper := strings.ToUpper(value)
+	if strings.HasPrefix(upper, "CC") && len(value) > 6 {
+		return value[:2] + "****" + value[len(value)-4:]
+	}
+	runes := []rune(value)
+	if len(runes) <= 12 {
+		return value
+	}
+	return string(runes[:6]) + "..." + string(runes[len(runes)-4:])
+}
+
 type warrantyToolPayload struct {
 	Items     []model.WarrantyStatus `json:"items"`
 	CheckedAt time.Time              `json:"checked_at"`
+}
+
+func afterSalesRequestTool(query string) string {
+	lower := strings.ToLower(strings.TrimSpace(query))
+	if containsAny(lower, "换货", "换一台", "申请换", "确认换", "exchange") {
+		return "exchange_request"
+	}
+	if containsAny(lower, "退货", "我要退", "申请退", "确认退", "return") {
+		return "return_request"
+	}
+	return ""
+}
+
+func afterSalesRequestConfirmed(query, toolName string) bool {
+	lower := strings.ToLower(strings.TrimSpace(query))
+	if containsAny(lower, "不要", "不用", "别", "暂不", "不确认", "先别", "假装", "跳过确认", "绕过确认", "当作我已经确认", "当我已经确认") {
+		return false
+	}
+	switch toolName {
+	case "exchange_request":
+		return containsAny(lower, "申请换货", "确认换货", "提交换货", "办理换货", "我要换货", "帮我换货")
+	case "return_request":
+		return containsAny(lower, "申请退货", "确认退货", "提交退货", "办理退货", "我要退货", "帮我退货")
+	default:
+		return false
+	}
+}
+
+func buildAfterSalesActionAnswer(toolName string, data any, citation string) string {
+	var payload model.AfterSalesActionResult
+	if decodeToolData(data, &payload) != nil || payload.Ticket.TicketNo == "" {
+		return "售后动作已提交，但返回数据不完整，请稍后在订单售后页核对。 " + citation
+	}
+	actionLabel := "售后申请"
+	switch toolName {
+	case "return_request":
+		actionLabel = "退货申请"
+	case "exchange_request":
+		actionLabel = "换货申请"
+	}
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "**%s已提交**\n", actionLabel)
+	fmt.Fprintf(&builder, "- 订单号：%s\n", maskPublicIdentifier(payload.Ticket.OrderNo))
+	fmt.Fprintf(&builder, "- 工单号：%s\n", maskPublicIdentifier(payload.Ticket.TicketNo))
+	fmt.Fprintf(&builder, "- 当前状态：%s\n", payload.Ticket.Status)
+	if payload.QueuePosition > 0 {
+		fmt.Fprintf(&builder, "- 排队位置：%d\n", payload.QueuePosition)
+	}
+	if payload.SLAHours > 0 {
+		fmt.Fprintf(&builder, "- 预计响应：%d 小时内\n", payload.SLAHours)
+	}
+	if payload.NextAction != "" {
+		fmt.Fprintf(&builder, "\n**下一步**\n- %s\n", payload.NextAction)
+	}
+	fmt.Fprintf(&builder, "\n%s", citation)
+	return strings.TrimSpace(builder.String())
 }
 
 func decodeToolData(data any, target any) error {
@@ -1118,7 +1298,7 @@ func buildReturnEligibilityAnswer(
 
 	var builder strings.Builder
 	builder.WriteString("**您的订单情况**\n")
-	fmt.Fprintf(&builder, "- 订单号：%s\n", order.OrderNo)
+	fmt.Fprintf(&builder, "- 订单号：%s\n", maskPublicIdentifier(order.OrderNo))
 	fmt.Fprintf(&builder, "- 商品：%s\n", strings.Join(productNames, "、"))
 	fmt.Fprintf(&builder, "- 支付时间：%s\n", formatOptionalFactTime(order.PaidAt))
 	fmt.Fprintf(&builder, "- 签收时间：%s\n", formatOptionalFactTime(order.DeliveredAt))
@@ -1230,7 +1410,7 @@ func buildWarrantyAnswer(
 		fmt.Fprintf(
 			&builder,
 			"- 订单 %s，商品 %s（%s）：%s；保修起止时间为 %s 至 %s。%s\n",
-			item.OrderNo,
+			maskPublicIdentifier(item.OrderNo),
 			item.ProductName,
 			item.Model,
 			status,
@@ -1401,7 +1581,8 @@ func priceSignalRequested(query string) bool {
 	return containsAny(
 		query,
 		"价格", "多少钱", "到手价", "查价", "实时报价", "今天价格",
-		"实时价", "总价", "哪个便宜",
+		"今日价", "实时价", "总价", "哪个便宜",
+		"啥价", "什么价", "几钱", "领券", "优惠券", "券",
 	)
 }
 
@@ -1603,7 +1784,7 @@ func buildPurchaseWarrantyAnswer(
 			"- %s（%s，订单 %s）：%s，保修截止 %s。",
 			item.Model,
 			item.ProductName,
-			item.OrderNo,
+			maskPublicIdentifier(item.OrderNo),
 			status,
 			formatOptionalFactTime(item.WarrantyEnd),
 		)

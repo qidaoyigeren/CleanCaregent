@@ -37,6 +37,10 @@ func ValidateResult(name string, data any) error {
 		validationErr = validateWarrantyResult(payload)
 	case "create_after_sales_ticket":
 		validationErr = validateTicketResult(payload)
+	case "return_request", "exchange_request", "handoff_to_human":
+		validationErr = validateAfterSalesActionResult(payload)
+	case "refund_status", "repair_status":
+		validationErr = validateAfterSalesProgressResult(payload)
 	}
 	if validationErr != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidResult, validationErr)
@@ -153,6 +157,42 @@ func validateTicketResult(payload map[string]any) error {
 	for _, field := range []string{"ticket_no", "order_no", "status", "idempotency_key"} {
 		if blank(payload[field]) {
 			return fmt.Errorf("ticket result is missing %s", field)
+		}
+	}
+	return nil
+}
+
+func validateAfterSalesActionResult(payload map[string]any) error {
+	if blank(payload["action"]) {
+		return errors.New("after-sales action result is missing action")
+	}
+	ticket, ok := payload["ticket"].(map[string]any)
+	if !ok {
+		return errors.New("after-sales action result is missing ticket")
+	}
+	for _, field := range []string{"ticket_no", "status", "idempotency_key"} {
+		if blank(ticket[field]) {
+			return fmt.Errorf("after-sales action ticket is missing %s", field)
+		}
+	}
+	if strings.TrimSpace(fmt.Sprint(payload["action"])) != "human_handoff" && blank(ticket["order_no"]) {
+		return errors.New("after-sales action ticket is missing order_no")
+	}
+	return nil
+}
+
+func validateAfterSalesProgressResult(payload map[string]any) error {
+	rawItems, ok := payload["items"].([]any)
+	if !ok {
+		return errors.New("after-sales progress result is missing items")
+	}
+	for index, rawItem := range rawItems {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			return fmt.Errorf("after-sales progress item %d is not an object", index)
+		}
+		if blank(item["order_no"]) || blank(item["status"]) || blank(item["stage"]) {
+			return fmt.Errorf("after-sales progress item %d is missing order_no, status, or stage", index)
 		}
 	}
 	return nil

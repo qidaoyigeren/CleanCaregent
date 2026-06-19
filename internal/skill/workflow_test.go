@@ -52,7 +52,7 @@ func TestBuildReturnEligibilityAnswerUsesOrderFacts(t *testing.T) {
 	)
 
 	for _, expected := range []string{
-		"CC20260518001",
+		"CC****8001",
 		"CleanCare T20 扫地机器人",
 		"已超过 7 天",
 		"包装已经拆开",
@@ -86,6 +86,28 @@ func TestReturnEligibilityDerivedEvidenceGroundsElapsedDays(t *testing.T) {
 	}
 }
 
+func TestDiagnosisStartQueryCarriesPriorFaultSignalForFollowup(t *testing.T) {
+	got := diagnosisStartQuery(
+		"T20 下一步查什么",
+		"扫地机器人配网失败\n2.4G 网络也试了",
+	)
+	for _, want := range []string{"配网失败", "T20 下一步查什么"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("diagnosis query = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestDiagnosisStartQueryDoesNotPolluteFreshFaultQuery(t *testing.T) {
+	got := diagnosisStartQuery(
+		"T20 充不上电",
+		"之前问过配网失败",
+	)
+	if got != "T20 充不上电" {
+		t.Fatalf("diagnosis query = %q", got)
+	}
+}
+
 func TestBuildWarrantyAnswerUsesToolResult(t *testing.T) {
 	start := time.Date(2026, 6, 5, 9, 0, 0, 0, time.Local)
 	end := start.AddDate(1, 0, 0)
@@ -109,7 +131,7 @@ func TestBuildWarrantyAnswerUsesToolResult(t *testing.T) {
 	)
 
 	for _, expected := range []string{
-		"CC20260603001",
+		"CC****3001",
 		"X20 Pro",
 		"在保修期内",
 		"[E1]",
@@ -133,6 +155,7 @@ func TestRequestedRecommendationTools(t *testing.T) {
 				Query:  "120平两只猫，预算5000元推荐扫地机器人",
 				Intent: intent.Result{Secondary: intent.PurchaseRecommendation},
 			},
+			want: nil,
 		},
 		{
 			name: "secondary intents",

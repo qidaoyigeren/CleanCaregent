@@ -354,7 +354,7 @@ func (r *BusinessRepository) CreateAfterSalesTicket(
 		Description:      request.Description,
 		DiagnosisSummary: request.DiagnosisSummary,
 		EvidenceIDs:      request.EvidenceIDs,
-		Status:           "created",
+		Status:           initialAfterSalesStatus(request.IssueType),
 		IdempotencyKey:   request.IdempotencyKey,
 		CreatedAt:        time.Now().UTC(),
 	}
@@ -379,11 +379,150 @@ func (r *BusinessRepository) CreateAfterSalesTicket(
 	return ticket, nil
 }
 
+func (r *BusinessRepository) RequestAfterSalesAction(
+	ctx context.Context,
+	request repository.AfterSalesActionRequest,
+) (model.AfterSalesActionResult, error) {
+	request.Action = strings.ToLower(strings.TrimSpace(request.Action))
+	request.IssueType = strings.ToLower(strings.TrimSpace(request.IssueType))
+	if request.IssueType == "" {
+		request.IssueType = request.Action
+	}
+	if request.Description == "" {
+		request.Description = request.Reason
+	}
+	if request.Description == "" {
+		request.Description = "after-sales action requested"
+	}
+	ticket, err := r.CreateAfterSalesTicket(ctx, repository.CreateTicketRequest{
+		UserID:           request.UserID,
+		OrderNo:          request.OrderNo,
+		OrderItemID:      request.OrderItemID,
+		IssueType:        request.IssueType,
+		Description:      request.Description,
+		DiagnosisSummary: request.DiagnosisSummary,
+		EvidenceIDs:      request.EvidenceIDs,
+		IdempotencyKey:   request.IdempotencyKey,
+	})
+	if err != nil {
+		return model.AfterSalesActionResult{}, err
+	}
+	slaHours := afterSalesSLAHours(request.IssueType)
+	result := model.AfterSalesActionResult{
+		Action:        request.Action,
+		Ticket:        ticket,
+		QueuePosition: estimatedQueuePosition(request.UserID, request.OrderNo, request.IssueType),
+		SLAHours:      slaHours,
+		NextAction:    afterSalesNextAction(request.IssueType),
+		Audit: map[string]string{
+			"scope":       "current_user_order",
+			"side_effect": "state_change",
+			"reason":      request.IssueType,
+		},
+	}
+	return result, nil
+}
+
+func (r *BusinessRepository) GetAfterSalesProgress(
+	ctx context.Context,
+	filter repository.AfterSalesProgressFilter,
+) ([]model.AfterSalesProgress, error) {
+	filter.UserID = strings.TrimSpace(filter.UserID)
+	filter.OrderNo = strings.ToUpper(strings.TrimSpace(filter.OrderNo))
+	filter.TicketNo = strings.ToUpper(strings.TrimSpace(filter.TicketNo))
+	filter.IssueType = strings.ToLower(strings.TrimSpace(filter.IssueType))
+	if filter.Limit <= 0 || filter.Limit > 20 {
+		filter.Limit = 10
+	}
+	conditions := []string{"u.user_no = ?"}
+	args := []any{filter.UserID}
+	if filter.OrderNo != "" {
+		conditions = append(conditions, "o.order_no = ?")
+		args = append(args, filter.OrderNo)
+	}
+	if filter.TicketNo != "" {
+		conditions = append(conditions, "ast.ticket_no = ?")
+		args = append(args, filter.TicketNo)
+	}
+	if filter.IssueType != "" {
+		conditions = append(conditions, "ast.issue_type = ?")
+		args = append(args, filter.IssueType)
+	}
+	args = append(args, filter.Limit)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT ast.ticket_no, o.order_no, ast.issue_type, ast.status, ast.created_at, ast.updated_at,
+		       o.total_amount
+		FROM after_sales_tickets ast
+		JOIN users u ON u.id = ast.user_id
+		JOIN orders o ON o.id = ast.order_id
+		WHERE `+strings.Join(conditions, " AND ")+`
+		ORDER BY ast.updated_at DESC, ast.id DESC
+		LIMIT ?
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query after-sales progress: %w", err)
+	}
+	defer rows.Close()
+	items := make([]model.AfterSalesProgress, 0)
+	for rows.Next() {
+		var item model.AfterSalesProgress
+		var totalAmountRaw string
+		if err := rows.Scan(
+			&item.TicketNo,
+			&item.OrderNo,
+			&item.IssueType,
+			&item.Status,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+			&totalAmountRaw,
+		); err != nil {
+			return nil, fmt.Errorf("scan after-sales progress: %w", err)
+		}
+		item.Stage = afterSalesStage(item.IssueType, item.Status)
+		item.NextAction = afterSalesNextAction(item.IssueType)
+		if refundLikeIssue(item.IssueType) {
+			item.RefundAmountCents, _ = parseDecimalCents(totalAmountRaw)
+		}
+		estimated := item.UpdatedAt.Add(time.Duration(afterSalesSLAHours(item.IssueType)) * time.Hour)
+		item.EstimatedCompletionAt = &estimated
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate after-sales progress: %w", err)
+	}
+	if len(items) == 0 && filter.OrderNo != "" {
+		order, err := r.GetOrder(ctx, filter.UserID, filter.OrderNo)
+		if err != nil {
+			return nil, err
+		}
+		issueType := filter.IssueType
+		if issueType == "" {
+			issueType = "repair"
+		}
+		items = append(items, model.AfterSalesProgress{
+			OrderNo:    order.OrderNo,
+			IssueType:  issueType,
+			Status:     "not_created",
+			Stage:      "no_after_sales_record",
+			NextAction: "Ask the user whether to create an after-sales ticket after policy and order verification.",
+			CreatedAt:  order.CreatedAt,
+			UpdatedAt:  order.CreatedAt,
+		})
+	}
+	return items, nil
+}
+
 func (r *BusinessRepository) SaveToolCall(ctx context.Context, call tool.Call, result tool.Result) error {
 	argsRaw, _ := json.Marshal(maskToolArguments(call.Arguments))
 	resultRaw, _ := json.Marshal(map[string]any{
 		"data_scope": result.DataScope,
-		"data":       result.Data,
+		"data":       redactToolData(result.Data),
+		"audit": map[string]any{
+			"tool_name":   call.Name,
+			"sensitive":   sensitiveTool(call.Name),
+			"side_effect": sensitiveToolSideEffect(call.Name),
+			"scope":       "current_user",
+		},
 	})
 	status := "success"
 	if !result.Success {
@@ -403,17 +542,171 @@ func (r *BusinessRepository) SaveToolCall(ctx context.Context, call tool.Call, r
 	return nil
 }
 
+func redactToolData(value any) any {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return value
+	}
+	return redactAny(decoded)
+}
+
+func redactAny(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		masked := make(map[string]any, len(typed))
+		for key, item := range typed {
+			lower := strings.ToLower(key)
+			switch lower {
+			case "user_id", "user_no", "phone", "mobile", "contact", "address", "description", "diagnosis_summary", "idempotency_key":
+				masked[key] = "[REDACTED]"
+			case "order_no", "ticket_no":
+				masked[key] = maskIdentifier(fmt.Sprint(item))
+			default:
+				masked[key] = redactAny(item)
+			}
+		}
+		return masked
+	case []any:
+		masked := make([]any, 0, len(typed))
+		for _, item := range typed {
+			masked = append(masked, redactAny(item))
+		}
+		return masked
+	default:
+		return value
+	}
+}
+
+func maskIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 6 {
+		return "[REDACTED]"
+	}
+	return value[:2] + "****" + value[len(value)-4:]
+}
+
+func sensitiveTool(name string) bool {
+	switch tool.LogicalName(name) {
+	case "user_purchase_history", "order_lookup", "warranty_check",
+		"create_after_sales_ticket", "return_request", "exchange_request",
+		"refund_status", "repair_status", "handoff_to_human":
+		return true
+	default:
+		return false
+	}
+}
+
+func sensitiveToolSideEffect(name string) string {
+	switch tool.LogicalName(name) {
+	case "create_after_sales_ticket", "return_request", "exchange_request", "handoff_to_human":
+		return string(tool.SideEffectStateChange)
+	default:
+		return string(tool.SideEffectReadOnly)
+	}
+}
+
 func maskToolArguments(arguments map[string]any) map[string]any {
 	masked := make(map[string]any, len(arguments))
 	for key, value := range arguments {
 		switch strings.ToLower(key) {
-		case "description", "contact", "phone", "mobile", "address":
+		case "description", "contact", "phone", "mobile", "address", "user_id", "user_no":
 			masked[key] = "[REDACTED]"
+		case "order_no", "ticket_no":
+			masked[key] = maskIdentifier(fmt.Sprint(value))
 		default:
 			masked[key] = value
 		}
 	}
 	return masked
+}
+
+func initialAfterSalesStatus(issueType string) string {
+	switch strings.ToLower(strings.TrimSpace(issueType)) {
+	case "return":
+		return "return_requested"
+	case "exchange":
+		return "exchange_requested"
+	case "refund":
+		return "refund_reviewing"
+	case "human_handoff":
+		return "human_queued"
+	case "repair", "":
+		return "repair_requested"
+	default:
+		return "created"
+	}
+}
+
+func afterSalesSLAHours(issueType string) int {
+	switch strings.ToLower(strings.TrimSpace(issueType)) {
+	case "human_handoff":
+		return 2
+	case "refund":
+		return 48
+	case "return", "exchange":
+		return 24
+	default:
+		return 72
+	}
+}
+
+func afterSalesNextAction(issueType string) string {
+	switch strings.ToLower(strings.TrimSpace(issueType)) {
+	case "human_handoff":
+		return "Human agent will review conversation context and contact the user in queue order."
+	case "return":
+		return "Wait for return eligibility review and keep product, accessories, packaging, and invoice materials."
+	case "exchange":
+		return "Wait for exchange eligibility review and keep product condition evidence."
+	case "refund":
+		return "Wait for refund audit; refund timing depends on payment channel after approval."
+	default:
+		return "Keep the product powered off if safety risk exists and wait for diagnosis or repair scheduling."
+	}
+}
+
+func afterSalesStage(issueType, status string) string {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "not_created" {
+		return "no_after_sales_record"
+	}
+	switch strings.ToLower(strings.TrimSpace(issueType)) {
+	case "human_handoff":
+		return "human_queue"
+	case "refund":
+		if strings.Contains(status, "done") || strings.Contains(status, "completed") {
+			return "refund_completed"
+		}
+		return "refund_review"
+	case "return":
+		return "return_review"
+	case "exchange":
+		return "exchange_review"
+	default:
+		return "repair_review"
+	}
+}
+
+func refundLikeIssue(issueType string) bool {
+	switch strings.ToLower(strings.TrimSpace(issueType)) {
+	case "refund", "return":
+		return true
+	default:
+		return false
+	}
+}
+
+func estimatedQueuePosition(userID, orderNo, issueType string) int {
+	key := userID + "|" + orderNo + "|" + issueType
+	sum := 0
+	for _, current := range key {
+		sum += int(current)
+	}
+	return sum%8 + 1
 }
 
 func (r *BusinessRepository) querySKUs(ctx context.Context, refs []string) ([]model.ProductSKU, error) {

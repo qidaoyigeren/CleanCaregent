@@ -91,3 +91,25 @@ type AfterSalesTicket struct {
 	IdempotencyKey   string    `json:"idempotency_key"`
 	CreatedAt        time.Time `json:"created_at"`
 }
+
+type AfterSalesActionResult struct {
+	Action        string            `json:"action"`
+	Ticket        AfterSalesTicket  `json:"ticket"`
+	QueuePosition int               `json:"queue_position,omitempty"`
+	SLAHours      int               `json:"sla_hours,omitempty"`
+	NextAction    string            `json:"next_action,omitempty"`
+	Audit         map[string]string `json:"audit,omitempty"`
+}
+
+type AfterSalesProgress struct {
+	TicketNo              string     `json:"ticket_no,omitempty"`
+	OrderNo               string     `json:"order_no"`
+	IssueType             string     `json:"issue_type"`
+	Status                string     `json:"status"`
+	Stage                 string     `json:"stage"`
+	NextAction            string     `json:"next_action,omitempty"`
+	RefundAmountCents     int64      `json:"refund_amount_cents,omitempty"`
+	EstimatedCompletionAt *time.Time `json:"estimated_completion_at,omitempty"`
+	CreatedAt             time.Time  `json:"created_at,omitempty"`
+	UpdatedAt             time.Time  `json:"updated_at,omitempty"`
+}

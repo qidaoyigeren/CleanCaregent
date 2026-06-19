@@ -199,7 +199,7 @@ func TestFormatToolAnswerDescribesCreatedTicket(t *testing.T) {
 		"模拟动态售后工单",
 		"明确确认",
 		"AS_TEST_001",
-		"CC20260603001",
+		"CC****3001",
 		"幂等",
 	} {
 		if !strings.Contains(answer, expected) {
