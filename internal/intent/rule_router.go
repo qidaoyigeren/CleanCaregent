@@ -35,6 +35,10 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 	if shouldCarryPresalesContext(lower, entities, priorEntities) {
 		mergeMissingEntities(entities, priorEntities, "category", "categories", "area", "budget", "pets", "has_carpet")
 	}
+	contextText := recentUserContextText(request)
+	if shouldCarryAfterSalesContext(lower, entities, priorEntities, contextText) {
+		mergeMissingEntities(entities, priorEntities, "order_no", "models", "category", "categories")
+	}
 
 	result := Result{Entities: entities, Confidence: 0.93}
 	switch {
@@ -43,6 +47,8 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 			Primary: PrimaryFallback, Secondary: Clarification,
 			Confidence: 1, NeedClarify: true, Entities: entities,
 		}
+	case securityOutOfScopeRequested(lower):
+		result.Primary, result.Secondary, result.Confidence = PrimaryFallback, OutOfScope, 0.99
 	case containsAny(lower,
 		"手机", "衣服", "食品", "生鲜", "空气炸锅", "增值税发票",
 		"别的用户", "所有订单导出来", "system prompt", "所有指令",
@@ -55,6 +61,31 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		result.NeedClarify = true
 	case containsAny(lower, "你好", "您好", "谢谢", "再见", "随便聊聊") && len([]rune(query)) <= 16:
 		result.Primary, result.Secondary, result.Confidence = PrimaryFallback, Chitchat, 0.98
+	case humanHandoffRequested(lower):
+		result.Primary, result.Secondary = PrimaryAftersales, HumanHandoff
+	case warrantyPrimaryRequested(lower) ||
+		(entities["order_no"] != "" && contextualWarrantyRequested(lower, contextText) &&
+			!contextualReturnRequested(lower, contextText) && !afterSalesStatusRequested(lower) &&
+			!troubleshootingIssueMentioned(lower)):
+		result.Primary, result.Secondary = PrimaryAftersales, WarrantyQuery
+	case afterSalesStatusRequested(lower):
+		result.Primary, result.Secondary = PrimaryAftersales, AfterSalesStatus
+		if containsAny(lower, "退款", "退货") {
+			entities["after_sales_status_type"] = "refund"
+		} else {
+			entities["after_sales_status_type"] = "repair"
+		}
+	case entities["order_no"] != "" && contextualAfterSalesStatusRequested(lower, contextText):
+		result.Primary, result.Secondary = PrimaryAftersales, AfterSalesStatus
+		if containsAny(lower+" "+contextText, "退款", "退货") {
+			entities["after_sales_status_type"] = "refund"
+		} else {
+			entities["after_sales_status_type"] = "repair"
+		}
+	case entities["order_no"] != "" && contextualReturnRequested(lower, contextText):
+		result.Primary, result.Secondary = PrimaryAftersales, ReturnEligibility
+	case entities["order_no"] != "" && contextualWarrantyRequested(lower, contextText) && !troubleshootingIssueMentioned(lower):
+		result.Primary, result.Secondary = PrimaryAftersales, WarrantyQuery
 	case containsAny(lower,
 		"创建工单", "售后工单", "帮我报修", "申请维修", "转人工",
 		"建维修工单", "建维修单", "建工单", "提售后", "建售后单", "提交",
@@ -75,7 +106,7 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		result.Primary, result.Secondary = PrimaryDiagnosis, Troubleshooting
 	case entities["order_no"] != "" && containsAny(lower, "出水小", "出水越来越小", "续航变短"):
 		result.Primary, result.Secondary = PrimaryDiagnosis, Troubleshooting
-	case containsAny(lower, "保修", "在保", "保修期", "过保", "延保", "还保不保", "保不保", "保到哪天"):
+	case warrantyPrimaryRequested(lower):
 		result.Primary, result.Secondary = PrimaryAftersales, WarrantyQuery
 	case accessoryIntentRequested(lower, entities):
 		result.Primary, result.Secondary = PrimaryPresales, AccessoryCompatibility
@@ -94,8 +125,18 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		entities["models"] = "W300,W500"
 	case explicitComparisonRequested(lower, entities):
 		result.Primary, result.Secondary = PrimaryPresales, ProductComparison
+	case commerceAugmentedRecommendationRequested(lower):
+		result.Primary, result.Secondary = PrimaryPresales, PurchaseRecommendation
+	case usageInstructionRequested(lower) && (priceRequested(lower) || inventoryRequested(lower)):
+		result.Primary, result.Secondary = PrimaryPresales, UsageInstruction
 	case singleModelConfigurationQuestion(lower, entities):
 		result.Primary, result.Secondary = PrimaryPresales, ProductParameter
+	case singleModelSuitabilityQuestion(lower, entities):
+		result.Primary, result.Secondary = PrimaryPresales, ProductParameter
+	case entities["order_no"] == "" && priceRequested(lower):
+		result.Primary, result.Secondary = PrimaryPresales, PriceQuery
+	case entities["order_no"] == "" && containsAny(lower, "库存", "现货", "有货", "还有几台", "能直接下单", "能下单几台", "当天发", "剩多少"):
+		result.Primary, result.Secondary = PrimaryPresales, InventoryQuery
 	case purchaseHistoryRequested(lower) && !usageInstructionRequested(lower) && !troubleshootingProcedureRequested(lower):
 		result.Primary, result.Secondary = PrimaryAftersales, OrderQuery
 	case networkBandChoiceRequested(lower):
@@ -132,6 +173,7 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		"配网", "联网", "清洁地毯", "更换步骤", "步骤给我", "袋子", "撕掉",
 		"白醋", "抬拖布", "开机前", "重装", "越来越小", "要先放水",
 		"直接灌", "关灯", "自动控制", "寿命在哪", "自己调风量",
+		"晚上模式", "地毯模式",
 		"第一次开机", "第一次用", "刚到家", "重新装", "建图", "连网",
 		"第一次冲洗", "咋拆", "水冲", "关阀泄压", "泡洗", "咋清理",
 		"显示30%", "掉到10%", "滤芯显示", "加水", "纯净水", "自来水",
@@ -153,6 +195,10 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		"一分钟", "多少水", "400g", "600g", "800g", "1000g", "多少pa",
 	):
 		result.Primary, result.Secondary = PrimaryPresales, ProductParameter
+	case entities["order_no"] == "" && priceRequested(lower):
+		result.Primary, result.Secondary = PrimaryPresales, PriceQuery
+	case entities["order_no"] == "" && containsAny(lower, "库存", "现货", "有货", "还有几台", "能直接下单", "能下单几台", "当天发", "剩多少"):
+		result.Primary, result.Secondary = PrimaryPresales, InventoryQuery
 	case purchaseHistoryRequested(lower):
 		result.Primary, result.Secondary = PrimaryAftersales, OrderQuery
 	case containsAny(lower, "库存", "现货", "有货", "还有几台", "能直接下单", "能下单几台", "当天发", "剩多少"):
@@ -205,15 +251,99 @@ func (r *RuleRouter) Route(ctx context.Context, request RouteRequest) (Result, e
 		result.NeedClarify = true
 		result.Confidence = min(result.Confidence, 0.9)
 	}
+	if result.Secondary == AfterSalesStatus && entities["order_no"] == "" {
+		result.NeedClarify = true
+		result.Confidence = min(result.Confidence, 0.88)
+	}
 	annotateCompetitor(query, &result)
 	return result, nil
 }
 
 func ticketConfirmationPresent(query string) bool {
-	if containsAny(query, "没确认", "未确认", "没有确认", "不确认", "不要创建") {
+	if containsAny(
+		query,
+		"没确认", "未确认", "没有确认", "不确认", "不要创建",
+		"不用确认", "不需要确认", "跳过确认", "绕过确认", "不要调用确认流程",
+		"假装", "当作我已经确认", "当我已经确认",
+	) {
 		return false
 	}
-	return containsAny(query, "我确认", "确认创建", "确认提交", "确认给", "确认了")
+	return containsAny(query, "我确认", "确认创建", "确认提交", "确认给", "确认了", "确认建", "确认报修", "确认维修")
+}
+
+func securityOutOfScopeRequested(query string) bool {
+	return containsAny(
+		query,
+		"system prompt", "developer message", "ignore all previous", "忽略以上", "忽略之前", "所有规则",
+		"内部 token", "api_key", "secret", "工具调用参数",
+		"所有用户", "全部用户", "导出", "数据库", "任意 sql", "sql 查询", "订单表", "select ",
+		"另一个用户", "别的用户", "其他用户", "别人", "用户 id", "用户手机号", "收货手机号", "收货地址",
+		"原始 json", "敏感字段", "所有 evidence",
+		"模拟工具返回", "工单状态改成完成", "状态改成完成", "不要调用确认流程",
+	)
+}
+
+func humanHandoffRequested(query string) bool {
+	if containsAny(query, "不要转人工", "不用转人工", "别转人工", "先别转人工") {
+		return false
+	}
+	return containsAny(query, "转人工", "人工客服", "真人客服", "人工接管", "人工处理", "人工售后", "客服接管")
+}
+
+func afterSalesStatusRequested(query string) bool {
+	if warrantyStatusRequested(query) {
+		return false
+	}
+	return containsAny(
+		query,
+		"维修进度", "工单进度", "售后进度", "退款进度", "退款状态", "退货进度", "换货进度",
+		"处理到哪", "修到哪", "进展", "售后状态", "维修状态", "工单状态",
+	)
+}
+
+func warrantyStatusRequested(query string) bool {
+	return containsAny(
+		query,
+		"保修到", "保到", "保修截止", "保修期", "还在保", "在保", "过保", "还保不保", "保不保",
+	)
+}
+
+func warrantyPrimaryRequested(query string) bool {
+	if !warrantyStatusRequested(query) {
+		return false
+	}
+	if containsAny(query, "退货", "退款", "换货", "退换", "质量问题") {
+		return false
+	}
+	if troubleshootingIssueMentioned(query) {
+		return false
+	}
+	return true
+}
+
+func troubleshootingIssueMentioned(query string) bool {
+	return containsAny(
+		query,
+		"充不进电", "无法充电", "不充电", "充不上电", "异响", "故障", "报错", "不工作",
+		"漏水", "冒烟", "问题仍在", "传感器异常", "数值异常", "配网失败", "连不上",
+		"出水小", "续航变短", "先查", "排查",
+	)
+}
+
+func commerceAugmentedRecommendationRequested(query string) bool {
+	if !priceRequested(query) && !inventoryRequested(query) {
+		return false
+	}
+	return containsAny(
+		query,
+		"推荐", "怎么选", "选哪", "选什么", "筛完", "先推荐", "再看价格", "再查总价",
+		"先看安装限制", "没货就别推荐", "满足流量", "不够就换", "够的话", "合适的话",
+		"顺便查到手价", "租房想装", "预算", "两只猫", "婴儿房",
+	)
+}
+
+func inventoryRequested(query string) bool {
+	return containsAny(query, "库存", "现货", "有货", "还有几台", "能直接下单", "能下单几台", "当天发", "剩多少", "没货")
 }
 
 func detectSecondaryIntents(query string, primary Type, entities map[string]string) []Type {
@@ -261,6 +391,8 @@ func detectSecondaryIntents(query string, primary Type, entities map[string]stri
 	add(WarrantyQuery, containsAny(query, "保修", "在保", "保修期", "过保", "延保", "还保不保", "保不保", "保到哪天"))
 	add(ReturnEligibility, containsAny(query, "退货", "换货", "还能退", "能退吗"))
 	add(CreateAfterSalesTicket, containsAny(query, "创建工单", "售后工单", "申请维修", "帮我报修"))
+	add(AfterSalesStatus, afterSalesStatusRequested(query))
+	add(HumanHandoff, humanHandoffRequested(query))
 	return candidates
 }
 
@@ -298,6 +430,7 @@ func usageInstructionRequested(query string) bool {
 		query,
 		"首次", "咋做", "怎么做", "怎么用", "如何", "冲洗", "清理",
 		"更换", "清洁", "配网", "联网", "安装", "模式咋", "怎么设",
+		"咋设", "晚上模式", "夜间模式", "睡眠模式", "地毯模式",
 	)
 }
 
@@ -308,7 +441,8 @@ func priceRequested(query string) bool {
 	return containsAny(
 		query,
 		"多少钱", "价格", "售价", "优惠", "券后", "报价", "到手价",
-		"查价", "今天价格", "实时价", "总价", "哪个便宜",
+		"查价", "今天价格", "今日价", "实时价", "总价", "哪个便宜",
+		"啥价", "什么价", "几钱", "领券", "优惠券", "券",
 	)
 }
 
@@ -324,6 +458,8 @@ func matchedKeywords(query string, intentType Type) []string {
 		OrderQuery:             {"订单", "购买记录", "什么时候买", "啥时候买", "哪天签收", "最近一单"},
 		WarrantyQuery:          {"保修", "在保", "保修期", "还保不保", "保不保", "保到哪天"},
 		ReturnEligibility:      {"退货", "换货", "还能退", "能退吗"},
+		AfterSalesStatus:       {"维修进度", "工单进度", "退款进度", "售后状态"},
+		HumanHandoff:           {"转人工", "人工客服", "真人客服", "人工接管"},
 		Troubleshooting:        {"充不进电", "充不进", "充不上电", "无法充电", "异响", "漏水", "冒烟", "报错", "配网失败", "绑不上"},
 		CreateAfterSalesTicket: {"创建工单", "售后工单", "建售后单", "建工单", "申请维修", "帮我报修"},
 		OutOfScope:             {"手机", "衣服", "食品", "生鲜", "发票", "投诉"},
@@ -355,6 +491,20 @@ func singleModelConfigurationQuestion(query string, entities map[string]string) 
 	return modelCount(entities) == 1 &&
 		containsAny(query, "套装", "主机", "配置") &&
 		containsAny(query, "区别", "差异", "有什么不同", "有啥区别")
+}
+
+func singleModelSuitabilityQuestion(query string, entities map[string]string) bool {
+	if modelCount(entities) != 1 {
+		return false
+	}
+	if containsAny(query, "推荐", "怎么选", "选哪", "选什么", "买哪款", "换成", "不够就换") {
+		return false
+	}
+	return containsAny(
+		query,
+		"够不够", "够用", "适合不", "合适不", "适合吗", "能不能覆盖", "覆盖得过",
+		"会不会中途没电", "一次能扫", "多大面积", "放", "用在", "养猫", "宠物", "地毯",
+	)
 }
 
 func recommendationContinuationRequested(query string, entities, priorEntities map[string]string) bool {
@@ -505,7 +655,7 @@ func recentUserContextEntities(request RouteRequest) map[string]string {
 	result := map[string]string{}
 	if strings.TrimSpace(request.Summary) != "" {
 		overwriteEntities(result, extractEntities(request.Summary),
-			"models", "category", "categories", "area", "budget", "pets", "has_carpet", "accessory_refs",
+			"models", "category", "categories", "area", "budget", "pets", "has_carpet", "accessory_refs", "order_no",
 		)
 	}
 	for _, message := range request.RecentMessages {
@@ -513,10 +663,23 @@ func recentUserContextEntities(request RouteRequest) map[string]string {
 			continue
 		}
 		overwriteEntities(result, extractEntities(message.Content),
-			"models", "category", "categories", "area", "budget", "pets", "has_carpet", "accessory_refs",
+			"models", "category", "categories", "area", "budget", "pets", "has_carpet", "accessory_refs", "order_no",
 		)
 	}
 	return result
+}
+
+func recentUserContextText(request RouteRequest) string {
+	parts := make([]string, 0, len(request.RecentMessages)+1)
+	if strings.TrimSpace(request.Summary) != "" {
+		parts = append(parts, strings.ToLower(request.Summary))
+	}
+	for _, message := range request.RecentMessages {
+		if message.Role == "user" {
+			parts = append(parts, strings.ToLower(message.Content))
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func shouldCarryPresalesContext(query string, entities, priorEntities map[string]string) bool {
@@ -552,6 +715,38 @@ func hasRecommendationConstraint(entities map[string]string) bool {
 		}
 	}
 	return false
+}
+
+func shouldCarryAfterSalesContext(query string, entities, priorEntities map[string]string, contextText string) bool {
+	if strings.TrimSpace(priorEntities["order_no"]) == "" {
+		return false
+	}
+	if strings.TrimSpace(entities["order_no"]) != "" {
+		return true
+	}
+	return containsAny(
+		query+" "+contextText,
+		"保修", "在保", "过保", "退货", "退款", "换货", "售后", "维修", "工单", "报修", "进度", "状态", "确认",
+	)
+}
+
+func contextualWarrantyRequested(query, contextText string) bool {
+	return containsAny(query+" "+contextText, "保修", "在保", "过保", "免费修", "保不保", "保到")
+}
+
+func contextualReturnRequested(query, contextText string) bool {
+	return containsAny(query+" "+contextText, "退货", "退款", "换货", "退换", "质量问题", "售后规则", "退货条件", "退款条件")
+}
+
+func contextualAfterSalesStatusRequested(query, contextText string) bool {
+	if contextualWarrantyRequested(query, "") {
+		return false
+	}
+	if purchaseHistoryRequested(query) && !containsAny(query, "售后", "维修", "工单", "退款", "退货", "换货") {
+		return false
+	}
+	return containsAny(query, "进度", "状态", "到哪", "怎样", "怎么还没", "查一下") &&
+		containsAny(query+" "+contextText, "售后", "维修", "工单", "退款", "退货", "换货")
 }
 
 func mergeMissingEntities(target, source map[string]string, keys ...string) {

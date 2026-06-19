@@ -27,6 +27,8 @@ const (
 	OrderQuery             Type = "order_query"
 	WarrantyQuery          Type = "warranty_query"
 	ReturnEligibility      Type = "return_eligibility"
+	AfterSalesStatus       Type = "after_sales_status"
+	HumanHandoff           Type = "human_handoff"
 	Troubleshooting        Type = "troubleshooting"
 	CreateAfterSalesTicket Type = "create_after_sales_ticket"
 	Clarification          Type = "clarification"
@@ -73,7 +75,7 @@ func PrimaryFor(value Type) PrimaryType {
 	case ProductParameter, ProductComparison, PurchaseRecommendation,
 		AccessoryCompatibility, UsageInstruction, PriceQuery, InventoryQuery:
 		return PrimaryPresales
-	case OrderQuery, WarrantyQuery, ReturnEligibility, CreateAfterSalesTicket:
+	case OrderQuery, WarrantyQuery, ReturnEligibility, AfterSalesStatus, HumanHandoff, CreateAfterSalesTicket:
 		return PrimaryAftersales
 	case Troubleshooting:
 		return PrimaryDiagnosis
