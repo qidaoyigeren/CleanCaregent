@@ -77,7 +77,7 @@ HTTP/SSE -> Session -> Intent Router -> Query Rewrite
 
 | 层级 | 技术 |
 |---|---|
-| Backend | Go 1.26、Gin、Viper、Zap |
+| Backend | Go 1.26.4、Gin、Viper、Zap |
 | Frontend | React 19、TypeScript 6、Vite 8 |
 | Database | MySQL 8.4 |
 | Cache / Memory | Redis 7.4 |
@@ -90,7 +90,7 @@ HTTP/SSE -> Session -> Intent Router -> Query Rewrite
 
 ### 1. 环境要求
 
-- Go 1.26
+- Go 1.26.4
 - Node.js 22+
 - Docker Desktop
 
@@ -190,7 +190,7 @@ npm run dev
 - 后端 API：`http://127.0.0.1:8080`
 - Qdrant Dashboard：`http://127.0.0.1:6333/dashboard`
 
-Vite 开发服务器会把 `/api` 请求代理到 `8080`。本地配置默认关闭鉴权；启用鉴权后，用户接口使用 JWT，管理员接口使用 `X-Admin-API-Key`。
+Vite 开发服务器会把 `/api` 请求代理到 `8080`。本地配置默认关闭鉴权；启用鉴权后，用户接口使用 JWT，管理员接口要求 JWT 中包含 admin role/scope。`X-Admin-API-Key` 仅保留为非生产本地兼容入口，生产配置会拒绝该项。
 
 ## Docker 启动后端
 
@@ -210,6 +210,7 @@ docker compose --profile app up -d --build
 
 ```powershell
 go test ./...
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 go run ./cmd/migrate
 docker compose --profile app up -d --build
 Invoke-RestMethod https://<api-host>/health/ready
@@ -225,12 +226,13 @@ npm ci
 npm run build
 ```
 
-将 `clean-care-frontend/dist` 发布到 nginx 或 CDN，并通过 TLS 反向代理把 `/api/*` 转发到 Go API。前端使用相对 `/api/v1` 地址，生产 API base URL 由反向代理控制。私有 API 响应应使用 `Cache-Control: no-store`；service worker、CDN 和全局内存缓存都不能缓存 `/api` 私有会话或 admin 数据。CSP 只允许已部署的静态资源域名和 API 域名；admin API key 不得持久化到浏览器存储。
+将 `clean-care-frontend/dist` 发布到 nginx 或 CDN，并通过 TLS 反向代理把 `/api/*` 转发到 Go API。前端使用相对 `/api/v1` 地址，生产 API base URL 由反向代理控制。私有 API 响应应使用 `Cache-Control: no-store`；service worker、CDN 和全局内存缓存都不能缓存 `/api` 私有会话或 admin 数据。CSP 只允许已部署的静态资源域名和 API 域名；管理面必须通过 OIDC/BFF 或短期 JWT 注入 `Authorization`，不得把高权限全局 key 暴露给浏览器。
 
 上线质量门槛：
 
 ```powershell
 go test ./...
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 Set-Location clean-care-frontend
 npm ci
 npm run build
@@ -283,7 +285,7 @@ GET  /api/v1/orders/{order_no}
 POST /api/v1/after-sales/tickets
 ```
 
-SSE 使用 `status`、`evidence`、`delta`、`done` 和 `error` 事件。创建售后工单、退货、换货和人工接管等有副作用动作必须显式确认，并提供幂等键；敏感工具结果会进入审计日志并做隐私脱敏。
+SSE 使用 `status`、`evidence`、`delta`、`heartbeat`、`done` 和 `error` 事件。服务端会周期发送 heartbeat 保活；客户端重连复用同一个 `client_message_id` 时，后端会等待或 replay 同一个消息执行结果，不会因浏览器断线把真实执行标记为失败。创建售后工单、退货、换货和人工接管等有副作用动作必须显式确认，并提供幂等键；敏感工具结果会进入审计日志并做隐私脱敏。
 
 ### 管理接口
 
@@ -397,6 +399,7 @@ make eval-regression-report SYSTEM_VERSION=agentic-aftersales-loop-20260619
 go test ./...
 go test -race ./...
 go vet ./...
+go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 ```
 
 前端：
@@ -414,17 +417,19 @@ make e2e-agentic-mcp
 
 该链路会通过 Docker Compose 启动 Redis 和 Qdrant，并使用外部 MySQL DSN（CI 中由 GitHub Actions service 提供）启动独立 MCP HTTP server 与 API；脚本会断言 API 连接的是远程 MCP endpoint，并覆盖价格、库存、订单、售后建单、纯 KB 检索和澄清链路的 Trace 与工具调用。
 
-GitHub Actions 会执行模块文件检查、后端测试与构建、前端 lint 与构建、Docker 镜像构建，以及基于 Docker Compose 的 Agentic MCP 端到端链路测试；完整 200 条 regression MCP 回归由独立 `eval-regression` workflow 手动或定时执行。
+GitHub Actions 会执行模块文件检查、后端测试、race、vet、govulncheck、后端构建、前端 lint 与构建、Docker 镜像构建、SBOM 生成、Trivy 容器扫描，以及基于 Docker Compose 的 Agentic MCP 端到端链路测试；完整 200 条 regression MCP 回归由独立 `eval-regression` workflow 手动或定时执行。
 
 ## 项目边界
 
 - 动态价格、库存、订单、保修、退换、退款、维修和人工接管数据均为本地 mock 数据，工具结果和 Trace 会标记
   `data_scope=mock`，未接真实 ERP、支付或物流系统。
 - 工具发现和调用已走 MCP `initialize`、`tools/list` / `tools/call` 抽象；默认使用进程内 MCP server，也可通过 Streamable HTTP、stdio 或多 server 聚合接入独立/外部 MCP server。当前内置工具仍使用本地业务数据；OAuth 仅覆盖 protected-resource metadata 与 Bearer/API key 校验，不内置授权码、token introspection 和 scope 到 tool 的完整授权系统。
-- React 界面是开发与演示控制台，不是具备完整 RBAC、OIDC 和审计能力的生产管理后台。
+- React 界面是开发与演示控制台；浏览器端不再保存 Admin API Key，但生产管理后台仍需要 OIDC/JWKS/RBAC、短期 token 或 BFF、完整审计和操作审批。
 - Prompt 版本由进程内 Registry 管理，重启后不会持久化激活状态。
 - Cross-Encoder Reranker 依赖外部兼容服务，仓库不内置模型推理服务。
-- 尚未完成生产级 SLA、跨机房容灾、真实支付物流联调和大规模压力测试。
+- Dockerfile 当前只覆盖后端镜像；生产发布还需要 Ingress/TLS、secret manager、资源限制、前端静态资源发布、迁移 job、备份恢复、滚动发布与回滚方案。
+- Migration runner、eval runner 和进程内指标已满足开发/CI，但还没有生产级 online DDL 策略、长任务队列/取消/配额、标准 Prometheus client/OpenTelemetry Collector、SLO 告警、dashboard 和 runbook。
+- 尚未完成生产级 SLA、跨机房容灾、真实支付物流联调和大规模压力测试；当前状态适合 staging 验证，不应直接视为 production ready。
 
 ## 相关文档
 

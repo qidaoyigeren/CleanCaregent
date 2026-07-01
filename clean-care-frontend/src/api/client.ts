@@ -1,6 +1,6 @@
 import { ApiError } from '../types/api';
 import type { Envelope } from '../types/api';
-import { getAdminAPIKey, getAuthToken } from '../auth/token';
+import { getAuthToken } from '../auth/token';
 import { recordApiMetric } from '../utils/perfMonitor';
 
 const BASE_URL = '/api/v1';
@@ -42,8 +42,7 @@ const getRetryDelay = (attempt: number): number => {
 const getCacheKey = (path: string, options: FetchOptions): string => {
   const method = options.method || 'GET';
   const authScope = getAuthToken() ? 'auth' : 'anonymous';
-  const adminScope = path.startsWith('/admin/') && getAdminAPIKey() ? 'admin' : 'user';
-  return `${authScope}:${adminScope}:${method}:${path}`;
+  return `${authScope}:${method}:${path}`;
 };
 
 const isMemoryCacheAllowed = (path: string, method: string, cache?: RequestCache): boolean => {
@@ -143,11 +142,6 @@ async function executeFetch<T>(
   };
   const authToken = getAuthToken();
   if (authToken) fetchHeaders.Authorization = authToken;
-
-  if (path.startsWith('/admin/')) {
-    const adminKey = getAdminAPIKey();
-    if (adminKey) fetchHeaders['X-Admin-API-Key'] = adminKey;
-  }
 
   let fetchBody: string | FormData | undefined;
   if (body !== undefined) {

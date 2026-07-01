@@ -147,6 +147,7 @@ func (s *ConversationService) Ask(
 	if _, err := s.repository.Get(ctx, userID, conversationID); err != nil {
 		return AskResult{}, err
 	}
+	executionCtx := ctx
 	if clientMessageID != "" {
 		if existing, ok := s.findMessageByClientID(ctx, userID, conversationID, "assistant", clientMessageID); ok {
 			return replayAskResult(existing, "idempotent_replay"), nil
@@ -158,16 +159,17 @@ func (s *ConversationService) Ask(
 		if !started {
 			return s.waitMessageRequest(ctx, userID, conversationID, clientMessageID)
 		}
+		executionCtx = context.WithoutCancel(ctx)
 		defer func() {
 			if askErr != nil {
-				s.failMessageRequest(context.WithoutCancel(ctx), userID, conversationID, clientMessageID, askErr)
+				s.failMessageRequest(executionCtx, userID, conversationID, clientMessageID, askErr)
 				return
 			}
-			s.completeMessageRequest(context.WithoutCancel(ctx), userID, conversationID, clientMessageID, askResult.Message)
+			s.completeMessageRequest(executionCtx, userID, conversationID, clientMessageID, askResult.Message)
 		}()
 	}
 	conversationContext := memory.ConversationContext{ConversationID: conversationID}
-	memoryCtx, memorySpan := otel.Tracer("clean-care-agent/service").Start(ctx, "memory.load_context")
+	memoryCtx, memorySpan := otel.Tracer("clean-care-agent/service").Start(executionCtx, "memory.load_context")
 	var memoryLoadErr error
 	if s.memory != nil {
 		loaded, loadErr := s.memory.LoadContext(memoryCtx, conversationID, 10)
@@ -201,16 +203,16 @@ func (s *ConversationService) Ask(
 		ClientMessageID: clientMessageID,
 		CreatedAt:       time.Now().UTC(),
 	}
-	if err := s.repository.AppendMessage(ctx, userID, userMessage); err != nil {
+	if err := s.repository.AppendMessage(executionCtx, userID, userMessage); err != nil {
 		return AskResult{}, err
 	}
-	s.cacheMessage(ctx, userMessage)
+	s.cacheMessage(executionCtx, userMessage)
 
 	traceID := id.New("tr")
-	runCtx := ctx
+	runCtx := executionCtx
 	cancel := func() {}
 	if s.timeout > 0 {
-		runCtx, cancel = context.WithTimeout(ctx, s.timeout)
+		runCtx, cancel = context.WithTimeout(executionCtx, s.timeout)
 	}
 	defer cancel()
 
@@ -235,12 +237,12 @@ func (s *ConversationService) Ask(
 		ClientMessageID: clientMessageID,
 		CreatedAt:       time.Now().UTC(),
 	}
-	if err := s.repository.AppendMessage(ctx, userID, assistantMessage); err != nil {
+	if err := s.repository.AppendMessage(executionCtx, userID, assistantMessage); err != nil {
 		return AskResult{}, err
 	}
-	s.cacheMessage(ctx, assistantMessage)
+	s.cacheMessage(executionCtx, assistantMessage)
 	s.scheduleSummary(
-		ctx,
+		executionCtx,
 		userID,
 		conversationID,
 		conversationContext.Summary,

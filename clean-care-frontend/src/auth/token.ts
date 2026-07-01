@@ -1,5 +1,4 @@
 let authToken = '';
-let adminAPIKey = '';
 
 function normalizeBearerToken(token: string): string {
   const trimmed = token.trim();
@@ -17,12 +16,4 @@ export function setAuthToken(token: string): void {
 
 export function clearAuthToken(): void {
   authToken = '';
-}
-
-export function getAdminAPIKey(): string {
-  return adminAPIKey;
-}
-
-export function setAdminAPIKey(value: string): void {
-  adminAPIKey = value.trim();
 }

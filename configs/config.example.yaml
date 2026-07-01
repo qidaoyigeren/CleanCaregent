@@ -21,6 +21,8 @@ auth:
   jwt_secret: ""
   jwt_issuer: clean-care-agent
   jwt_leeway: 30s
+  admin_role: admin
+  # Local compatibility only. Production rejects this value; use JWT admin role/scope.
   admin_api_key: ""
 
 rate_limit:

@@ -49,12 +49,40 @@ func TestAdminAuthUsesSeparateAPIKey(t *testing.T) {
 	}
 }
 
+func TestAdminAuthAcceptsAdminJWTAndRejectsUserJWT(t *testing.T) {
+	cfg := testAuthConfig()
+	adminToken := signTestJWT(t, cfg, jwtClaims{
+		Subject: "admin-1001", Issuer: cfg.JWTIssuer, ExpiresAt: time.Now().Add(time.Minute).Unix(),
+		Roles: []string{"admin"},
+	})
+	recorder := serveAuthRequest(AdminAuth(cfg), map[string]string{"Authorization": "Bearer " + adminToken})
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "admin-1001" {
+		t.Fatalf("status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+
+	userToken := signTestJWT(t, cfg, jwtClaims{
+		Subject: "user-1001", Issuer: cfg.JWTIssuer, ExpiresAt: time.Now().Add(time.Minute).Unix(),
+		Roles: []string{"support"},
+	})
+	rejected := serveAuthRequest(AdminAuth(config.AuthConfig{
+		Enabled:   true,
+		JWTSecret: cfg.JWTSecret,
+		JWTIssuer: cfg.JWTIssuer,
+		JWTLeeway: cfg.JWTLeeway,
+		AdminRole: cfg.AdminRole,
+	}), map[string]string{"Authorization": "Bearer " + userToken})
+	if rejected.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%q", rejected.Code, rejected.Body.String())
+	}
+}
+
 func testAuthConfig() config.AuthConfig {
 	return config.AuthConfig{
 		Enabled:     true,
 		JWTSecret:   "test-secret-must-be-at-least-32-bytes",
 		JWTIssuer:   "clean-care-agent",
 		JWTLeeway:   time.Second,
+		AdminRole:   "admin",
 		AdminAPIKey: "test-admin-key",
 	}
 }

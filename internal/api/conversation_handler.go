@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	"CleanCaregent/internal/agent"
 	"CleanCaregent/internal/middleware"
@@ -17,6 +19,8 @@ import (
 type ConversationHandler struct {
 	service *service.ConversationService
 }
+
+const streamHeartbeatInterval = 10 * time.Second
 
 type createConversationRequest struct {
 	Title string `json:"title"`
@@ -129,39 +133,100 @@ func (h *ConversationHandler) Stream(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "content is required")
 		return
 	}
+	requestCtx := c.Request.Context()
+	userID := middleware.UserID(c)
+	conversationID := c.Param("conversation_id")
 	if err := h.service.CheckAccess(
-		c.Request.Context(),
-		middleware.UserID(c),
-		c.Param("conversation_id"),
+		requestCtx,
+		userID,
+		conversationID,
 	); err != nil {
 		writeServiceError(c, err)
 		return
 	}
 
-	stream := NewSSEWriter(c)
-	result, err := h.service.Ask(
-		c.Request.Context(),
-		middleware.UserID(c),
-		c.Param("conversation_id"),
-		req.Content,
-		req.ClientMessageID,
-		func(event agent.Event) error {
-			return stream.Send(event.Type, event.Data)
-		},
-	)
-	if err != nil {
-		_ = stream.Send("error", errorEvent(err))
-		return
+	stream := newSafeSSEStream(NewSSEWriter(c))
+	resultCh := make(chan streamAskResult, 1)
+	go func() {
+		result, err := h.service.Ask(
+			requestCtx,
+			userID,
+			conversationID,
+			req.Content,
+			req.ClientMessageID,
+			stream.Sink,
+		)
+		resultCh <- streamAskResult{result: result, err: err}
+	}()
+
+	heartbeat := time.NewTicker(streamHeartbeatInterval)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case outcome := <-resultCh:
+			if outcome.err != nil {
+				stream.Send("error", errorEvent(outcome.err))
+				return
+			}
+			if isIdempotentReplayMode(outcome.result.Result.Mode) && outcome.result.Result.Answer != "" {
+				stream.Send("delta", gin.H{"content": outcome.result.Result.Answer})
+			}
+			stream.Send("done", gin.H{
+				"message_id":    outcome.result.Message.ID,
+				"trace_id":      outcome.result.Message.TraceID,
+				"finish_reason": "stop",
+				"mode":          outcome.result.Result.Mode,
+			})
+			return
+		case <-heartbeat.C:
+			if !stream.Send("heartbeat", gin.H{"ts": time.Now().UTC().Format(time.RFC3339Nano)}) {
+				stream.Close()
+				return
+			}
+		case <-requestCtx.Done():
+			stream.Close()
+			return
+		}
 	}
-	if isIdempotentReplayMode(result.Result.Mode) && result.Result.Answer != "" {
-		_ = stream.Send("delta", gin.H{"content": result.Result.Answer})
+}
+
+type streamAskResult struct {
+	result service.AskResult
+	err    error
+}
+
+type safeSSEStream struct {
+	writer *SSEWriter
+	mu     sync.Mutex
+	closed bool
+}
+
+func newSafeSSEStream(writer *SSEWriter) *safeSSEStream {
+	return &safeSSEStream{writer: writer}
+}
+
+func (s *safeSSEStream) Sink(event agent.Event) error {
+	s.Send(event.Type, event.Data)
+	return nil
+}
+
+func (s *safeSSEStream) Send(event string, data any) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
 	}
-	_ = stream.Send("done", gin.H{
-		"message_id":    result.Message.ID,
-		"trace_id":      result.Message.TraceID,
-		"finish_reason": "stop",
-		"mode":          result.Result.Mode,
-	})
+	if err := s.writer.Send(event, data); err != nil {
+		s.closed = true
+		return false
+	}
+	return true
+}
+
+func (s *safeSSEStream) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
 }
 
 func writeServiceError(c *gin.Context, err error) {

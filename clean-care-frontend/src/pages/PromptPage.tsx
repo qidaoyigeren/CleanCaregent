@@ -6,7 +6,6 @@ import {
   getPrompts,
   type PromptTemplateSummary,
 } from '../api/admin';
-import { getAdminAPIKey, setAdminAPIKey } from '../auth/token';
 import ErrorMessage from '../components/ui/ErrorMessage';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 
@@ -15,7 +14,6 @@ export default function PromptPage() {
   const [selected, setSelected] = useState('system');
   const [versionA, setVersionA] = useState('v3');
   const [versionB, setVersionB] = useState('v3');
-  const [adminKey, setKey] = useState(getAdminAPIKey());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
@@ -86,20 +84,6 @@ export default function PromptPage() {
         <Link to="/admin/prompts" className="admin-nav__link admin-nav__link--active">Prompts</Link>
       </nav>
       <h1 className="admin-page__title">Prompt Management</h1>
-
-      <div className="eval-form__row" style={{ marginBottom: 'var(--space-4)' }}>
-        <label className="eval-form__field">
-          <span className="eval-form__label">Admin API Key</span>
-          <input
-            className="eval-form__input"
-            type="password"
-            value={adminKey}
-            onChange={(event) => setKey(event.target.value)}
-            onBlur={() => setAdminAPIKey(adminKey)}
-            placeholder="Required when backend auth is enabled"
-          />
-        </label>
-      </div>
 
       {error && <ErrorMessage message={error} onRetry={load} />}
       {loading && <LoadingSpinner text="Loading prompts..." />}

@@ -33,10 +33,9 @@ func JWTAuth(cfg config.AuthConfig) gin.HandlerFunc {
 			return
 		}
 
-		token := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
-		userID, err := validateJWT(token, cfg, time.Now().UTC())
+		userID, err := validateJWT(bearerToken(c.GetHeader("Authorization")), cfg, time.Now().UTC())
 		if err != nil {
-			response.Error(c, http.StatusUnauthorized, "UNAUTHORIZED", "用户令牌无效或已过期")
+			response.Error(c, http.StatusUnauthorized, "UNAUTHORIZED", "user credentials are invalid")
 			return
 		}
 		c.Set(userIDKey, userID)
@@ -44,7 +43,8 @@ func JWTAuth(cfg config.AuthConfig) gin.HandlerFunc {
 	}
 }
 
-// AdminAuth authenticates administrator APIs with X-Admin-API-Key.
+// AdminAuth authenticates administrator APIs with an admin JWT role/scope.
+// X-Admin-API-Key is kept only as a non-production compatibility fallback.
 func AdminAuth(cfg config.AuthConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !cfg.Enabled {
@@ -52,55 +52,100 @@ func AdminAuth(cfg config.AuthConfig) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		provided := []byte(strings.TrimSpace(c.GetHeader("X-Admin-API-Key")))
-		expected := []byte(strings.TrimSpace(cfg.AdminAPIKey))
-		if len(provided) == 0 || len(provided) != len(expected) ||
-			subtle.ConstantTimeCompare(provided, expected) != 1 {
-			response.Error(c, http.StatusUnauthorized, "UNAUTHORIZED", "管理员密钥无效")
+
+		if claims, err := validateJWTClaims(bearerToken(c.GetHeader("Authorization")), cfg, time.Now().UTC()); err == nil &&
+			claimsHasAdminAccess(claims, cfg.AdminRole) {
+			c.Set(userIDKey, claims.Subject)
+			c.Next()
 			return
 		}
-		c.Set(userIDKey, "admin")
-		c.Next()
+
+		provided := []byte(strings.TrimSpace(c.GetHeader("X-Admin-API-Key")))
+		expected := []byte(strings.TrimSpace(cfg.AdminAPIKey))
+		if len(expected) > 0 && len(provided) == len(expected) &&
+			subtle.ConstantTimeCompare(provided, expected) == 1 {
+			c.Set(userIDKey, "admin")
+			c.Next()
+			return
+		}
+
+		response.Error(c, http.StatusUnauthorized, "UNAUTHORIZED", "admin credentials are invalid")
 	}
 }
 
 type jwtClaims struct {
-	Subject   string `json:"sub"`
-	Issuer    string `json:"iss"`
-	ExpiresAt int64  `json:"exp"`
-	NotBefore int64  `json:"nbf,omitempty"`
+	Subject   string   `json:"sub"`
+	Issuer    string   `json:"iss"`
+	ExpiresAt int64    `json:"exp"`
+	NotBefore int64    `json:"nbf,omitempty"`
+	Scope     string   `json:"scope,omitempty"`
+	Roles     []string `json:"roles,omitempty"`
 }
 
 func validateJWT(token string, cfg config.AuthConfig, now time.Time) (string, error) {
+	claims, err := validateJWTClaims(token, cfg, now)
+	if err != nil {
+		return "", err
+	}
+	return claims.Subject, nil
+}
+
+func bearerToken(header string) string {
+	header = strings.TrimSpace(header)
+	if strings.HasPrefix(strings.ToLower(header), "bearer ") {
+		return strings.TrimSpace(header[len("Bearer "):])
+	}
+	return header
+}
+
+func claimsHasAdminAccess(claims jwtClaims, adminRole string) bool {
+	adminRole = strings.TrimSpace(adminRole)
+	if adminRole == "" {
+		adminRole = "admin"
+	}
+	for _, role := range claims.Roles {
+		if strings.EqualFold(strings.TrimSpace(role), adminRole) {
+			return true
+		}
+	}
+	for _, scope := range strings.Fields(claims.Scope) {
+		if strings.EqualFold(scope, adminRole) || strings.EqualFold(scope, "role:"+adminRole) {
+			return true
+		}
+	}
+	return false
+}
+
+func validateJWTClaims(token string, cfg config.AuthConfig, now time.Time) (jwtClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return "", errInvalidToken
+		return jwtClaims{}, errInvalidToken
 	}
 	headerRaw, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return "", errInvalidToken
+		return jwtClaims{}, errInvalidToken
 	}
 	var header struct {
 		Algorithm string `json:"alg"`
 		Type      string `json:"typ"`
 	}
 	if err := json.Unmarshal(headerRaw, &header); err != nil || header.Algorithm != "HS256" {
-		return "", errInvalidToken
+		return jwtClaims{}, errInvalidToken
 	}
 	mac := hmac.New(sha256.New, []byte(cfg.JWTSecret))
 	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
 	expectedSignature := mac.Sum(nil)
 	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil || !hmac.Equal(signature, expectedSignature) {
-		return "", errInvalidToken
+		return jwtClaims{}, errInvalidToken
 	}
 	claimsRaw, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return "", errInvalidToken
+		return jwtClaims{}, errInvalidToken
 	}
 	var claims jwtClaims
 	if err := json.Unmarshal(claimsRaw, &claims); err != nil {
-		return "", errInvalidToken
+		return jwtClaims{}, errInvalidToken
 	}
 	leeway := int64(cfg.JWTLeeway.Seconds())
 	nowUnix := now.Unix()
@@ -109,16 +154,16 @@ func validateJWT(token string, cfg config.AuthConfig, now time.Time) (string, er
 		nowUnix > claims.ExpiresAt+leeway ||
 		claims.NotBefore > 0 && nowUnix+leeway < claims.NotBefore ||
 		cfg.JWTIssuer != "" && claims.Issuer != cfg.JWTIssuer {
-		return "", errInvalidToken
+		return jwtClaims{}, errInvalidToken
 	}
-	return claims.Subject, nil
+	return claims, nil
 }
 
 var errInvalidToken = &authenticationError{}
 
 type authenticationError struct{}
 
-func (*authenticationError) Error() string { return "鉴权令牌无效" }
+func (*authenticationError) Error() string { return "invalid authentication token" }
 
 // UserID returns the authenticated tenant user identifier.
 func UserID(c *gin.Context) string {

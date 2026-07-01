@@ -63,7 +63,6 @@ CLEANCARE_MYSQL_USER=cleancare
 CLEANCARE_MYSQL_PASSWORD=cleancare
 CLEANCARE_MYSQL_ROOT_PASSWORD=root-cleancare
 CLEANCARE_AUTH_JWT_SECRET=e2e-jwt-secret-not-for-production
-CLEANCARE_AUTH_ADMIN_API_KEY=e2e-admin-key-not-for-production
 CLEANCARE_EMBEDDING_ENDPOINT=http://127.0.0.1:9/v1/embeddings
 CLEANCARE_EMBEDDING_API_KEY=e2e-embedding-key
 CLEANCARE_EMBEDDING_MODEL=e2e-embedding-model

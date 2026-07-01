@@ -62,6 +62,7 @@ type AuthConfig struct {
 	JWTSecret         string        `mapstructure:"jwt_secret"`
 	JWTIssuer         string        `mapstructure:"jwt_issuer"`
 	JWTLeeway         time.Duration `mapstructure:"jwt_leeway"`
+	AdminRole         string        `mapstructure:"admin_role"`
 	AdminAPIKey       string        `mapstructure:"admin_api_key"`
 }
 
@@ -355,6 +356,7 @@ func Load(path string) (Config, error) {
 func bindEnvOverrides(v *viper.Viper) {
 	for _, key := range []string{
 		"auth.admin_api_key",
+		"auth.admin_role",
 		"auth.jwt_secret",
 		"mysql.dsn",
 		"redis.address",
@@ -440,11 +442,14 @@ func (c Config) Validate() error {
 		if len(strings.TrimSpace(c.Auth.JWTSecret)) < 32 {
 			return errors.New("auth.jwt_secret must contain at least 32 characters when auth is enabled")
 		}
-		if strings.TrimSpace(c.Auth.AdminAPIKey) == "" {
-			return errors.New("auth.admin_api_key is required when auth is enabled")
-		}
 		if c.Auth.JWTLeeway < 0 {
 			return errors.New("auth.jwt_leeway must not be negative")
+		}
+		if strings.TrimSpace(c.Auth.AdminRole) == "" {
+			return errors.New("auth.admin_role is required when auth is enabled")
+		}
+		if production && strings.TrimSpace(c.Auth.AdminAPIKey) != "" {
+			return errors.New("auth.admin_api_key is not allowed in production; use JWT admin role/scope")
 		}
 	}
 	if c.Agent.MaxSteps < 1 || c.Agent.MaxSteps > 5 {
@@ -831,6 +836,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("auth.jwt_secret", "")
 	v.SetDefault("auth.jwt_issuer", "clean-care-agent")
 	v.SetDefault("auth.jwt_leeway", "30s")
+	v.SetDefault("auth.admin_role", "admin")
 	v.SetDefault("auth.admin_api_key", "")
 	v.SetDefault("rate_limit.enabled", true)
 	v.SetDefault("rate_limit.backend", "local")

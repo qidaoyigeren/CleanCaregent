@@ -70,6 +70,58 @@ func TestConversationServiceDeduplicatesInFlightClientMessageID(t *testing.T) {
 	}
 }
 
+func TestConversationServiceClientCancelDoesNotFailOwnedClientMessageID(t *testing.T) {
+	repo := inmemory.NewConversationRepository()
+	runner := &blockingRunner{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	service := NewConversationService(repo, runner, time.Second)
+
+	testCtx, cancelTest := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelTest()
+
+	conversation, err := service.Create(testCtx, "user-1", "support")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	outcomes := make(chan askOutcome, 1)
+	go func() {
+		result, err := service.Ask(requestCtx, "user-1", conversation.ID, "create repair ticket", "cm-cancel", nil)
+		outcomes <- askOutcome{result: result, err: err}
+	}()
+
+	select {
+	case <-runner.started:
+	case <-testCtx.Done():
+		t.Fatal("runner did not start")
+	}
+
+	cancelRequest()
+	close(runner.release)
+
+	outcome := receiveAskOutcome(t, testCtx, outcomes)
+	if outcome.err != nil {
+		t.Fatalf("Ask() error after client cancel = %v", outcome.err)
+	}
+	if outcome.result.Result.Answer != "single execution" {
+		t.Fatalf("answer = %q", outcome.result.Result.Answer)
+	}
+
+	replayed, err := service.Ask(testCtx, "user-1", conversation.ID, "create repair ticket", "cm-cancel", nil)
+	if err != nil {
+		t.Fatalf("replay Ask() error = %v", err)
+	}
+	if replayed.Result.Mode != "idempotent_replay" {
+		t.Fatalf("replay mode = %q, want idempotent_replay", replayed.Result.Mode)
+	}
+	if calls := runner.calls.Load(); calls != 1 {
+		t.Fatalf("runner calls = %d, want 1", calls)
+	}
+}
+
 func isIdempotentReplayForTest(mode string) bool {
 	return mode == "idempotent_wait" || mode == "idempotent_replay"
 }

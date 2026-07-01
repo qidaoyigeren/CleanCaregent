@@ -26,6 +26,8 @@ jobs:
         run: go test -race ./...
       - name: Vet
         run: go vet ./...
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: Build server
         run: go build ./cmd/server
       - name: Build MCP server
@@ -49,9 +51,37 @@ jobs:
 
   container:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t cleancare-agent:ci .
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: cleancare-agent:ci
+          format: spdx-json
+          output-file: cleancare-agent.spdx.json
+      - name: Scan container image
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: cleancare-agent:ci
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: cleancare-agent-sbom
+          path: cleancare-agent.spdx.json
 
   e2e:
     runs-on: ubuntu-latest

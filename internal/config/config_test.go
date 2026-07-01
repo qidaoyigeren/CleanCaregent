@@ -117,6 +117,7 @@ func TestValidateRejectsUnsafeProductionDefaults(t *testing.T) {
 		{"auth disabled", func(cfg *Config) { cfg.Auth.Enabled = false }},
 		{"development log", func(cfg *Config) { cfg.Log.Development = true }},
 		{"development user", func(cfg *Config) { cfg.Auth.DevelopmentUserID = "demo-user" }},
+		{"admin api key", func(cfg *Config) { cfg.Auth.AdminAPIKey = "admin-api-key" }},
 		{"bootstrap agent", func(cfg *Config) { cfg.Agent.Mode = "bootstrap" }},
 		{"memory conversations", func(cfg *Config) { cfg.Storage.ConversationRepository = "memory" }},
 		{"built-in mock knowledge", func(cfg *Config) { cfg.Knowledge.SeedBuiltInMock = true }},
@@ -351,7 +352,7 @@ func validProductionConfig(t *testing.T) Config {
 	cfg.Auth.Enabled = true
 	cfg.Auth.DevelopmentUserID = ""
 	cfg.Auth.JWTSecret = strings.Repeat("x", 32)
-	cfg.Auth.AdminAPIKey = "admin-api-key"
+	cfg.Auth.AdminRole = "admin"
 	cfg.Agent.Mode = "agentic"
 	cfg.Storage.ConversationRepository = "mysql"
 	cfg.MySQL.Enabled = true

@@ -191,6 +191,8 @@ export default function useSSEStream(): SSEStreamResult {
                       case 'delta':
                         handlers.onDelta?.(data.content ?? '');
                         break;
+                      case 'heartbeat':
+                        break;
                       case 'done':
                         setConnectionState('idle');
                         streamActiveRef.current = false;
