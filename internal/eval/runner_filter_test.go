@@ -28,3 +28,31 @@ func TestSelectCasesRejectsUnknownIDs(t *testing.T) {
 		t.Fatal("expected an unknown case id error")
 	}
 }
+
+func TestFilterCasesBySplit(t *testing.T) {
+	cases := []Case{
+		{CaseID: "EVAL-001"},
+		{CaseID: "EVAL-201", Tags: []string{"split:tuning"}},
+		{CaseID: "EVAL-276", Tags: []string{"split:holdout"}},
+	}
+	regression, err := filterCasesBySplit(cases, "regression")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(regression) != 1 || regression[0].CaseID != "EVAL-001" {
+		t.Fatalf("regression = %#v", regression)
+	}
+	tuning, err := filterCasesBySplit(cases, "tuning")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tuning) != 1 || tuning[0].CaseID != "EVAL-201" {
+		t.Fatalf("tuning = %#v", tuning)
+	}
+}
+
+func TestFilterCasesBySplitRejectsUnknownSplit(t *testing.T) {
+	if _, err := filterCasesBySplit([]Case{{CaseID: "EVAL-001"}}, "shadow"); err == nil {
+		t.Fatal("expected unsupported split error")
+	}
+}

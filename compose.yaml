@@ -1,4 +1,21 @@
 services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${CLEANCARE_MYSQL_DATABASE:-cleancare}
+      MYSQL_USER: ${CLEANCARE_MYSQL_USER:-cleancare}
+      MYSQL_PASSWORD: ${CLEANCARE_MYSQL_PASSWORD:?set CLEANCARE_MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${CLEANCARE_MYSQL_ROOT_PASSWORD:?set CLEANCARE_MYSQL_ROOT_PASSWORD}
+    ports:
+      - "${CLEANCARE_MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
   redis:
     image: redis:7.4-alpine
     command: ["redis-server", "--appendonly", "yes"]
@@ -27,25 +44,44 @@ services:
     ports:
       - "8080:8080"
     environment:
-      CLEANCARE_APP_ENV: docker
-      CLEANCARE_AGENT_MODE: bootstrap
-      CLEANCARE_STORAGE_CONVERSATION_REPOSITORY: memory
+      CLEANCARE_APP_ENV: production
+      CLEANCARE_LOG_DEVELOPMENT: "false"
+      CLEANCARE_AUTH_ENABLED: "true"
+      CLEANCARE_AUTH_DEVELOPMENT_USER_ID: ""
+      CLEANCARE_AUTH_JWT_SECRET: ${CLEANCARE_AUTH_JWT_SECRET:?set CLEANCARE_AUTH_JWT_SECRET}
+      CLEANCARE_AUTH_ADMIN_API_KEY: ${CLEANCARE_AUTH_ADMIN_API_KEY:?set CLEANCARE_AUTH_ADMIN_API_KEY}
+      CLEANCARE_AGENT_MODE: agentic
+      CLEANCARE_STORAGE_CONVERSATION_REPOSITORY: mysql
+      CLEANCARE_MYSQL_ENABLED: "true"
+      CLEANCARE_MYSQL_DSN: ${CLEANCARE_MYSQL_USER:-cleancare}:${CLEANCARE_MYSQL_PASSWORD:?set CLEANCARE_MYSQL_PASSWORD}@tcp(mysql:3306)/${CLEANCARE_MYSQL_DATABASE:-cleancare}?parseTime=true&multiStatements=true
+      CLEANCARE_MYSQL_AUTO_MIGRATE: "false"
       CLEANCARE_REDIS_ENABLED: "true"
       CLEANCARE_REDIS_ADDRESS: redis:6379
       CLEANCARE_QDRANT_ENABLED: "true"
       CLEANCARE_QDRANT_BASE_URL: http://qdrant:6333
       CLEANCARE_QDRANT_ENSURE_COLLECTION: "true"
-      CLEANCARE_EMBEDDING_PROVIDER: local_hash
-      CLEANCARE_EMBEDDING_DIMENSION: "1024"
-      CLEANCARE_LLM_PROVIDER: extractive
+      CLEANCARE_KNOWLEDGE_SEED_BUILTIN_MOCK: "false"
+      CLEANCARE_EMBEDDING_PROVIDER: openai_compatible
+      CLEANCARE_EMBEDDING_ENDPOINT: ${CLEANCARE_EMBEDDING_ENDPOINT:?set CLEANCARE_EMBEDDING_ENDPOINT}
+      CLEANCARE_EMBEDDING_API_KEY: ${CLEANCARE_EMBEDDING_API_KEY:?set CLEANCARE_EMBEDDING_API_KEY}
+      CLEANCARE_EMBEDDING_MODEL: ${CLEANCARE_EMBEDDING_MODEL:?set CLEANCARE_EMBEDDING_MODEL}
+      CLEANCARE_EMBEDDING_DIMENSION: "${CLEANCARE_EMBEDDING_DIMENSION:-1024}"
+      CLEANCARE_LLM_PROVIDER: openai_compatible
+      CLEANCARE_LLM_ENDPOINT: ${CLEANCARE_LLM_ENDPOINT:?set CLEANCARE_LLM_ENDPOINT}
+      CLEANCARE_LLM_API_KEY: ${CLEANCARE_LLM_API_KEY:?set CLEANCARE_LLM_API_KEY}
+      CLEANCARE_LLM_MODEL: ${CLEANCARE_LLM_MODEL:?set CLEANCARE_LLM_MODEL}
+      CLEANCARE_TOOL_DATA_SCOPE: external
       CLEANCARE_RATE_LIMIT_BACKEND: redis
       CLEANCARE_TRACING_ENABLED: "true"
     depends_on:
+      mysql:
+        condition: service_healthy
       redis:
         condition: service_healthy
       qdrant:
         condition: service_started
 
 volumes:
+  mysql_data:
   redis_data:
   qdrant_data:

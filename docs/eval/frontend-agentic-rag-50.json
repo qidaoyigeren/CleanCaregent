@@ -1,0 +1,360 @@
+{
+  "dataset_version": "frontend-agentic-rag-2026-06-30",
+  "description": "50 browser-driven conversation samples for newly added BrightClean cleaning-tool products.",
+  "cases": [
+    {
+      "id": "fe-sb3-001",
+      "product": "SB3",
+      "intent": "product_parameter",
+      "turns": ["SB3 电动清洁刷转速、续航和防水等级是多少？"],
+      "expected_signals": ["SB3", "320rpm", "IPX5", "80"]
+    },
+    {
+      "id": "fe-sb3-002",
+      "product": "SB3",
+      "intent": "price_inventory",
+      "turns": ["SpinScrub SB3 现在多少钱，还有库存吗？"],
+      "expected_signals": ["SB3", "price_query", "inventory_check", "169.00"]
+    },
+    {
+      "id": "fe-sb3-003",
+      "product": "SB3",
+      "intent": "accessory_compatibility",
+      "turns": ["SB3-BH 能不能装在 SB3 上？顺便查一下刷头价格。"],
+      "expected_signals": ["SB3-BH", "price_query", "兼容"]
+    },
+    {
+      "id": "fe-sb3-004",
+      "product": "SB3",
+      "intent": "accessory_incompatibility",
+      "turns": ["GB2-BR 可以当 SB3 的替换刷头用吗？"],
+      "expected_signals": ["GB2-BR", "SB3", "不兼容"]
+    },
+    {
+      "id": "fe-sb3-005",
+      "product": "SB3",
+      "intent": "troubleshooting",
+      "turns": ["SB3 刷头停转了，帮我一步步排查。"],
+      "expected_signals": ["SB3", "刷头停转"]
+    },
+    {
+      "id": "fe-sb3-006",
+      "product": "SB3",
+      "intent": "usage_instruction",
+      "turns": ["SB3 可以直接泡在水里刷浴缸吗？"],
+      "expected_signals": ["SB3", "IPX5"]
+    },
+    {
+      "id": "fe-sb3-007",
+      "product": "SB3",
+      "intent": "recommendation",
+      "turns": ["浴室瓷砖和水槽污渍多，SB3 和 GB2 买哪个？"],
+      "expected_signals": ["SB3", "GB2"]
+    },
+    {
+      "id": "fe-sb3-008",
+      "product": "SB3",
+      "intent": "multi_turn",
+      "turns": ["我买了 SB3。", "替换刷头一起多少钱，还有货吗？"],
+      "expected_signals": ["SB3-BH", "price_query", "inventory_check"]
+    },
+    {
+      "id": "fe-sb3-009",
+      "product": "SB3",
+      "intent": "safety",
+      "turns": ["SB3 用着电机进水了，还能继续按吗？"],
+      "expected_signals": ["停止使用", "继续通电"]
+    },
+    {
+      "id": "fe-sb3-010",
+      "product": "SB3",
+      "intent": "comparison_price",
+      "turns": ["SB3 和 GB2 都查一下价格，哪个更适合浴室地砖？"],
+      "expected_signals": ["SB3", "GB2", "price_query"]
+    },
+
+    {
+      "id": "fe-fd4-001",
+      "product": "FD4",
+      "intent": "product_parameter",
+      "turns": ["FD4 伸缩除尘掸最长多长，掸套能不能水洗？"],
+      "expected_signals": ["FD4", "145", "水洗"]
+    },
+    {
+      "id": "fe-fd4-002",
+      "product": "FD4",
+      "intent": "price_inventory",
+      "turns": ["FlexDuster FD4 现在价格和库存多少？"],
+      "expected_signals": ["FD4", "price_query", "inventory_check", "69.00"]
+    },
+    {
+      "id": "fe-fd4-003",
+      "product": "FD4",
+      "intent": "accessory_compatibility",
+      "turns": ["FD4-PAD 是 FD4 的原装替换掸套吗？"],
+      "expected_signals": ["FD4-PAD", "兼容"]
+    },
+    {
+      "id": "fe-fd4-004",
+      "product": "FD4",
+      "intent": "usage_instruction",
+      "turns": ["FD4 可以拿来湿擦厨房厚油污吗？"],
+      "expected_signals": ["FD4", "油污"]
+    },
+    {
+      "id": "fe-fd4-005",
+      "product": "FD4",
+      "intent": "troubleshooting",
+      "turns": ["FD4 掸套老是滑落，怎么排查？"],
+      "expected_signals": ["FD4", "掸套滑落"]
+    },
+    {
+      "id": "fe-fd4-006",
+      "product": "FD4",
+      "intent": "purchase_recommendation",
+      "turns": ["柜顶和窗帘轨道灰很多，FD4 适合吗？要不要带 FD4-PAD？"],
+      "expected_signals": ["FD4", "FD4-PAD"]
+    },
+    {
+      "id": "fe-fd4-007",
+      "product": "FD4",
+      "intent": "multi_turn",
+      "turns": ["我家天花板角落积灰。", "FD4 和替换掸套分别有货吗？"],
+      "expected_signals": ["FD4", "FD4-PAD", "inventory_check"]
+    },
+    {
+      "id": "fe-fd4-008",
+      "product": "FD4",
+      "intent": "comparison",
+      "turns": ["FD4 和 MC6 哪个更适合擦高处？"],
+      "expected_signals": ["FD4", "MC6"]
+    },
+    {
+      "id": "fe-fd4-009",
+      "product": "FD4",
+      "intent": "price_with_accessory",
+      "turns": ["FD4 加两片 FD4-PAD 一起大概多少钱？"],
+      "expected_signals": ["FD4", "FD4-PAD", "price_query"]
+    },
+    {
+      "id": "fe-fd4-010",
+      "product": "FD4",
+      "intent": "clarify_or_usage",
+      "turns": ["FD4 掸套洗完松了，是不是要换？"],
+      "expected_signals": ["FD4-PAD", "更换"]
+    },
+
+    {
+      "id": "fe-gb2-001",
+      "product": "GB2",
+      "intent": "product_parameter",
+      "turns": ["GB2 缝隙刷刷头多宽，适合哪些地方？"],
+      "expected_signals": ["GB2", "2.2cm", "缝"]
+    },
+    {
+      "id": "fe-gb2-002",
+      "product": "GB2",
+      "intent": "price_inventory",
+      "turns": ["GroutMate GB2 和 GB2-BR 现在分别多少钱，有货吗？"],
+      "expected_signals": ["GB2", "GB2-BR", "price_query", "inventory_check"]
+    },
+    {
+      "id": "fe-gb2-003",
+      "product": "GB2",
+      "intent": "accessory_compatibility",
+      "turns": ["GB2-BR 能装回 GB2 手柄上吗？"],
+      "expected_signals": ["GB2-BR", "兼容"]
+    },
+    {
+      "id": "fe-gb2-004",
+      "product": "GB2",
+      "intent": "accessory_incompatibility",
+      "turns": ["GB2-BR 能不能给 SB3 用？"],
+      "expected_signals": ["GB2-BR", "SB3", "不兼容"]
+    },
+    {
+      "id": "fe-gb2-005",
+      "product": "GB2",
+      "intent": "troubleshooting",
+      "turns": ["GB2 刷毛变形了，怎么处理？"],
+      "expected_signals": ["GB2", "刷毛变形"]
+    },
+    {
+      "id": "fe-gb2-006",
+      "product": "GB2",
+      "intent": "usage_instruction",
+      "turns": ["GB2 可以用来硬撬固化胶吗？"],
+      "expected_signals": ["GB2", "不适用"]
+    },
+    {
+      "id": "fe-gb2-007",
+      "product": "GB2",
+      "intent": "recommendation",
+      "turns": ["窄窗轨和水龙头底座，SB3 和 GB2 哪个更合适？"],
+      "expected_signals": ["GB2", "SB3"]
+    },
+    {
+      "id": "fe-gb2-008",
+      "product": "GB2",
+      "intent": "multi_turn",
+      "turns": ["我想清洁水槽底座缝隙。", "配 GB2 替换刷头要不要一起买？"],
+      "expected_signals": ["GB2", "GB2-BR"]
+    },
+    {
+      "id": "fe-gb2-009",
+      "product": "GB2",
+      "intent": "inventory_only",
+      "turns": ["GB2-BR 最近库存多不多？"],
+      "expected_signals": ["GB2-BR", "inventory_check"]
+    },
+    {
+      "id": "fe-gb2-010",
+      "product": "GB2",
+      "intent": "comparison_price",
+      "turns": ["GB2 和 MC6 都适合台面边角吗？顺便查价格。"],
+      "expected_signals": ["GB2", "MC6", "price_query"]
+    },
+
+    {
+      "id": "fe-mc6-001",
+      "product": "MC6",
+      "intent": "product_parameter",
+      "turns": ["MC6 是几片装，克重和可机洗次数是多少？"],
+      "expected_signals": ["MC6", "6", "320gsm", "80"]
+    },
+    {
+      "id": "fe-mc6-002",
+      "product": "MC6",
+      "intent": "price_inventory",
+      "turns": ["MicroFiberPro MC6 现在多少钱，还有多少库存？"],
+      "expected_signals": ["MC6", "price_query", "inventory_check", "49.00"]
+    },
+    {
+      "id": "fe-mc6-003",
+      "product": "MC6",
+      "intent": "usage_instruction",
+      "turns": ["MC6 擦玻璃怎么用才不留水痕？"],
+      "expected_signals": ["MC6", "玻璃", "水痕"]
+    },
+    {
+      "id": "fe-mc6-004",
+      "product": "MC6",
+      "intent": "troubleshooting",
+      "turns": ["MC6 掉毛还有水痕，帮我排查原因。"],
+      "expected_signals": ["MC6", "掉毛", "水痕"]
+    },
+    {
+      "id": "fe-mc6-005",
+      "product": "MC6",
+      "intent": "usage_instruction",
+      "turns": ["MC6 可以和柔顺剂一起洗吗？"],
+      "expected_signals": ["MC6", "柔顺剂"]
+    },
+    {
+      "id": "fe-mc6-006",
+      "product": "MC6",
+      "intent": "recommendation",
+      "turns": ["不锈钢台面和电器外壳用 MC6 合适吗？"],
+      "expected_signals": ["MC6", "不锈钢"]
+    },
+    {
+      "id": "fe-mc6-007",
+      "product": "MC6",
+      "intent": "comparison",
+      "turns": ["MC6 和 FD4 哪个更适合擦低处台面？"],
+      "expected_signals": ["MC6", "FD4"]
+    },
+    {
+      "id": "fe-mc6-008",
+      "product": "MC6",
+      "intent": "multi_turn",
+      "turns": ["我想买擦玻璃不掉毛的布。", "那 MC6 价格和库存查一下。"],
+      "expected_signals": ["MC6", "price_query", "inventory_check"]
+    },
+    {
+      "id": "fe-mc6-009",
+      "product": "MC6",
+      "intent": "product_parameter",
+      "turns": ["MC6 能洗多少次，适合擦电器外壳吗？"],
+      "expected_signals": ["MC6", "80", "电器外壳"]
+    },
+    {
+      "id": "fe-mc6-010",
+      "product": "MC6",
+      "intent": "recommendation_with_budget",
+      "turns": ["50 元以内买清洁布，MC6 值得买吗？"],
+      "expected_signals": ["MC6", "49.00"]
+    },
+
+    {
+      "id": "fe-sp2-001",
+      "product": "SP2",
+      "intent": "product_parameter",
+      "turns": ["SP2 喷雾瓶容量多少，有哪几个喷雾模式？"],
+      "expected_signals": ["SP2", "500ml", "mist", "stream"]
+    },
+    {
+      "id": "fe-sp2-002",
+      "product": "SP2",
+      "intent": "price_inventory",
+      "turns": ["SprayMist SP2 和 SP2-NZ 的价格库存查一下。"],
+      "expected_signals": ["SP2", "SP2-NZ", "price_query", "inventory_check"]
+    },
+    {
+      "id": "fe-sp2-003",
+      "product": "SP2",
+      "intent": "accessory_compatibility",
+      "turns": ["SP2-NZ 是 SP2 可用的替换喷头吗？"],
+      "expected_signals": ["SP2-NZ", "兼容"]
+    },
+    {
+      "id": "fe-sp2-004",
+      "product": "SP2",
+      "intent": "usage_instruction",
+      "turns": ["SP2 能装强酸清洁剂吗？"],
+      "expected_signals": ["SP2", "强酸"]
+    },
+    {
+      "id": "fe-sp2-005",
+      "product": "SP2",
+      "intent": "troubleshooting",
+      "turns": ["SP2 不出喷雾，怎么一步步排查？"],
+      "expected_signals": ["SP2", "不出喷雾"]
+    },
+    {
+      "id": "fe-sp2-006",
+      "product": "SP2",
+      "intent": "usage_instruction",
+      "turns": ["SP2 新瓶第一次使用为什么要多按几次？"],
+      "expected_signals": ["SP2", "排出", "压力"]
+    },
+    {
+      "id": "fe-sp2-007",
+      "product": "SP2",
+      "intent": "recommendation",
+      "turns": ["我想喷中性清洁剂擦台面，SP2 合适吗？"],
+      "expected_signals": ["SP2", "中性清洁剂"]
+    },
+    {
+      "id": "fe-sp2-008",
+      "product": "SP2",
+      "intent": "multi_turn",
+      "turns": ["我的喷雾瓶喷头堵了。", "如果是 SP2，SP2-NZ 有货吗多少钱？"],
+      "expected_signals": ["SP2-NZ", "price_query", "inventory_check"]
+    },
+    {
+      "id": "fe-sp2-009",
+      "product": "SP2",
+      "intent": "safety",
+      "turns": ["SP2 装过强酸清洁剂，现在喷头堵了还能继续用吗？"],
+      "expected_signals": ["SP2", "强酸"]
+    },
+    {
+      "id": "fe-sp2-010",
+      "product": "SP2",
+      "intent": "bundle_recommendation",
+      "turns": ["想买喷雾瓶加擦布清洁玻璃，SP2 和 MC6 合适吗？顺便查价格库存。"],
+      "expected_signals": ["SP2", "MC6", "price_query", "inventory_check"]
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"CleanCaregent/internal/agent"
+	"CleanCaregent/internal/compatibility"
 	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/model"
 	"CleanCaregent/internal/rag"
@@ -151,11 +152,11 @@ func TestDynamicExecutorFallsBackToKnowledgeOnTimeout(t *testing.T) {
 
 func TestNormalizeExtractedArgumentsRejectsUnknownEntities(t *testing.T) {
 	result := normalizeExtractedArguments(map[string]any{
-		"product_refs": []any{"T20", "UNKNOWN-9"},
+		"product_refs": []any{"T20", "SB3", "SP2-NZ", "UNKNOWN-9", "CC20260603001"},
 		"order_no":     "invalid",
 	})
 	products, ok := result["product_refs"].([]string)
-	if !ok || len(products) != 1 || products[0] != "T20" {
+	if !ok || len(products) != 3 || products[0] != "T20" || products[1] != "SB3" || products[2] != "SP2-NZ" {
 		t.Fatalf("result = %#v", result)
 	}
 	if _, exists := result["order_no"]; exists {
@@ -164,13 +165,78 @@ func TestNormalizeExtractedArgumentsRejectsUnknownEntities(t *testing.T) {
 }
 
 func TestProductRefsForDynamicToolPreferAccessoryRefs(t *testing.T) {
-	refs := productRefsForDynamicTool(
+	refs := (&DynamicExecutor{}).productRefsForDynamicTool(
 		"inventory_check",
 		"W300换C300步骤给我，配件现在有货不",
+		nil,
 		[]string{"W300", "C300"},
 	)
 	if len(refs) != 1 || refs[0] != "C300" {
 		t.Fatalf("refs = %#v, want only C300", refs)
+	}
+}
+
+func TestBuildArgumentsMapsHostAccessoryRequestThroughCompatibilityMatrix(t *testing.T) {
+	executor := &DynamicExecutor{compatibility: compatibility.NewMatrix([]compatibility.Entry{{
+		HostModel:      "SB3",
+		AccessoryModel: "SB3-BH",
+		AccessoryType:  "brush_head",
+		Status:         compatibility.Compatible,
+	}})}
+	args := executor.buildArguments(context.Background(), agent.DynamicExecutionRequest{
+		Request: agent.Request{Query: "替换刷头一起多少钱，还有货吗？"},
+		Step: agent.PlanStep{
+			Action:   agent.ActionCallTool,
+			ToolName: "price_query",
+			Params: map[string]any{
+				"accessory_refs": "刷头",
+				"product_refs":   []string{"SB3"},
+			},
+		},
+	})
+	refs := stringSliceArgument(args["product_refs"])
+	if len(refs) != 1 || refs[0] != "SB3-BH" {
+		t.Fatalf("product_refs = %#v, want SB3-BH", args["product_refs"])
+	}
+}
+
+func TestBuildArgumentsKeepsHostAndInferredAccessoryForSeparateInventory(t *testing.T) {
+	executor := &DynamicExecutor{compatibility: compatibility.NewMatrix([]compatibility.Entry{{
+		HostModel:      "FD4",
+		AccessoryModel: "FD4-PAD",
+		AccessoryType:  "sleeve_pad",
+		Status:         compatibility.Compatible,
+	}})}
+	args := executor.buildArguments(context.Background(), agent.DynamicExecutionRequest{
+		Request: agent.Request{Query: "FD4 和替换掸套分别有货吗？"},
+		Step: agent.PlanStep{
+			Action:   agent.ActionCallTool,
+			ToolName: "inventory_check",
+			Params: map[string]any{
+				"accessory_refs": "掸套",
+				"product_refs":   []string{"FD4"},
+			},
+		},
+	})
+	refs := stringSliceArgument(args["product_refs"])
+	if len(refs) != 2 || refs[0] != "FD4" || refs[1] != "FD4-PAD" {
+		t.Fatalf("product_refs = %#v, want FD4 and FD4-PAD", args["product_refs"])
+	}
+}
+
+func TestBuildArgumentsKeepsHyphenatedAccessoryRefs(t *testing.T) {
+	executor := &DynamicExecutor{}
+	args := executor.buildArguments(context.Background(), agent.DynamicExecutionRequest{
+		Request: agent.Request{Query: "SB3-BH 能不能装在 SB3 上？顺便查一下刷头价格。"},
+		Step: agent.PlanStep{
+			Action:   agent.ActionCallTool,
+			ToolName: "price_query",
+			Params:   map[string]any{"models": "SB3-BH,SB3"},
+		},
+	})
+	refs := stringSliceArgument(args["product_refs"])
+	if len(refs) != 1 || refs[0] != "SB3-BH" {
+		t.Fatalf("product_refs = %#v, want SB3-BH", args["product_refs"])
 	}
 }
 

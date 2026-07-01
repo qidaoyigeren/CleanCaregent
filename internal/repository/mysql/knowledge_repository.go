@@ -24,6 +24,136 @@ func NewKnowledgeRepository(db *sql.DB) *KnowledgeRepository {
 	return &KnowledgeRepository{db: db}
 }
 
+func (r *KnowledgeRepository) GetDocumentVersion(
+	ctx context.Context,
+	docID string,
+	version string,
+) (repository.KnowledgeDocumentVersion, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT d.doc_id, d.version, d.status, d.category, d.brand, d.doc_type, d.content_hash, c.metadata_json
+		FROM kb_documents d
+		LEFT JOIN kb_chunks c ON c.document_id = d.id
+		WHERE d.doc_id = ? AND d.version = ?
+		ORDER BY c.id
+		LIMIT 1
+	`, docID, version)
+	var document repository.KnowledgeDocumentVersion
+	var brand sql.NullString
+	var metadataRaw []byte
+	if err := row.Scan(
+		&document.DocID,
+		&document.Version,
+		&document.Status,
+		&document.Category,
+		&brand,
+		&document.DocType,
+		&document.ContentHash,
+		&metadataRaw,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return repository.KnowledgeDocumentVersion{}, repository.ErrKnowledgeDocumentNotFound
+		}
+		return repository.KnowledgeDocumentVersion{}, fmt.Errorf("get knowledge document version: %w", err)
+	}
+	if brand.Valid {
+		document.Brand = brand.String
+	}
+	if len(metadataRaw) > 0 {
+		if err := json.Unmarshal(metadataRaw, &document.Metadata); err != nil {
+			return repository.KnowledgeDocumentVersion{}, fmt.Errorf("decode knowledge document metadata: %w", err)
+		}
+	}
+	if document.Metadata == nil {
+		document.Metadata = map[string]any{}
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT c.vector_point_id
+		FROM kb_chunks c
+		JOIN kb_documents d ON d.id = c.document_id
+		WHERE d.doc_id = ? AND d.version = ? AND c.vector_point_id IS NOT NULL
+	`, docID, version)
+	if err != nil {
+		return repository.KnowledgeDocumentVersion{}, fmt.Errorf("list knowledge document vector points: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pointID string
+		if err := rows.Scan(&pointID); err != nil {
+			return repository.KnowledgeDocumentVersion{}, fmt.Errorf("scan knowledge document vector point: %w", err)
+		}
+		if pointID != "" {
+			document.VectorPointIDs = append(document.VectorPointIDs, pointID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return repository.KnowledgeDocumentVersion{}, fmt.Errorf("iterate knowledge document vector points: %w", err)
+	}
+	return document, nil
+}
+
+func (r *KnowledgeRepository) DeleteDocumentVersion(
+	ctx context.Context,
+	docID string,
+	version string,
+) ([]string, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin delete knowledge document version: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	var documentPK int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM kb_documents
+		WHERE doc_id = ? AND version = ?
+		FOR UPDATE
+	`, docID, version).Scan(&documentPK); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, repository.ErrKnowledgeDocumentNotFound
+		}
+		return nil, fmt.Errorf("lock knowledge document version: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT vector_point_id
+		FROM kb_chunks
+		WHERE document_id = ? AND vector_point_id IS NOT NULL
+	`, documentPK)
+	if err != nil {
+		return nil, fmt.Errorf("list deleted knowledge vector points: %w", err)
+	}
+	var pointIDs []string
+	for rows.Next() {
+		var pointID string
+		if err := rows.Scan(&pointID); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan deleted knowledge vector point: %w", err)
+		}
+		if pointID != "" {
+			pointIDs = append(pointIDs, pointID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate deleted knowledge vector points: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close deleted knowledge vector points: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM kb_chunks WHERE document_id = ?`, documentPK); err != nil {
+		return nil, fmt.Errorf("delete knowledge chunks: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM kb_documents WHERE id = ?`, documentPK); err != nil {
+		return nil, fmt.Errorf("delete knowledge document: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit delete knowledge document version: %w", err)
+	}
+	return pointIDs, nil
+}
+
 func (r *KnowledgeRepository) CreateDocument(
 	ctx context.Context,
 	document model.KnowledgeDocument,
@@ -90,6 +220,16 @@ func (r *KnowledgeRepository) CreateDocument(
 		); err != nil {
 			return fmt.Errorf("insert knowledge chunk %s: %w", chunk.ChunkID, err)
 		}
+	}
+	if err := insertKnowledgeVectorOutbox(
+		ctx,
+		tx,
+		document.DocID,
+		document.Version,
+		repository.KnowledgeVectorActionUpsert,
+		pointIDsFromChunks(chunks),
+	); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -193,10 +333,179 @@ func (r *KnowledgeRepository) ActivateDocumentVersion(
 	if affected == 0 {
 		return nil, repository.ErrKnowledgeDocumentNotFound
 	}
+	if len(stalePointIDs) > 0 {
+		if err := insertKnowledgeVectorOutbox(
+			ctx,
+			tx,
+			docID,
+			version,
+			repository.KnowledgeVectorActionDelete,
+			stalePointIDs,
+		); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit activate knowledge document: %w", err)
 	}
 	return stalePointIDs, nil
+}
+
+func (r *KnowledgeRepository) PendingKnowledgeVectorOutbox(
+	ctx context.Context,
+	limit int,
+) ([]repository.KnowledgeVectorOutboxEvent, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, doc_id, version, action, point_ids_json, attempts, last_error, created_at, updated_at
+		FROM knowledge_vector_outbox
+		WHERE status IN ('pending', 'failed') AND attempts < 10
+		ORDER BY updated_at ASC, id ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list knowledge vector outbox: %w", err)
+	}
+	defer rows.Close()
+	events := make([]repository.KnowledgeVectorOutboxEvent, 0, limit)
+	for rows.Next() {
+		var event repository.KnowledgeVectorOutboxEvent
+		var pointIDsRaw []byte
+		var lastError sql.NullString
+		if err := rows.Scan(
+			&event.ID,
+			&event.DocID,
+			&event.Version,
+			&event.Action,
+			&pointIDsRaw,
+			&event.Attempts,
+			&lastError,
+			&event.CreatedAt,
+			&event.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan knowledge vector outbox: %w", err)
+		}
+		if len(pointIDsRaw) > 0 {
+			_ = json.Unmarshal(pointIDsRaw, &event.PointIDs)
+		}
+		if lastError.Valid {
+			event.LastError = lastError.String
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate knowledge vector outbox: %w", err)
+	}
+	return events, nil
+}
+
+func (r *KnowledgeRepository) CompleteKnowledgeVectorOutbox(
+	ctx context.Context,
+	docID string,
+	version string,
+	action string,
+) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE knowledge_vector_outbox
+		SET status = 'done', last_error = NULL, updated_at = UTC_TIMESTAMP(6)
+		WHERE doc_id = ? AND version = ? AND action = ? AND status <> 'done'
+	`, docID, version, action)
+	if err != nil {
+		return fmt.Errorf("complete knowledge vector outbox: %w", err)
+	}
+	return nil
+}
+
+func (r *KnowledgeRepository) CompleteKnowledgeVectorOutboxEvent(ctx context.Context, eventID int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE knowledge_vector_outbox
+		SET status = 'done', last_error = NULL, updated_at = UTC_TIMESTAMP(6)
+		WHERE id = ?
+	`, eventID)
+	if err != nil {
+		return fmt.Errorf("complete knowledge vector outbox event: %w", err)
+	}
+	return nil
+}
+
+func (r *KnowledgeRepository) FailKnowledgeVectorOutboxEvent(
+	ctx context.Context,
+	eventID int64,
+	cause string,
+) error {
+	if len(cause) > 1000 {
+		cause = cause[:1000]
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE knowledge_vector_outbox
+		SET status = 'failed', attempts = attempts + 1, last_error = ?, updated_at = UTC_TIMESTAMP(6)
+		WHERE id = ?
+	`, cause, eventID)
+	if err != nil {
+		return fmt.Errorf("fail knowledge vector outbox event: %w", err)
+	}
+	return nil
+}
+
+func insertKnowledgeVectorOutbox(
+	ctx context.Context,
+	tx *sql.Tx,
+	docID string,
+	version string,
+	action string,
+	pointIDs []string,
+) error {
+	raw, err := json.Marshal(pointIDs)
+	if err != nil {
+		return fmt.Errorf("encode knowledge vector outbox point ids: %w", err)
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO knowledge_vector_outbox (
+			doc_id, version, action, point_ids_json, status, attempts, last_error
+		) VALUES (?, ?, ?, ?, 'pending', 0, NULL)
+		ON DUPLICATE KEY UPDATE
+			point_ids_json = VALUES(point_ids_json),
+			status = 'pending',
+			attempts = 0,
+			last_error = NULL,
+			updated_at = UTC_TIMESTAMP(6)
+	`, docID, version, action, raw)
+	if err != nil {
+		return fmt.Errorf("insert knowledge vector outbox: %w", err)
+	}
+	return nil
+}
+
+func pointIDsFromChunks(chunks []model.KnowledgeChunk) []string {
+	result := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		if chunk.VectorPointID != "" {
+			result = append(result, chunk.VectorPointID)
+		}
+	}
+	return result
+}
+
+func (r *KnowledgeRepository) GetDocumentChunks(
+	ctx context.Context,
+	docID string,
+	version string,
+) ([]model.KnowledgeChunk, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT c.chunk_id, d.doc_id, d.title, c.section_path, c.content, c.token_count,
+		       c.intent_tags_json, c.metadata_json, c.vector_point_id, c.content_hash
+		FROM kb_chunks c
+		JOIN kb_documents d ON d.id = c.document_id
+		WHERE d.doc_id = ? AND d.version = ?
+		ORDER BY c.id ASC
+	`, docID, version)
+	if err != nil {
+		return nil, fmt.Errorf("get knowledge document chunks: %w", err)
+	}
+	defer rows.Close()
+	return scanKnowledgeChunks(rows)
 }
 
 func (r *KnowledgeRepository) KeywordSearch(

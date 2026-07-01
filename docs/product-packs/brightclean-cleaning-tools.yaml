@@ -1,0 +1,182 @@
+pack_id: brightclean-cleaning-tools
+version: 2026-06
+metadata:
+  owner: demo
+  domain: cleaning-tools
+
+products:
+  - product_code: P-MOP-BM-M1
+    name: BrightClean Breeze Mop M1
+    category: floor_mop
+    brand: BrightClean
+    model: BM-M1
+    aliases:
+      - Breeze Mop M1
+      - Breeze M1
+    attributes:
+      head_width_cm: 38
+      handle: telescopic
+      recommended_surfaces:
+        - wood_floor
+        - tile
+        - laminate
+    skus:
+      - sku_code: SKU-BM-M1-STD
+        sku_name: Breeze Mop M1 Standard Kit
+        list_price_cents: 12900
+        current_price_cents: 9900
+        available_stock: 48
+        reserved_stock: 3
+        currency: CNY
+        warranty_months: 6
+        specs:
+          color: graphite
+          includes:
+            - mop_body
+            - microfiber_pad
+
+  - product_code: P-MOP-BM-M1-PAD
+    name: BrightClean BM-M1 Microfiber Replacement Pad
+    category: floor_mop_accessory
+    brand: BrightClean
+    model: BM-M1-PAD
+    aliases:
+      - BM-M1 pad
+      - Breeze Mop M1 pad
+    attributes:
+      accessory_type: mop_pad
+      compatible_host_models:
+        - BM-M1
+    skus:
+      - sku_code: SKU-BM-M1-PAD-2P
+        sku_name: BM-M1 Microfiber Pad 2 Pack
+        list_price_cents: 3900
+        current_price_cents: 2900
+        available_stock: 120
+        reserved_stock: 8
+        currency: CNY
+        specs:
+          quantity: 2
+
+  - product_code: P-WINDOW-WS2
+    name: BrightClean Window Squeegee WS2
+    category: window_cleaning
+    brand: BrightClean
+    model: WS2
+    aliases:
+      - Window Squeegee WS2
+      - Glass Squeegee WS2
+    attributes:
+      blade_width_cm: 25
+      handle_material: abs
+      recommended_surfaces:
+        - glass
+        - mirror
+        - tile_wall
+    skus:
+      - sku_code: SKU-WS2-STD
+        sku_name: WS2 Window Squeegee
+        list_price_cents: 5900
+        current_price_cents: 4900
+        available_stock: 76
+        reserved_stock: 4
+        currency: CNY
+        warranty_months: 3
+
+  - product_code: P-WINDOW-WS2-RB
+    name: BrightClean WS2 Replacement Rubber Blade
+    category: window_cleaning_accessory
+    brand: BrightClean
+    model: WS2-RB
+    aliases:
+      - WS2 rubber blade
+      - WS2 refill blade
+    attributes:
+      accessory_type: rubber_blade
+      compatible_host_models:
+        - WS2
+    skus:
+      - sku_code: SKU-WS2-RB-2P
+        sku_name: WS2 Rubber Blade 2 Pack
+        list_price_cents: 2900
+        current_price_cents: 1900
+        available_stock: 90
+        reserved_stock: 6
+        currency: CNY
+        specs:
+          quantity: 2
+
+compatibility:
+  - host_model: BM-M1
+    accessory_model: BM-M1-PAD
+    accessory_type: mop_pad
+    status: compatible
+    reason: BM-M1-PAD uses the same 38cm hook-and-loop pad interface as BM-M1.
+    evidence_doc_id: kb_breeze_mop_m1_detail
+  - host_model: WS2
+    accessory_model: WS2-RB
+    accessory_type: rubber_blade
+    status: compatible
+    reason: WS2-RB matches the 25cm WS2 blade rail and end-cap lock.
+    evidence_doc_id: kb_window_squeegee_ws2_params
+  - host_model: BM-M1
+    accessory_model: WS2-RB
+    accessory_type: rubber_blade
+    status: incompatible
+    reason: WS2-RB is a glass squeegee rubber blade and does not fit the BM-M1 mop head.
+    evidence_doc_id: kb_window_squeegee_ws2_params
+
+diagnosis:
+  - id: bm_m1_pad_slip
+    product_model: BM-M1
+    symptom: pad slip
+    question: Is the mop pad clipped into both side slots?
+    guidance: Turn the mop over and check whether both side clips hold the pad edge.
+    yes_next: bm_m1_pad_dirty
+    no_next: bm_m1_reclip_pad
+    safety_level: low
+    evidence_doc_id: kb_breeze_mop_m1_detail
+    root: true
+  - id: bm_m1_reclip_pad
+    product_model: BM-M1
+    symptom: pad slip
+    resolution: Reinstall the pad and press both side clips until they lock.
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_breeze_mop_m1_detail
+  - id: bm_m1_pad_dirty
+    product_model: BM-M1
+    symptom: pad slip
+    resolution: Wash or replace the pad if lint blocks the hook surface.
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_breeze_mop_m1_detail
+
+  - id: ws2_streaks_blade
+    product_model: WS2
+    symptom: streaks
+    question: Is the rubber blade chipped, hardened, or visibly wavy?
+    guidance: Rinse the blade and inspect the full 25cm edge under light.
+    yes_next: ws2_replace_blade
+    no_next: ws2_clean_angle
+    safety_level: low
+    evidence_doc_id: kb_window_squeegee_ws2_params
+    root: true
+  - id: ws2_replace_blade
+    product_model: WS2
+    symptom: streaks
+    resolution: Replace the blade with WS2-RB and test on a clean wet glass edge.
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_window_squeegee_ws2_params
+  - id: ws2_clean_angle
+    product_model: WS2
+    symptom: streaks
+    resolution: Clean the glass first and keep the blade at a stable shallow angle while pulling downward.
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_window_squeegee_ws2_params
+
+safety_keywords:
+  - chemical burn
+  - strong bleach smell

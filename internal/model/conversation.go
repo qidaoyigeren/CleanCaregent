@@ -12,10 +12,11 @@ type Conversation struct {
 }
 
 type Message struct {
-	ID             string    `json:"message_id"`
-	ConversationID string    `json:"conversation_id,omitempty"`
-	Role           string    `json:"role"`
-	Content        string    `json:"content"`
-	TraceID        string    `json:"trace_id,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID              string    `json:"message_id"`
+	ConversationID  string    `json:"conversation_id,omitempty"`
+	Role            string    `json:"role"`
+	Content         string    `json:"content"`
+	TraceID         string    `json:"trace_id,omitempty"`
+	ClientMessageID string    `json:"client_message_id,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }

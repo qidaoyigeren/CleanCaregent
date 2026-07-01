@@ -58,14 +58,14 @@
 | 使用手册 | 25 |
 | 售后政策 | 15 |
 | 故障排查 | 10 |
-| 评测案例 | 200 |
-| 评测难度 | simple 80 / medium 70 / hard 50 |
+| 评测案例 | 300（200 regression / 75 tuning / 25 holdout） |
+| 评测难度 | simple 120 / medium 105 / hard 75 |
 
 ## 待测矩阵
 
 | 维度 | 配置 | 状态 | 验收指标 |
 |---|---|---|---|
-| 运行模式 | bootstrap / naive_rag / agentic | 待按当前版本重跑 200 条 | P50/P95、成功率、Token |
+| 运行模式 | bootstrap / naive_rag / agentic | 待按当前版本重跑 200 条 regression 和 25 条 holdout | P50/P95、成功率、Token |
 | Embedding | local_hash / OpenAI-compatible | 已有 local_hash 与 SiliconFlow 串行记录；其他端点待测 | Hit@5、MRR、召回延迟 |
 | Rerank | local_lexical / BGE-compatible | 已有 local_lexical 与 SiliconFlow BGE 串行记录；其他端点待测 | Context Precision、P95 |
 | Generator | extractive / Qwen / DeepSeek compatible | 已有 extractive 与 DeepSeek 串行记录；其他端点待测 | Faithfulness、Correctness |

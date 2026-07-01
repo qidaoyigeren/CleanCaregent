@@ -10,9 +10,10 @@ import (
 
 func TestRuleRouterCoversCanonicalEvaluationIntents(t *testing.T) {
 	var cases []struct {
-		CaseID string `json:"case_id"`
-		Query  string `json:"query"`
-		Intent Type   `json:"intent"`
+		CaseID string   `json:"case_id"`
+		Query  string   `json:"query"`
+		Intent Type     `json:"intent"`
+		Tags   []string `json:"tags"`
 	}
 	if err := json.Unmarshal(evaldata.CasesV2(), &cases); err != nil {
 		t.Fatal(err)
@@ -20,8 +21,13 @@ func TestRuleRouterCoversCanonicalEvaluationIntents(t *testing.T) {
 
 	router := NewRuleRouter()
 	matched := 0
+	total := 0
 	var mismatches []string
 	for _, evalCase := range cases {
+		if !isRegressionEvalCase(evalCase.Tags) {
+			continue
+		}
+		total++
 		result, err := router.Route(context.Background(), RouteRequest{Query: evalCase.Query})
 		if err != nil {
 			t.Fatal(err)
@@ -32,10 +38,22 @@ func TestRuleRouterCoversCanonicalEvaluationIntents(t *testing.T) {
 		}
 		mismatches = append(mismatches, evalCase.CaseID+":"+string(result.Secondary)+"!="+string(evalCase.Intent))
 	}
-	accuracy := float64(matched) / float64(len(cases))
+	accuracy := float64(matched) / float64(total)
 	if accuracy < 0.80 {
 		t.Fatalf("rule intent coverage = %.2f, mismatches = %v", accuracy, mismatches)
 	}
+}
+
+func isRegressionEvalCase(tags []string) bool {
+	for _, tag := range tags {
+		switch tag {
+		case "split:tuning", "split:holdout":
+			return false
+		case "split:regression":
+			return true
+		}
+	}
+	return true
 }
 
 func TestReconcileRuleAndLLMKeepsExplicitBusinessIntent(t *testing.T) {

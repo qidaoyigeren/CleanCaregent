@@ -17,6 +17,7 @@ import (
 	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/llm"
 	"CleanCaregent/internal/observability"
+	"CleanCaregent/internal/policy"
 	"CleanCaregent/internal/prompt"
 	"CleanCaregent/internal/rag"
 	toolpkg "CleanCaregent/internal/tool"
@@ -494,6 +495,8 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 
 		case ActionClarify:
 			answer = r.generateClarification(ctx, route, request.Query, rewrite.Entities)
+			intentionalClarification = true
+			stepMetadata["intentional_clarification"] = true
 
 		case ActionRetrieve:
 			beforeCount := len(searchResults)
@@ -612,6 +615,17 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 					route.NeedDecomposition &&
 					!answerCoversRequestedFacets(answer, request.Query)) {
 				evidences = mergeEvidences(evidences, searchResults)
+				if answer == "" {
+					if deterministicAnswer, ok := deterministicGroundedAnswer(route.Secondary, request.Query, searchResults); ok {
+						answer = deterministicAnswer
+						stepMetadata["deterministic_generation"] = true
+					}
+				}
+			}
+			if answer == "" ||
+				(!committedSideEffect &&
+					route.NeedDecomposition &&
+					!answerCoversRequestedFacets(answer, request.Query)) {
 				scenario := selectGenerateScenario(route.Secondary)
 				generateCtx, generateSpan := otel.Tracer("clean-care-agent/agent").Start(ctx, "llm.generate")
 				generated, generateErr := r.generator.GenerateWithScenario(
@@ -662,6 +676,18 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 		// complete and must not be followed by speculative LLM actions.
 		if useReactivePlanner && planStep.Action == ActionRunSkill && answer != "" {
 			plan.Steps = append(plan.Steps, finishStep(index+2, "skill_turn_complete"))
+			continue
+		}
+		// Read-only dynamic business tools return structured, grounded answers.
+		// Letting the reactive planner continue after a successful lookup can
+		// overwrite the tool answer or repeat the same lookup, especially for
+		// price and inventory turns.
+		if useReactivePlanner &&
+			planStep.Action == ActionCallTool &&
+			answer != "" &&
+			dynamicToolOwnsTurn(planStep.ToolName) &&
+			hasToolEvidence(evidences, planStep.ToolName) {
+			plan.Steps = append(plan.Steps, finishStep(index+2, "dynamic_tool_turn_complete"))
 			continue
 		}
 
@@ -879,11 +905,11 @@ func (r *AgenticRunner) Run(ctx context.Context, request Request, sink EventSink
 func (r *AgenticRunner) directAnswerWithClarifier(ctx context.Context, route intent.Result, query string) string {
 	switch route.Secondary {
 	case intent.Chitchat:
-		return "你好！我是 CleanCare 清洁电器智能客服助手，可以帮您查询扫地机器人、空气净化器、净水器、加湿器的参数、对比、选购推荐、故障排查和售后问题。请问有什么可以帮您的？"
+		return "你好！我是清洁工具销售智能客服助手，可以帮您查询知识库中已收录产品的参数、对比、选购推荐、使用维护、故障排查和售后问题。请问有什么可以帮您的？"
 	case intent.OutOfScope:
-		return "很抱歉，我目前只支持扫地机器人、空气净化器、净水器和加湿器相关问题的咨询。如果您有这些品类的问题，我很乐意帮您解答。"
+		return "很抱歉，我目前只支持清洁工具、清洁设备和相关耗材配件的咨询。如果是已入库产品的问题，您可以直接提供型号或品类。"
 	default:
-		return "请描述您的清洁电器问题，我会尽力帮您解决。"
+		return "请描述您的清洁工具产品问题，我会尽力帮您解决。"
 	}
 }
 
@@ -1421,6 +1447,21 @@ func isCommittedSideEffectTool(toolName string) bool {
 	}
 }
 
+func dynamicToolOwnsTurn(toolName string) bool {
+	switch toolpkg.LogicalName(toolName) {
+	case "price_query",
+		"inventory_check",
+		"order_lookup",
+		"user_purchase_history",
+		"warranty_check",
+		"refund_status",
+		"repair_status":
+		return true
+	default:
+		return false
+	}
+}
+
 func removeStaleDynamicClaims(answer, toolName string) string {
 	if strings.TrimSpace(answer) == "" {
 		return answer
@@ -1744,49 +1785,11 @@ func actionSignature(step PlanStep) string {
 }
 
 func allowedTools(intentType intent.Type) []string {
-	switch intentType {
-	case intent.PriceQuery:
-		return []string{"price_query"}
-	case intent.InventoryQuery:
-		return []string{"inventory_check"}
-	case intent.OrderQuery:
-		return []string{"user_purchase_history", "order_lookup"}
-	case intent.PurchaseRecommendation:
-		return []string{"price_query", "inventory_check"}
-	case intent.AccessoryCompatibility:
-		return []string{"user_purchase_history", "price_query", "inventory_check"}
-	case intent.WarrantyQuery:
-		return []string{"user_purchase_history", "order_lookup", "warranty_check"}
-	case intent.ReturnEligibility:
-		return []string{"user_purchase_history", "order_lookup", "warranty_check", "return_request", "exchange_request", "refund_status"}
-	case intent.AfterSalesStatus:
-		return []string{"user_purchase_history", "order_lookup", "refund_status", "repair_status"}
-	case intent.HumanHandoff:
-		return []string{"handoff_to_human"}
-	case intent.Troubleshooting:
-		return []string{"user_purchase_history", "order_lookup", "warranty_check", "repair_status", "create_after_sales_ticket", "handoff_to_human"}
-	case intent.CreateAfterSalesTicket:
-		return []string{"order_lookup", "warranty_check", "create_after_sales_ticket"}
-	default:
-		return nil
-	}
+	return policy.AllowedTools(intentType)
 }
 
 func allowedToolsForRoute(route intent.Result) []string {
-	if route.Secondary == intent.OutOfScope ||
-		route.Secondary == intent.Chitchat ||
-		route.Secondary == intent.Clarification {
-		return allowedTools(route.Secondary)
-	}
-	result := append([]string(nil), allowedTools(route.Secondary)...)
-	for _, secondary := range route.SecondaryIntents {
-		for _, toolName := range allowedTools(secondary) {
-			if !containsString(result, toolName) {
-				result = append(result, toolName)
-			}
-		}
-	}
-	return result
+	return policy.AllowedToolsForRoute(route)
 }
 
 func intentTypeStrings(values []intent.Type) []string {

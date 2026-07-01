@@ -118,6 +118,23 @@ func (c *AggregateClient) CallTool(ctx context.Context, call tool.Call) (tool.Re
 	return target.client.CallTool(ctx, remoteCall)
 }
 
+func (c *AggregateClient) Close() error {
+	if c == nil {
+		return nil
+	}
+	var closeErr error
+	for _, entry := range c.clients {
+		closer, ok := entry.Client.(interface{ Close() error })
+		if !ok {
+			continue
+		}
+		if err := closer.Close(); err != nil && closeErr == nil {
+			closeErr = fmt.Errorf("close mcp aggregate server %s: %w", entry.Name, err)
+		}
+	}
+	return closeErr
+}
+
 func (c *AggregateClient) lookup(name string) (aggregateTarget, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

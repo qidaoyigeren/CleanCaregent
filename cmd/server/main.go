@@ -16,7 +16,9 @@ import (
 
 	"CleanCaregent/internal/agent"
 	"CleanCaregent/internal/api"
+	"CleanCaregent/internal/compatibility"
 	"CleanCaregent/internal/config"
+	"CleanCaregent/internal/diagnosis"
 	"CleanCaregent/internal/embedding"
 	"CleanCaregent/internal/eval"
 	evalmysql "CleanCaregent/internal/eval/mysql"
@@ -33,6 +35,9 @@ import (
 	"CleanCaregent/internal/orchestration"
 	mysqlclient "CleanCaregent/internal/platform/mysql"
 	redisclient "CleanCaregent/internal/platform/redis"
+	"CleanCaregent/internal/policy"
+	"CleanCaregent/internal/productpack"
+	"CleanCaregent/internal/productregistry"
 	"CleanCaregent/internal/prompt"
 	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/repository"
@@ -81,7 +86,27 @@ func main() {
 		}
 	}()
 
+	productPacks := loadProductPacks(cfg.Knowledge.ProductPackPaths, logger)
+	productRegistry := buildProductRegistry(cfg.Knowledge.SeedPaths, productPacks, logger)
+	compatibilityMatrix := compatibility.NewDefaultMatrix()
+	compatibilityMatrix.Merge(productpack.CompatibilityEntries(productPacks))
+	diagnosisEngine := diagnosis.NewDefaultEngine()
+	diagnosisData := productpack.DiagnosisEntries(productPacks)
+	if err := diagnosisEngine.Merge(diagnosisData.Nodes, diagnosisData.Roots, diagnosisData.SafetyKeywords); err != nil {
+		logger.Fatal("merge product pack diagnosis", zap.Error(err))
+	}
+	ruleRouter := intent.NewRuleRouter(intent.WithProductRegistry(productRegistry))
+	logger.Info(
+		"product packs loaded",
+		zap.Int("packs", len(productPacks)),
+		zap.Int("products", len(productRegistry.Products())),
+		zap.Int("compatibility_entries", len(productpack.CompatibilityEntries(productPacks))),
+		zap.Int("diagnosis_nodes", len(diagnosisData.Nodes)),
+	)
+
 	var closers []io.Closer
+	serverCtx, cancelServer := context.WithCancel(context.Background())
+	defer cancelServer()
 	defer func() {
 		for index := len(closers) - 1; index >= 0; index-- {
 			if closeErr := closers[index].Close(); closeErr != nil {
@@ -199,9 +224,12 @@ func main() {
 		if knowledgeRetriever == nil || traceStore == nil || businessRepo == nil {
 			logger.Fatal("agentic dependencies are not configured")
 		}
-		toolClient, mcpErr := buildToolClient(context.Background(), cfg, businessRepo, logger)
+		toolClient, mcpErr := buildToolClient(serverCtx, cfg, businessRepo, logger)
 		if mcpErr != nil {
 			logger.Fatal("initialize mcp tool client", zap.Error(mcpErr))
+		}
+		if closer, ok := toolClient.(io.Closer); ok {
+			closers = append(closers, closer)
 		}
 		toolExecutor := tool.NewExecutor(
 			toolClient,
@@ -218,8 +246,20 @@ func main() {
 		skillValues := []skill.Skill{
 			skill.NewProductComparison(knowledgeRetriever, answerGenerator, toolExecutor, skillConfig),
 			skill.NewPurchaseRecommendation(knowledgeRetriever, answerGenerator, toolExecutor, skillConfig),
-			skill.NewAccessoryCompatibility(knowledgeRetriever, answerGenerator, toolExecutor, skillConfig),
-			skill.NewFaultDiagnosis(knowledgeRetriever, answerGenerator, toolExecutor, skillConfig, memoryStore),
+			skill.NewAccessoryCompatibility(
+				knowledgeRetriever,
+				answerGenerator,
+				toolExecutor,
+				skillConfig,
+				skill.WithCompatibilityMatrix(compatibilityMatrix),
+			),
+			skill.NewFaultDiagnosis(
+				knowledgeRetriever,
+				answerGenerator,
+				toolExecutor,
+				skillConfig,
+				memoryStore,
+			).WithOptions(skill.WithDiagnosisEngine(diagnosisEngine)),
 			skill.NewAfterSalesJudgement(knowledgeRetriever, answerGenerator, toolExecutor, skillConfig),
 		}
 		if cfg.Agent.SkillConfigPath != "" {
@@ -238,6 +278,7 @@ func main() {
 			skillValues, loadErr = skill.BuildConfigured(definitions, skill.Dependencies{
 				Retriever: knowledgeRetriever, Generator: answerGenerator,
 				Tools: toolExecutor, DiagnosisStore: memoryStore,
+				DiagnosisEngine: diagnosisEngine, CompatibilityMatrix: compatibilityMatrix,
 			})
 			if loadErr != nil {
 				logger.Fatal("build configured skills", zap.Error(loadErr))
@@ -250,6 +291,7 @@ func main() {
 		}
 		dynamicOptions := []orchestration.Option{
 			orchestration.WithKnowledgeRetriever(knowledgeRetriever),
+			orchestration.WithCompatibilityMatrix(compatibilityMatrix),
 		}
 		if cfg.Prompt.EnableLLMComponents && llmClient != nil {
 			dynamicOptions = append(
@@ -283,24 +325,16 @@ func main() {
 		)
 		if cfg.Prompt.EnableLLMComponents && llmClient != nil {
 			intentLLMClient := llmClient.WithModel(cfg.Prompt.IntentClassifierModel)
-			availableTools, listToolsErr := toolExecutor.ListAllowed(context.Background(), []string{
-				"price_query",
-				"inventory_check",
-				"user_purchase_history",
-				"order_lookup",
-				"warranty_check",
-				"create_after_sales_ticket",
-				"return_request",
-				"exchange_request",
-				"refund_status",
-				"repair_status",
-				"handoff_to_human",
-			})
+			availableTools, listToolsErr := toolExecutor.ListAllowed(serverCtx, policy.AllAllowedTools())
 			if listToolsErr != nil {
 				logger.Fatal("list mcp tools", zap.Error(listToolsErr))
 			}
 			agentOpts = append(agentOpts,
-				agent.WithLLMRouter(intent.NewHybridRouter(intentLLMClient, promptRegistry)),
+				agent.WithLLMRouter(intent.NewHybridRouter(
+					intentLLMClient,
+					promptRegistry,
+					intent.WithProductRegistry(productRegistry),
+				)),
 				agent.WithLLMRewriter(agent.NewLLMQueryRewriter(
 					llmClient.WithModel(cfg.Prompt.QueryRewriteModel),
 					promptRegistry,
@@ -322,7 +356,7 @@ func main() {
 			logger.Info("llm components enabled for agentic runner")
 		}
 		runner = agent.NewAgenticRunner(
-			intent.NewRuleRouter(),
+			ruleRouter,
 			agent.NewRuleQueryRewriter(),
 			agent.NewRulePlanner(),
 			knowledgeRetriever,
@@ -387,10 +421,10 @@ func main() {
 			},
 			logger,
 		)
-		if groupErr := stream.EnsureGroup(context.Background()); groupErr != nil {
+		if groupErr := stream.EnsureGroup(serverCtx); groupErr != nil {
 			logger.Fatal("initialize knowledge ingest stream", zap.Error(groupErr))
 		}
-		workerCtx, cancelWorker := context.WithCancel(context.Background())
+		workerCtx, cancelWorker := context.WithCancel(serverCtx)
 		stopIngest = cancelWorker
 		ingestPublisher = stream
 		go func() {
@@ -405,6 +439,11 @@ func main() {
 	}
 	if stopIngest != nil {
 		defer stopIngest()
+	}
+	if knowledgeService != nil {
+		if _, ok := knowledgeRepo.(repository.KnowledgeVectorOutboxRepository); ok {
+			startKnowledgeVectorReconciler(serverCtx, knowledgeService, logger)
+		}
 	}
 	var evalRunner *eval.Runner
 	var evalComparison *eval.ComparisonRunner
@@ -424,7 +463,7 @@ func main() {
 			evaluator,
 			conversationService,
 			traceStore,
-			intent.NewRuleRouter(),
+			ruleRouter,
 		)
 		if cfg.Agent.Mode == "agentic" && knowledgeRetriever != nil {
 			baselineRunner := agent.NewNaiveRAGRunner(
@@ -449,7 +488,7 @@ func main() {
 				evaluator,
 				baselineService,
 				traceStore,
-				intent.NewRuleRouter(),
+				ruleRouter,
 			)
 			evalComparison = eval.NewComparisonRunner(baselineEvalRunner, evalRunner)
 		}
@@ -512,6 +551,7 @@ func main() {
 	case <-signalCtx.Done():
 		logger.Info("shutdown signal received")
 	}
+	cancelServer()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
 	defer cancel()
@@ -722,6 +762,39 @@ func startRemoteNotificationWatcher(
 	}()
 }
 
+func startKnowledgeVectorReconciler(
+	ctx context.Context,
+	knowledgeService *service.KnowledgeService,
+	logger *zap.Logger,
+) {
+	if knowledgeService == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			reconcileCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			result, err := knowledgeService.ReconcileVectorOutbox(reconcileCtx, 20)
+			cancel()
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				logger.Warn("knowledge vector outbox reconcile failed", zap.Error(err))
+			} else if result.Processed > 0 {
+				logger.Info("knowledge vector outbox reconciled",
+					zap.Int("processed", result.Processed),
+					zap.Int("succeeded", result.Succeeded),
+					zap.Int("failed", result.Failed),
+				)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -781,14 +854,17 @@ func buildGenerator(
 	prompts *prompt.Registry,
 	llmClient *llm.Client,
 ) generator.Generator {
+	var base generator.Generator
 	if cfg.LLM.Provider == "openai_compatible" && llmClient != nil {
 		primary := generator.NewOpenAIClientFromClient(
 			llmClient.WithModel(cfg.Prompt.GenerationModel),
 			prompts,
 		)
-		return generator.NewFallback(primary, generator.NewExtractive(cfg.RAG.MaxAnswerRunes))
+		base = generator.NewFallback(primary, generator.NewExtractive(cfg.RAG.MaxAnswerRunes))
+	} else {
+		base = generator.NewExtractive(cfg.RAG.MaxAnswerRunes)
 	}
-	return generator.NewExtractive(cfg.RAG.MaxAnswerRunes)
+	return generator.NewCached(base, cfg.RAG.AnswerCacheTTL, cfg.RAG.AnswerCacheMaxEntries)
 }
 
 func llmForModel(client *llm.Client, model string) *llm.Client {
@@ -796,6 +872,60 @@ func llmForModel(client *llm.Client, model string) *llm.Client {
 		return nil
 	}
 	return client.WithModel(model)
+}
+
+func loadProductPacks(paths []string, logger *zap.Logger) []productpack.Pack {
+	if len(paths) == 0 {
+		return nil
+	}
+	packs, err := productpack.Load(paths...)
+	if err != nil {
+		logger.Fatal("load product packs", zap.Error(err), zap.Strings("paths", paths))
+	}
+	if errs := productpack.Validate(packs); len(errs) > 0 {
+		logger.Fatal("validate product packs", zap.Error(errs[0]), zap.Strings("paths", paths))
+	}
+	return packs
+}
+
+func buildProductRegistry(
+	seedPaths []string,
+	packs []productpack.Pack,
+	logger *zap.Logger,
+) *productregistry.Registry {
+	var products []productregistry.Product
+	var documents []service.IngestDocumentRequest
+	externalDocuments, err := ingest.LoadKnowledgeDocuments(seedPaths...)
+	if err != nil {
+		logger.Warn("load knowledge documents for product registry failed", zap.Error(err), zap.Strings("paths", seedPaths))
+	} else {
+		documents = append(documents, externalDocuments...)
+	}
+	packDocuments, err := productpack.KnowledgeDocuments(packs)
+	if err != nil {
+		logger.Warn("load product pack documents for product registry failed", zap.Error(err))
+	} else {
+		documents = append(documents, packDocuments...)
+	}
+	products = append(products, productregistry.ProductsFromDocuments(registryDocuments(documents))...)
+	products = append(products, productpack.Registry(packs).Products()...)
+	return productregistry.New(products)
+}
+
+func registryDocuments(documents []service.IngestDocumentRequest) []productregistry.Document {
+	result := make([]productregistry.Document, 0, len(documents))
+	for _, document := range documents {
+		result = append(result, productregistry.Document{
+			DocID:    document.DocID,
+			Title:    document.Title,
+			Content:  document.Content,
+			Category: document.Category,
+			Brand:    document.Brand,
+			DocType:  document.DocType,
+			Metadata: document.Metadata,
+		})
+	}
+	return result
 }
 
 // buildLLMClient creates a shared LLM client when the LLM provider is configured.

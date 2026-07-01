@@ -27,6 +27,13 @@ qdrant:
   base_url: http://127.0.0.1:6333
   ensure_collection: true
 
+knowledge:
+  seed_paths:
+    - docs/knowledge-base
+  product_pack_paths:
+    - docs/product-packs
+  seed_builtin_mock: true
+
 agent:
   mode: agentic
   planning_mode: auto

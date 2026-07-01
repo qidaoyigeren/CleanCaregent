@@ -11,8 +11,8 @@ export function useAuth() {
   const [state, setState] = useState<AuthState>(() => {
     const token = getAuthToken();
     return {
-      isAuthenticated: !token.includes('mock'),
-      token,
+      isAuthenticated: token !== '',
+      token: token || null,
     };
   });
 

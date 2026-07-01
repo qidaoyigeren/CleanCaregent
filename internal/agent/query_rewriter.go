@@ -119,7 +119,7 @@ func shouldCarryRewriteContext(request RewriteRequest, entities, contextEntities
 	}
 	query := strings.ToLower(strings.TrimSpace(request.Query))
 	return len([]rune(query)) <= 24 &&
-		containsAnyRewrite(query, "扫地", "净化器", "净水器", "加湿器", "预算", "地面", "家庭", "平", "地毯", "宠物")
+		containsAnyRewrite(query, "扫地", "净化器", "净水器", "加湿器", "拖把", "玻璃刮", "清洁刷", "清洁布", "清洁工具", "耗材", "预算", "地面", "家庭", "平", "地毯", "宠物")
 }
 
 func contextualRecommendationQuery(query string, entities map[string]string) string {
@@ -155,6 +155,14 @@ func categoryLabel(category string) string {
 		return "净水器"
 	case "humidifier":
 		return "加湿器"
+	case "floor_mop":
+		return "拖把"
+	case "window_cleaning":
+		return "玻璃清洁工具"
+	case "scrub_brush":
+		return "清洁刷"
+	case "cleaning_cloth":
+		return "清洁布"
 	default:
 		return ""
 	}
@@ -226,11 +234,17 @@ func containsReference(query string) bool {
 func latestMentionedModel(messages []model.Message, summary string) string {
 	for index := len(messages) - 1; index >= 0; index-- {
 		if matches := productModelPattern.FindAllString(messages[index].Content, -1); len(matches) > 0 {
-			return strings.Join(strings.Fields(matches[len(matches)-1]), " ")
+			modelName := normalizeProductModel(matches[len(matches)-1])
+			if isLikelyProductModel(modelName) {
+				return modelName
+			}
 		}
 	}
 	if matches := productModelPattern.FindAllString(summary, -1); len(matches) > 0 {
-		return strings.Join(strings.Fields(matches[len(matches)-1]), " ")
+		modelName := normalizeProductModel(matches[len(matches)-1])
+		if isLikelyProductModel(modelName) {
+			return modelName
+		}
 	}
 	return ""
 }

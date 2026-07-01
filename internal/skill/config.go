@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"CleanCaregent/internal/compatibility"
 	"CleanCaregent/internal/diagnosis"
 	"CleanCaregent/internal/generator"
 	"CleanCaregent/internal/intent"
@@ -29,10 +30,12 @@ type DefinitionFile struct {
 }
 
 type Dependencies struct {
-	Retriever      rag.Retriever
-	Generator      generator.Generator
-	Tools          *tool.Executor
-	DiagnosisStore memory.Store
+	Retriever           rag.Retriever
+	Generator           generator.Generator
+	Tools               *tool.Executor
+	DiagnosisStore      memory.Store
+	DiagnosisEngine     *diagnosis.Engine
+	CompatibilityMatrix *compatibility.Matrix
 }
 
 func LoadDefinitions(reader io.Reader) ([]Definition, error) {
@@ -71,9 +74,21 @@ func buildConfiguredWorkflow(definition Definition, deps Dependencies) (*Workflo
 	case PurchaseRecommendationSkill:
 		workflow = NewPurchaseRecommendation(deps.Retriever, deps.Generator, deps.Tools, definition.Retrieval)
 	case AccessoryCompatibilitySkill:
-		workflow = NewAccessoryCompatibility(deps.Retriever, deps.Generator, deps.Tools, definition.Retrieval)
+		workflow = NewAccessoryCompatibility(
+			deps.Retriever,
+			deps.Generator,
+			deps.Tools,
+			definition.Retrieval,
+			WithCompatibilityMatrix(deps.CompatibilityMatrix),
+		)
 	case FaultDiagnosisSkill:
-		workflow = NewFaultDiagnosis(deps.Retriever, deps.Generator, deps.Tools, definition.Retrieval, deps.DiagnosisStore)
+		workflow = NewFaultDiagnosis(
+			deps.Retriever,
+			deps.Generator,
+			deps.Tools,
+			definition.Retrieval,
+			deps.DiagnosisStore,
+		).WithOptions(WithDiagnosisEngine(deps.DiagnosisEngine))
 	case AfterSalesJudgementSkill:
 		workflow = NewAfterSalesJudgement(deps.Retriever, deps.Generator, deps.Tools, definition.Retrieval)
 	default:

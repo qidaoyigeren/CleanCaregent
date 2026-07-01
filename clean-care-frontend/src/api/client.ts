@@ -14,7 +14,6 @@ interface FetchOptions extends Omit<RequestInit, 'body'> {
   cache?: RequestCache;
 }
 
-// Cache for GET requests
 const requestCache = new Map<string, { data: unknown; timestamp: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
@@ -42,7 +41,19 @@ const getRetryDelay = (attempt: number): number => {
 // Helper: generate cache key
 const getCacheKey = (path: string, options: FetchOptions): string => {
   const method = options.method || 'GET';
-  return `${method}:${path}`;
+  const authScope = getAuthToken() ? 'auth' : 'anonymous';
+  const adminScope = path.startsWith('/admin/') && getAdminAPIKey() ? 'admin' : 'user';
+  return `${authScope}:${adminScope}:${method}:${path}`;
+};
+
+const isMemoryCacheAllowed = (path: string, method: string, cache?: RequestCache): boolean => {
+  if (method !== 'GET' || cache !== 'force-cache') return false;
+  return !(
+    path.startsWith('/admin/') ||
+    path.startsWith('/conversations') ||
+    path.startsWith('/orders') ||
+    path.startsWith('/after-sales')
+  );
 };
 
 // Clear expired cache entries
@@ -67,8 +78,9 @@ export async function apiFetch<T>(
   const method = options.method || 'GET';
   const cacheKey = getCacheKey(path, options);
 
-  // Check cache for GET requests
-  if (method === 'GET' && cache !== 'no-store') {
+  const useMemoryCache = isMemoryCacheAllowed(path, method, cache);
+
+  if (useMemoryCache) {
     const cached = requestCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       recordApiMetric({
@@ -88,8 +100,7 @@ export async function apiFetch<T>(
     try {
       const result = await executeFetch<T>(path, { body, headers, ...rest });
 
-      // Cache successful GET requests
-      if (method === 'GET' && cache !== 'no-store') {
+      if (useMemoryCache) {
         requestCache.set(cacheKey, {
           data: result,
           timestamp: Date.now(),
@@ -128,9 +139,10 @@ async function executeFetch<T>(
   const { body, headers, ...rest } = options;
 
   const fetchHeaders: Record<string, string> = {
-    Authorization: getAuthToken(),
     ...(headers as Record<string, string>),
   };
+  const authToken = getAuthToken();
+  if (authToken) fetchHeaders.Authorization = authToken;
 
   if (path.startsWith('/admin/')) {
     const adminKey = getAdminAPIKey();
@@ -167,6 +179,7 @@ async function executeFetch<T>(
       headers: fetchHeaders,
       body: fetchBody,
       signal: controller.signal,
+      cache: 'no-store',
     });
 
     clearTimeout(timeoutId);

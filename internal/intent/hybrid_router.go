@@ -36,9 +36,13 @@ type HybridRouter struct {
 
 // NewHybridRouter creates a HybridRouter.
 // If llmClient is nil, the router degrades to rule-only behavior.
-func NewHybridRouter(llmClient *llm.Client, prompts *prompt.Registry) *HybridRouter {
+func NewHybridRouter(
+	llmClient *llm.Client,
+	prompts *prompt.Registry,
+	options ...RuleRouterOption,
+) *HybridRouter {
 	return &HybridRouter{
-		rule:              NewRuleRouter(),
+		rule:              NewRuleRouter(options...),
 		llm:               llmClient,
 		prompts:           prompts,
 		MinRuleConfidence: 0.85,

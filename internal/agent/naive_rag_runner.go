@@ -23,7 +23,10 @@ type NaiveRAGRunner struct {
 	config    NaiveRAGConfig
 }
 
-var productModelPattern = regexp.MustCompile(`(?i)\b[A-Z]+[0-9]+(?:\s*Pro)?\b`)
+var (
+	productModelPattern       = regexp.MustCompile(`(?i)\b[A-Z][A-Z0-9-]*[0-9][A-Z0-9-]*(?:\s*(?:Pro|Plus|Max|Mini))?\b`)
+	accessoryLikeModelPattern = regexp.MustCompile(`(?i)^(?:F|DB|RB|C)[0-9]{2,}[A-Z0-9-]*$`)
+)
 
 func NewNaiveRAGRunner(
 	retriever rag.Retriever,
@@ -113,6 +116,9 @@ func extractProductModels(query string) []string {
 	models := make([]string, 0, len(matches))
 	for _, match := range matches {
 		match = normalizeProductModel(match)
+		if !isLikelyProductModel(match) {
+			continue
+		}
 		key := strings.ToLower(match)
 		if _, ok := seen[key]; ok {
 			continue
@@ -129,4 +135,26 @@ func normalizeProductModel(value string) string {
 		return "X20 Pro"
 	}
 	return strings.ToUpper(value)
+}
+
+func isLikelyProductModel(value string) bool {
+	compact := strings.ToUpper(strings.Join(strings.Fields(strings.TrimSpace(value)), ""))
+	if compact == "" {
+		return false
+	}
+	if strings.HasPrefix(compact, "CC") && len(compact) >= 8 {
+		return false
+	}
+	if strings.HasPrefix(compact, "ORDER") && len(compact) >= 10 {
+		return false
+	}
+	if accessoryLikeModelPattern.MatchString(compact) {
+		return false
+	}
+	switch compact {
+	case "CLEAN100", "WIFI6":
+		return false
+	default:
+		return true
+	}
 }

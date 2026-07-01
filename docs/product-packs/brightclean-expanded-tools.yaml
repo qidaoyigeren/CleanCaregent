@@ -1,0 +1,373 @@
+pack_id: brightclean-expanded-tools
+version: 2026-06-30
+metadata:
+  owner: demo
+  domain: cleaning-tools
+
+products:
+  - product_code: P-SCRUB-SB3
+    name: BrightClean SpinScrub SB3
+    category: scrub_brush
+    brand: BrightClean
+    model: SB3
+    aliases:
+      - SpinScrub SB3
+      - electric scrubber SB3
+      - 电动清洁刷 SB3
+    attributes:
+      brush_speed_rpm: 320
+      waterproof_rating: IPX5
+      battery_minutes: 80
+      suitable_surfaces: [tile, grout, sink, bathtub]
+    skus:
+      - sku_code: SKU-SB3-STD
+        sku_name: SpinScrub SB3 Standard Kit
+        list_price_cents: 19900
+        current_price_cents: 16900
+        available_stock: 62
+        reserved_stock: 5
+        currency: CNY
+        warranty_months: 12
+
+  - product_code: P-SCRUB-SB3-BH
+    name: BrightClean SB3 Brush Head Set
+    category: scrub_brush_accessory
+    brand: BrightClean
+    model: SB3-BH
+    aliases:
+      - SB3 brush head
+      - SB3 replacement brush
+      - SB3 替换刷头
+    attributes:
+      accessory_type: brush_head
+      compatible_host_models: [SB3]
+    skus:
+      - sku_code: SKU-SB3-BH-3P
+        sku_name: SB3 Brush Head 3 Pack
+        list_price_cents: 5900
+        current_price_cents: 4900
+        available_stock: 140
+        reserved_stock: 9
+        currency: CNY
+
+  - product_code: P-DUSTER-FD4
+    name: BrightClean FlexDuster FD4
+    category: dusting_tool
+    brand: BrightClean
+    model: FD4
+    aliases:
+      - FlexDuster FD4
+      - extendable duster FD4
+      - 伸缩除尘掸 FD4
+    attributes:
+      max_length_cm: 145
+      sleeve_material: microfiber
+      washable: true
+      suitable_surfaces: [cabinet_top, curtain_rail, ceiling_corner]
+    skus:
+      - sku_code: SKU-FD4-STD
+        sku_name: FlexDuster FD4 Extendable Kit
+        list_price_cents: 8900
+        current_price_cents: 6900
+        available_stock: 84
+        reserved_stock: 6
+        currency: CNY
+        warranty_months: 6
+
+  - product_code: P-DUSTER-FD4-PAD
+    name: BrightClean FD4 Microfiber Sleeve
+    category: dusting_tool_accessory
+    brand: BrightClean
+    model: FD4-PAD
+    aliases:
+      - FD4 sleeve
+      - FD4 replacement pad
+      - FD4 替换掸套
+    attributes:
+      accessory_type: microfiber_sleeve
+      compatible_host_models: [FD4]
+    skus:
+      - sku_code: SKU-FD4-PAD-2P
+        sku_name: FD4 Microfiber Sleeve 2 Pack
+        list_price_cents: 3900
+        current_price_cents: 2900
+        available_stock: 130
+        reserved_stock: 7
+        currency: CNY
+
+  - product_code: P-GROUT-GB2
+    name: BrightClean GroutMate GB2
+    category: scrub_brush
+    brand: BrightClean
+    model: GB2
+    aliases:
+      - GroutMate GB2
+      - grout brush GB2
+      - 缝隙刷 GB2
+    attributes:
+      bristle_material: nylon
+      head_width_cm: 2.2
+      handle_angle_degree: 35
+      suitable_surfaces: [tile_grout, window_track, faucet_base]
+    skus:
+      - sku_code: SKU-GB2-STD
+        sku_name: GroutMate GB2 Detail Brush
+        list_price_cents: 4900
+        current_price_cents: 3900
+        available_stock: 95
+        reserved_stock: 4
+        currency: CNY
+        warranty_months: 3
+
+  - product_code: P-GROUT-GB2-BR
+    name: BrightClean GB2 Narrow Brush Refill
+    category: scrub_brush_accessory
+    brand: BrightClean
+    model: GB2-BR
+    aliases:
+      - GB2 refill brush
+      - GB2 brush refill
+      - GB2 替换刷
+    attributes:
+      accessory_type: narrow_brush_refill
+      compatible_host_models: [GB2]
+    skus:
+      - sku_code: SKU-GB2-BR-2P
+        sku_name: GB2 Narrow Brush Refill 2 Pack
+        list_price_cents: 2900
+        current_price_cents: 1900
+        available_stock: 160
+        reserved_stock: 10
+        currency: CNY
+
+  - product_code: P-CLOTH-MC6
+    name: BrightClean MicroFiberPro MC6
+    category: cleaning_cloth
+    brand: BrightClean
+    model: MC6
+    aliases:
+      - MicroFiberPro MC6
+      - microfiber cloth MC6
+      - 超细纤维布 MC6
+    attributes:
+      pack_count: 6
+      gsm: 320
+      washable_cycles: 80
+      suitable_surfaces: [glass, stainless_steel, countertop, appliance_shell]
+    skus:
+      - sku_code: SKU-MC6-6P
+        sku_name: MicroFiberPro MC6 6 Pack
+        list_price_cents: 6900
+        current_price_cents: 4900
+        available_stock: 200
+        reserved_stock: 12
+        currency: CNY
+
+  - product_code: P-SPRAY-SP2
+    name: BrightClean SprayMist SP2
+    category: spray_bottle
+    brand: BrightClean
+    model: SP2
+    aliases:
+      - SprayMist SP2
+      - spray bottle SP2
+      - 喷雾瓶 SP2
+    attributes:
+      capacity_ml: 500
+      modes: [mist, stream, off]
+      material: pet
+      suitable_liquids: [water, neutral_cleaner]
+    skus:
+      - sku_code: SKU-SP2-STD
+        sku_name: SprayMist SP2 500ml Bottle
+        list_price_cents: 5900
+        current_price_cents: 3900
+        available_stock: 110
+        reserved_stock: 6
+        currency: CNY
+        warranty_months: 3
+
+  - product_code: P-SPRAY-SP2-NZ
+    name: BrightClean SP2 Adjustable Nozzle
+    category: spray_bottle_accessory
+    brand: BrightClean
+    model: SP2-NZ
+    aliases:
+      - SP2 nozzle
+      - SP2 replacement nozzle
+      - SP2 替换喷头
+    attributes:
+      accessory_type: nozzle
+      compatible_host_models: [SP2]
+    skus:
+      - sku_code: SKU-SP2-NZ-1P
+        sku_name: SP2 Adjustable Nozzle
+        list_price_cents: 2500
+        current_price_cents: 1900
+        available_stock: 150
+        reserved_stock: 5
+        currency: CNY
+
+compatibility:
+  - host_model: SB3
+    accessory_model: SB3-BH
+    accessory_type: brush_head
+    status: compatible
+    reason: SB3-BH 使用 SB3 四分之一旋入式刷头接口，并匹配 320rpm 负载。
+    evidence_doc_id: kb_spinscrub_sb3_detail
+  - host_model: SB3
+    accessory_model: GB2-BR
+    accessory_type: narrow_brush_refill
+    status: incompatible
+    reason: GB2-BR 是 GB2 手动缝隙刷补充装，没有 SB3 电机接口。
+    evidence_doc_id: kb_groutmate_gb2_detail
+  - host_model: FD4
+    accessory_model: FD4-PAD
+    accessory_type: microfiber_sleeve
+    status: compatible
+    reason: FD4-PAD 的弹性套筒长度和尾端止滑槽与 FD4 匹配。
+    evidence_doc_id: kb_flexduster_fd4_detail
+  - host_model: GB2
+    accessory_model: GB2-BR
+    accessory_type: narrow_brush_refill
+    status: compatible
+    reason: GB2-BR 适配 GB2 的斜角手柄导轨和 2.2cm 窄刷头。
+    evidence_doc_id: kb_groutmate_gb2_detail
+  - host_model: SP2
+    accessory_model: SP2-NZ
+    accessory_type: nozzle
+    status: compatible
+    reason: SP2-NZ 使用与 SP2 相同的螺纹瓶口和雾化/直喷阀芯。
+    evidence_doc_id: kb_spraymist_sp2_detail
+
+diagnosis:
+  - id: sb3_brush_stalls
+    product_model: SB3
+    symptom: 刷头停转
+    question: SB3 刷头停转时，电量指示灯是否低电或闪烁？
+    guidance: 先停止按键并取下刷头，检查尾部电量与刷头卡口。
+    yes_next: sb3_charge_first
+    no_next: sb3_clean_socket
+    safety_level: low
+    evidence_doc_id: kb_spinscrub_sb3_troubleshooting
+    root: true
+  - id: sb3_charge_first
+    product_model: SB3
+    symptom: 刷头停转
+    resolution: 先充电 2 小时后再测试；如果电量恢复后仍停转，需要检查刷头或电机。
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_spinscrub_sb3_troubleshooting
+  - id: sb3_clean_socket
+    product_model: SB3
+    symptom: 刷头停转
+    resolution: 取下 SB3-BH，清洁刷头卡口和密封圈后空载测试；若空载也停转，建议申请售后检测电机。
+    terminal: true
+    need_human: true
+    safety_level: low
+    evidence_doc_id: kb_spinscrub_sb3_troubleshooting
+
+  - id: fd4_sleeve_slips
+    product_model: FD4
+    symptom: 掸套滑落
+    question: FD4 掸套滑落时，掸套尾端松紧口是否套过止滑槽？
+    guidance: 缩短伸缩杆，检查 FD4-PAD 尾端松紧口是否卡在止滑槽外侧。
+    yes_next: fd4_replace_sleeve
+    no_next: fd4_reseat_sleeve
+    safety_level: low
+    evidence_doc_id: kb_flexduster_fd4_troubleshooting
+    root: true
+  - id: fd4_reseat_sleeve
+    product_model: FD4
+    symptom: 掸套滑落
+    resolution: 重新套入 FD4-PAD，并把尾端松紧口推过止滑槽。
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_flexduster_fd4_troubleshooting
+  - id: fd4_replace_sleeve
+    product_model: FD4
+    symptom: 掸套滑落
+    resolution: 如果松紧口已经松弛或掸套变形，建议更换 FD4-PAD。
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_flexduster_fd4_troubleshooting
+
+  - id: gb2_bristle_bent
+    product_model: GB2
+    symptom: 刷毛变形
+    question: GB2 刷毛变形前，是否长时间用力压同一条缝？
+    guidance: 缝隙刷适合短程往复清洁，不建议用手柄撬动水垢或固化胶。
+    yes_next: gb2_reduce_pressure
+    no_next: gb2_replace_refill
+    safety_level: low
+    evidence_doc_id: kb_groutmate_gb2_troubleshooting
+    root: true
+  - id: gb2_reduce_pressure
+    product_model: GB2
+    symptom: 刷毛变形
+    resolution: 用温水恢复刷毛形状，后续降低下压力并缩短单次摩擦时间。
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_groutmate_gb2_troubleshooting
+  - id: gb2_replace_refill
+    product_model: GB2
+    symptom: 刷毛变形
+    resolution: 如果刷毛张开影响进缝，建议更换 GB2-BR 刷头。
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_groutmate_gb2_troubleshooting
+
+  - id: mc6_lint_streaks
+    product_model: MC6
+    symptom: 掉毛水痕
+    question: MC6 首次使用前，是否单独清洗并完全晾干？
+    guidance: 新布首次使用可能带有浮毛，建议单独清洗，不要和棉毛巾混洗。
+    yes_next: mc6_check_detergent
+    no_next: mc6_first_wash
+    safety_level: low
+    evidence_doc_id: kb_microfiberpro_mc6_troubleshooting
+    root: true
+  - id: mc6_first_wash
+    product_model: MC6
+    symptom: 掉毛水痕
+    resolution: 先单独清洗并自然晾干，第二次使用通常会明显减少浮毛和水痕。
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_microfiberpro_mc6_troubleshooting
+  - id: mc6_check_detergent
+    product_model: MC6
+    symptom: 掉毛水痕
+    resolution: 避免柔顺剂、高泡清洁剂残留；玻璃表面建议最后用干布和清水处理。
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_microfiberpro_mc6_troubleshooting
+
+  - id: sp2_no_spray
+    product_model: SP2
+    symptom: 不出喷雾
+    question: SP2 不出喷雾时，喷头旋钮是否在 off 档？
+    guidance: 先把喷头转到 mist 或 stream，再按压 5-8 次建立吸液压力。
+    yes_next: sp2_switch_mode
+    no_next: sp2_flush_nozzle
+    safety_level: low
+    evidence_doc_id: kb_spraymist_sp2_troubleshooting
+    root: true
+  - id: sp2_switch_mode
+    product_model: SP2
+    symptom: 不出喷雾
+    resolution: 将旋钮从 off 调到 mist 或 stream，然后连续按压几次排出空气。
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_spraymist_sp2_troubleshooting
+  - id: sp2_flush_nozzle
+    product_model: SP2
+    symptom: 不出喷雾
+    resolution: 用温水冲洗 SP2-NZ 喷头和吸管，避免未稀释液体堵塞；如果仍堵塞，建议更换喷头。
+    terminal: true
+    safety_level: low
+    evidence_doc_id: kb_spraymist_sp2_troubleshooting
+
+safety_keywords:
+  - 电机进水
+  - 清洁剂入眼
+  - 强酸清洁剂

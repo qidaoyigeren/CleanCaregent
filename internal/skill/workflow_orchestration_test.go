@@ -2,6 +2,7 @@ package skill
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
@@ -54,6 +55,28 @@ func (workflowGenerator) GenerateWithScenario(
 	return "answer", nil
 }
 
+type countingWorkflowGenerator struct {
+	calls int
+}
+
+func (g *countingWorkflowGenerator) Name() string { return "counting" }
+func (g *countingWorkflowGenerator) Generate(context.Context, string, []rag.SearchResult) (string, error) {
+	g.calls++
+	return "generated", nil
+}
+func (g *countingWorkflowGenerator) GenerateWithScenario(
+	context.Context,
+	prompt.Scenario,
+	string,
+	[]rag.SearchResult,
+	string,
+	string,
+	string,
+) (string, error) {
+	g.calls++
+	return "generated", nil
+}
+
 func TestProductComparisonRetrievesEachModelAndScenarioGuide(t *testing.T) {
 	retriever := &recordingRetriever{}
 	workflow := NewProductComparison(
@@ -93,6 +116,34 @@ func TestProductComparisonRetrievesEachModelAndScenarioGuide(t *testing.T) {
 	}
 	if !modelRoutes["T20"] || !modelRoutes["X20 Pro"] || !hasGuideRoute {
 		t.Fatalf("requests = %#v", retriever.requests)
+	}
+}
+
+func TestProductComparisonUsesEvidenceDrivenAnswerBeforeGenerator(t *testing.T) {
+	retriever := &recordingRetriever{}
+	generator := &countingWorkflowGenerator{}
+	workflow := NewProductComparison(
+		retriever,
+		generator,
+		nil,
+		WorkflowConfig{DenseTopK: 5, KeywordTopK: 5, RerankTopK: 3},
+	)
+	result, err := workflow.Run(context.Background(), Request{
+		TraceID: "tr_compare_deterministic",
+		Query:   "FD4 和 GB2 哪个适合大面积清洁",
+		Intent: intent.Result{
+			Secondary: intent.ProductComparison,
+			Entities:  map[string]string{"models": "FD4,GB2"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generator.calls != 0 {
+		t.Fatalf("generator calls = %d, want 0", generator.calls)
+	}
+	if result.AnswerDraft == "" || !strings.Contains(result.AnswerDraft, "知识依据") {
+		t.Fatalf("unexpected deterministic answer: %q", result.AnswerDraft)
 	}
 }
 

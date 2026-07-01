@@ -1,0 +1,22 @@
+{
+  "doc_id": "kb_window_squeegee_ws2_params",
+  "title": "BrightClean WS2 玻璃刮参数表",
+  "content": "# BrightClean WS2 玻璃刮参数表\n\n| 参数 | 值 |\n|---|---|\n| 型号 | WS2 |\n| 品类 | 玻璃清洁工具 |\n| 刮条宽度 | 25cm |\n| 刮条材质 | 柔性硅胶 |\n| 手柄材质 | 防滑 ABS |\n| 适用表面 | 玻璃、镜面、瓷砖墙面 |\n| 可替换刮条 | WS2-RB |\n| 建议更换周期 | 6-12 个月，出现缺口或刮水不均时提前更换 |\n\n## 使用建议\n\nWS2 适合浴室玻璃门、窗户和镜面日常刮水。使用前先喷洒清洁液或清水，从上到下单向刮拭，避免来回干刮造成噪声和水痕。\n\n## 限制\n\nWS2 不适合粗糙水泥墙、磨砂玻璃强力刮擦或含砂粒污渍场景。若玻璃表面有硬颗粒，应先冲洗或擦除，避免刮条夹带颗粒划伤表面。",
+  "category": "window_cleaning",
+  "brand": "BrightClean",
+  "doc_type": "product_parameter",
+  "version": "2026-06",
+  "source": "docs/knowledge-base/products/window-squeegee-ws2.json",
+  "intent_tags": [
+    "product_parameter",
+    "usage_instruction",
+    "purchase_recommendation"
+  ],
+  "models": [
+    "WS2"
+  ],
+  "metadata": {
+    "accessory_model": "WS2-RB",
+    "data_scope": "demo"
+  }
+}

@@ -54,6 +54,20 @@ type IngestDocumentResult struct {
 	CleanupPending    bool   `json:"cleanup_pending,omitempty"`
 }
 
+type KnowledgeReconcileResult struct {
+	Processed int `json:"processed"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+}
+
+func ValidateIngestDocument(request IngestDocumentRequest) error {
+	return validateIngestRequest(normalizeIngestRequest(request))
+}
+
+func ContentHash(value string) string {
+	return contentHash(value)
+}
+
 func NewKnowledgeService(
 	repository repository.KnowledgeRepository,
 	vector vectorstore.Store,
@@ -177,9 +191,14 @@ func (s *KnowledgeService) Ingest(ctx context.Context, request IngestDocumentReq
 		cancel()
 		return IngestDocumentResult{}, err
 	}
+	s.completeVectorOutbox(ctx, request.DocID, request.Version, repository.KnowledgeVectorActionUpsert)
 	cleanupPending := false
 	if len(stalePointIDs) > 0 {
-		cleanupPending = s.vector.Delete(ctx, stalePointIDs) != nil
+		if err := s.vector.Delete(ctx, stalePointIDs); err != nil {
+			cleanupPending = true
+		} else {
+			s.completeVectorOutbox(ctx, request.DocID, request.Version, repository.KnowledgeVectorActionDelete)
+		}
 	}
 
 	return IngestDocumentResult{
@@ -190,6 +209,153 @@ func (s *KnowledgeService) Ingest(ctx context.Context, request IngestDocumentReq
 		EmbeddingProvider: s.embedder.Name(),
 		CleanupPending:    cleanupPending,
 	}, nil
+}
+
+func (s *KnowledgeService) ReconcileVectorOutbox(ctx context.Context, limit int) (KnowledgeReconcileResult, error) {
+	outbox, ok := s.repository.(repository.KnowledgeVectorOutboxRepository)
+	if !ok || s.vector == nil {
+		return KnowledgeReconcileResult{}, ErrKnowledgeUnavailable
+	}
+	events, err := outbox.PendingKnowledgeVectorOutbox(ctx, limit)
+	if err != nil {
+		return KnowledgeReconcileResult{}, err
+	}
+	result := KnowledgeReconcileResult{Processed: len(events)}
+	for _, event := range events {
+		if err := s.reconcileVectorEvent(ctx, event); err != nil {
+			result.Failed++
+			_ = outbox.FailKnowledgeVectorOutboxEvent(ctx, event.ID, err.Error())
+			continue
+		}
+		result.Succeeded++
+		_ = outbox.CompleteKnowledgeVectorOutboxEvent(ctx, event.ID)
+	}
+	return result, nil
+}
+
+func (s *KnowledgeService) reconcileVectorEvent(
+	ctx context.Context,
+	event repository.KnowledgeVectorOutboxEvent,
+) error {
+	switch event.Action {
+	case repository.KnowledgeVectorActionDelete:
+		return s.vector.Delete(ctx, event.PointIDs)
+	case repository.KnowledgeVectorActionUpsert:
+		versionRepo, ok := s.repository.(repository.KnowledgeVersionRepository)
+		if !ok {
+			return ErrKnowledgeUnavailable
+		}
+		version, err := versionRepo.GetDocumentVersion(ctx, event.DocID, event.Version)
+		if err != nil {
+			if errors.Is(err, repository.ErrKnowledgeDocumentNotFound) {
+				return s.vector.Delete(ctx, event.PointIDs)
+			}
+			return err
+		}
+		switch version.Status {
+		case model.KnowledgeStatusFailed, model.KnowledgeStatusSuperseded:
+			return s.vector.Delete(ctx, event.PointIDs)
+		case model.KnowledgeStatusActive:
+			return s.upsertDocumentVectors(ctx, version)
+		case model.KnowledgeStatusIndexing:
+			if err := s.upsertDocumentVectors(ctx, version); err != nil {
+				return err
+			}
+			stalePointIDs, err := s.repository.ActivateDocumentVersion(ctx, event.DocID, event.Version)
+			if err != nil {
+				if active, ok := s.versionStatus(ctx, event.DocID, event.Version, model.KnowledgeStatusActive); ok {
+					return s.upsertDocumentVectors(ctx, active)
+				}
+				return err
+			}
+			if len(stalePointIDs) > 0 {
+				if err := s.vector.Delete(ctx, stalePointIDs); err != nil {
+					return err
+				}
+				s.completeVectorOutbox(ctx, event.DocID, event.Version, repository.KnowledgeVectorActionDelete)
+			}
+			return nil
+		default:
+			return fmt.Errorf("unsupported knowledge document status %q for vector outbox", version.Status)
+		}
+	default:
+		return fmt.Errorf("unsupported knowledge vector outbox action %q", event.Action)
+	}
+}
+
+func (s *KnowledgeService) upsertDocumentVectors(
+	ctx context.Context,
+	version repository.KnowledgeDocumentVersion,
+) error {
+	chunkRepo, ok := s.repository.(repository.KnowledgeChunkVersionRepository)
+	if !ok || s.embedder == nil {
+		return ErrKnowledgeUnavailable
+	}
+	chunks, err := chunkRepo.GetDocumentChunks(ctx, version.DocID, version.Version)
+	if err != nil {
+		return err
+	}
+	if len(chunks) == 0 {
+		return fmt.Errorf("%w: outbox document has no chunks", ErrKnowledgeUnavailable)
+	}
+	texts := make([]string, len(chunks))
+	for index, chunk := range chunks {
+		texts[index] = chunk.Title + "\n" + chunk.SectionPath + "\n" + chunk.Content
+	}
+	vectors, err := s.embedder.Embed(ctx, texts)
+	if err != nil {
+		return err
+	}
+	if len(vectors) != len(chunks) {
+		return fmt.Errorf("embedding count %d does not match chunk count %d", len(vectors), len(chunks))
+	}
+	points := make([]vectorstore.Point, len(chunks))
+	for index, chunk := range chunks {
+		points[index] = vectorstore.Point{
+			ID:     chunk.VectorPointID,
+			Vector: vectors[index],
+			Payload: map[string]any{
+				"chunk_id":     chunk.ChunkID,
+				"doc_id":       chunk.DocID,
+				"title":        chunk.Title,
+				"section_path": chunk.SectionPath,
+				"content":      chunk.Content,
+				"category":     version.Category,
+				"brand":        version.Brand,
+				"doc_type":     version.DocType,
+				"version":      version.Version,
+				"intent_tags":  chunk.IntentTags,
+				"metadata":     chunk.Metadata,
+				"status":       model.KnowledgeStatusActive,
+			},
+		}
+	}
+	return s.vector.Upsert(ctx, points)
+}
+
+func (s *KnowledgeService) versionStatus(
+	ctx context.Context,
+	docID string,
+	version string,
+	status string,
+) (repository.KnowledgeDocumentVersion, bool) {
+	versionRepo, ok := s.repository.(repository.KnowledgeVersionRepository)
+	if !ok {
+		return repository.KnowledgeDocumentVersion{}, false
+	}
+	document, err := versionRepo.GetDocumentVersion(ctx, docID, version)
+	if err != nil || document.Status != status {
+		return repository.KnowledgeDocumentVersion{}, false
+	}
+	return document, true
+}
+
+func (s *KnowledgeService) completeVectorOutbox(ctx context.Context, docID, version, action string) {
+	outbox, ok := s.repository.(repository.KnowledgeVectorOutboxRepository)
+	if !ok {
+		return
+	}
+	_ = outbox.CompleteKnowledgeVectorOutbox(ctx, docID, version, action)
 }
 
 func pointIDs(points []vectorstore.Point) []string {

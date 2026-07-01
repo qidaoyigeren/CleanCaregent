@@ -42,11 +42,41 @@ func NewDefaultMatrix() *Matrix {
 		{"X20 Pro", "RB20", "滚刷", Compatible, "RB20 是 X20 Pro 适配滚刷。", "kb_compat_x20_pro_rb20"},
 		{"W300", "C300", "滤芯", Compatible, "C300 是 W300 对应滤芯。", "kb_compat_w300_c300"},
 	}
+	return NewMatrix(entries)
+}
+
+func NewMatrix(entries []Entry) *Matrix {
 	matrix := &Matrix{entries: make(map[string]Entry, len(entries))}
-	for _, entry := range entries {
-		matrix.entries[key(entry.HostModel, entry.AccessoryModel)] = entry
-	}
+	matrix.Merge(entries)
 	return matrix
+}
+
+func (m *Matrix) Merge(entries []Entry) {
+	if m.entries == nil {
+		m.entries = make(map[string]Entry, len(entries))
+	}
+	for _, entry := range entries {
+		entry.HostModel = normalize(entry.HostModel)
+		entry.AccessoryModel = normalize(entry.AccessoryModel)
+		if entry.HostModel == "" || entry.AccessoryModel == "" {
+			continue
+		}
+		if entry.Status == "" {
+			entry.Status = Unknown
+		}
+		m.entries[key(entry.HostModel, entry.AccessoryModel)] = entry
+	}
+}
+
+func (m *Matrix) Entries() []Entry {
+	if m == nil || len(m.entries) == 0 {
+		return nil
+	}
+	entries := make([]Entry, 0, len(m.entries))
+	for _, entry := range m.entries {
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 func (m *Matrix) Check(hostModel, accessoryModel string) Result {

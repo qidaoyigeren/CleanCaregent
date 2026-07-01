@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -100,15 +101,37 @@ func TestValidateAutoMigrateRequiresMultiStatements(t *testing.T) {
 }
 
 func TestValidateRejectsLocalHashInProduction(t *testing.T) {
-	cfg, err := Load("")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	cfg.App.Env = "production"
+	cfg := validProductionConfig(t)
 	cfg.Embedding.Provider = "local_hash"
 
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate() expected production local_hash error")
+	}
+}
+
+func TestValidateRejectsUnsafeProductionDefaults(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"auth disabled", func(cfg *Config) { cfg.Auth.Enabled = false }},
+		{"development log", func(cfg *Config) { cfg.Log.Development = true }},
+		{"development user", func(cfg *Config) { cfg.Auth.DevelopmentUserID = "demo-user" }},
+		{"bootstrap agent", func(cfg *Config) { cfg.Agent.Mode = "bootstrap" }},
+		{"memory conversations", func(cfg *Config) { cfg.Storage.ConversationRepository = "memory" }},
+		{"built-in mock knowledge", func(cfg *Config) { cfg.Knowledge.SeedBuiltInMock = true }},
+		{"extractive llm", func(cfg *Config) { cfg.LLM.Provider = "extractive" }},
+		{"mock tool scope", func(cfg *Config) { cfg.Tool.DataScope = "mock" }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validProductionConfig(t)
+			test.mutate(&cfg)
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("Validate() expected production safety error")
+			}
+		})
 	}
 }
 
@@ -315,4 +338,33 @@ reranker:
 	if cfg.Reranker.APIKey != "" {
 		t.Fatal("reranker key must not be inherited across provider hosts")
 	}
+}
+
+func validProductionConfig(t *testing.T) Config {
+	t.Helper()
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.App.Env = "production"
+	cfg.Log.Development = false
+	cfg.Auth.Enabled = true
+	cfg.Auth.DevelopmentUserID = ""
+	cfg.Auth.JWTSecret = strings.Repeat("x", 32)
+	cfg.Auth.AdminAPIKey = "admin-api-key"
+	cfg.Agent.Mode = "agentic"
+	cfg.Storage.ConversationRepository = "mysql"
+	cfg.MySQL.Enabled = true
+	cfg.MySQL.DSN = "user:pass@tcp(localhost:3306)/db?parseTime=true"
+	cfg.Qdrant.Enabled = true
+	cfg.Knowledge.SeedBuiltInMock = false
+	cfg.Embedding.Provider = "openai_compatible"
+	cfg.Embedding.Endpoint = "https://embedding.example.com/v1/embeddings"
+	cfg.Embedding.Model = "embedding-model"
+	cfg.Embedding.Dimension = cfg.Qdrant.VectorSize
+	cfg.LLM.Provider = "openai_compatible"
+	cfg.LLM.Endpoint = "https://llm.example.com/v1/chat/completions"
+	cfg.LLM.Model = "chat-model"
+	cfg.Tool.DataScope = "external"
+	return cfg
 }

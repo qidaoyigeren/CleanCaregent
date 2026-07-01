@@ -5,6 +5,11 @@ import { getAuthToken } from '../auth/token';
 // Type for setTimeout return value
 type TimeoutId = ReturnType<typeof setTimeout>;
 
+const newClientMessageID = (): string => {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return `cm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+};
+
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error';
 
 interface SSEEventHandler {
@@ -84,34 +89,45 @@ export default function useSSEStream(): SSEStreamResult {
       setReconnectCount(0);
       streamActiveRef.current = true;
 
-      const controller = new AbortController();
-      abortRef.current = controller;
+      const streamController = new AbortController();
+      abortRef.current = streamController;
+      let fetchController: AbortController | null = null;
 
       let retries = 0;
       const maxRetries = 3;
       let responseStarted = false;
+      const clientMessageId = newClientMessageID();
       // Track if heartbeat triggered a reconnect request
       let heartbeatReconnect = false;
 
       // Register heartbeat reconnect handler
       reconnectHandlerRef.current = () => {
         heartbeatReconnect = true;
-        controller.abort();
+        fetchController?.abort();
       };
 
       const attemptFetch = async (): Promise<void> => {
+        if (streamController.signal.aborted) return;
+        const controller = new AbortController();
+        fetchController = controller;
+        const abortCurrentFetch = () => controller.abort();
+        streamController.signal.addEventListener('abort', abortCurrentFetch, { once: true });
         try {
+          const authToken = getAuthToken();
+          const requestHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+          };
+          if (authToken) requestHeaders.Authorization = authToken;
+
           const response = await fetch(
             `/api/v1/conversations/${conversationId}/messages:stream`,
             {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: getAuthToken(),
-                Accept: 'text/event-stream',
-              },
-              body: JSON.stringify({ content }),
+              headers: requestHeaders,
+              body: JSON.stringify({ content, client_message_id: clientMessageId }),
               signal: controller.signal,
+              cache: 'no-store',
             }
           );
 
@@ -219,7 +235,7 @@ export default function useSSEStream(): SSEStreamResult {
                 const delay = Math.pow(2, retries - 1) * 1000;
                 await new Promise((r) => setTimeout(r, delay));
 
-                if (!controller.signal.aborted) {
+                if (!streamController.signal.aborted) {
                   responseStarted = false;
                   return attemptFetch();
                 }
@@ -254,7 +270,7 @@ export default function useSSEStream(): SSEStreamResult {
             await new Promise((r) => setTimeout(r, delay));
 
             // Check if still not aborted
-            if (!controller.signal.aborted) {
+            if (!streamController.signal.aborted) {
               return attemptFetch();
             }
           }
@@ -265,6 +281,11 @@ export default function useSSEStream(): SSEStreamResult {
             code: 'NETWORK_ERROR',
             message: (err as Error).message || 'Connection failed',
           });
+        } finally {
+          streamController.signal.removeEventListener('abort', abortCurrentFetch);
+          if (fetchController === controller) {
+            fetchController = null;
+          }
         }
       };
 

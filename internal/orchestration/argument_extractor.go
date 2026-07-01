@@ -33,7 +33,7 @@ func (e *LLMArgumentExtractor) Extract(
 	messages := []map[string]string{
 		{
 			"role": "system",
-			"content": `你是清洁电器工具参数提取器。只输出 JSON 对象。
+			"content": `你是清洁工具销售场景的工具参数提取器。只输出 JSON 对象。
 允许字段：product_refs(string[]), model(string), order_no(string), category(string), confirmed(boolean)。
 不得猜测型号或订单号；无法确认的字段不要输出。`,
 		},
@@ -50,6 +50,7 @@ func (e *LLMArgumentExtractor) Extract(
 }
 
 var accessoryPattern = regexp.MustCompile(`(?i)^(?:F|DB|RB|C)[0-9]{2,}[A-Z0-9-]*$`)
+var productRefPattern = regexp.MustCompile(`(?i)^[A-Z]{1,8}[0-9]{1,5}(?:PRO)?(?:-[A-Z0-9]{1,12})?$`)
 
 func needsArgumentExtraction(toolName string, arguments map[string]any) bool {
 	switch tool.LogicalName(toolName) {
@@ -71,7 +72,8 @@ func normalizeExtractedArguments(source map[string]any) map[string]any {
 	var products []string
 	for _, value := range stringSliceArgument(source["product_refs"], source["model"]) {
 		normalized := normalizeProductRef(value)
-		if _, ok := knownProducts[normalized]; ok || accessoryPattern.MatchString(normalized) {
+		compact := strings.ToUpper(strings.Join(strings.Fields(normalized), ""))
+		if _, ok := knownProducts[normalized]; ok || accessoryPattern.MatchString(normalized) || productRefPattern.MatchString(compact) {
 			products = append(products, normalized)
 		}
 	}
@@ -124,31 +126,47 @@ func stringSliceArgument(values ...any) []string {
 		switch typed := value.(type) {
 		case []string:
 			for _, item := range typed {
-				item = strings.TrimSpace(item)
-				if item != "" {
-					if _, ok := seen[item]; !ok {
-						seen[item] = struct{}{}
-						result = append(result, item)
+				for _, split := range splitArgumentText(item) {
+					if _, ok := seen[split]; !ok {
+						seen[split] = struct{}{}
+						result = append(result, split)
 					}
 				}
 			}
 		case []any:
 			for _, item := range typed {
-				text := strings.TrimSpace(fmt.Sprint(item))
-				if text != "" {
-					if _, ok := seen[text]; !ok {
-						seen[text] = struct{}{}
-						result = append(result, text)
+				for _, split := range splitArgumentText(fmt.Sprint(item)) {
+					if _, ok := seen[split]; !ok {
+						seen[split] = struct{}{}
+						result = append(result, split)
 					}
 				}
 			}
 		case string:
-			if text := strings.TrimSpace(typed); text != "" {
-				if _, ok := seen[text]; !ok {
-					seen[text] = struct{}{}
-					result = append(result, text)
+			for _, split := range splitArgumentText(typed) {
+				if _, ok := seen[split]; !ok {
+					seen[split] = struct{}{}
+					result = append(result, split)
 				}
 			}
+		}
+	}
+	return result
+}
+
+func splitArgumentText(value string) []string {
+	var result []string
+	for _, item := range strings.FieldsFunc(value, func(r rune) bool {
+		switch r {
+		case ',', '，', '、', '/', '|', ';', '；', '\n', '\t':
+			return true
+		default:
+			return false
+		}
+	}) {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			result = append(result, item)
 		}
 	}
 	return result

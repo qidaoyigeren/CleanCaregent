@@ -276,7 +276,11 @@ func (e *Executor) log(ctx context.Context, call Call, result Result) {
 
 func toolCallSignature(call Call) string {
 	raw, _ := json.Marshal(call.Arguments)
-	sum := sha256.Sum256(append([]byte(call.TraceID+"|"+LogicalName(call.Name)+"|"), raw...))
+	scope := call.TraceID
+	if strings.TrimSpace(call.IdempotencyKey) != "" {
+		scope = strings.TrimSpace(call.IdempotencyKey)
+	}
+	sum := sha256.Sum256(append([]byte(scope+"|"+LogicalName(call.Name)+"|"), raw...))
 	return hex.EncodeToString(sum[:])
 }
 

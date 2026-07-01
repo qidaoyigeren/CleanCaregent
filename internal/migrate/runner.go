@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"strings"
 )
 
 //go:embed migrations/*.sql
@@ -53,7 +54,7 @@ func Up(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("read migration state %s: %w", name, err)
 		}
 
-		if _, err := db.ExecContext(ctx, string(content)); err != nil {
+		if err := executeSQLScript(ctx, db, string(content)); err != nil {
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
 		if _, err := db.ExecContext(ctx,
@@ -65,6 +66,70 @@ func Up(ctx context.Context, db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func executeSQLScript(ctx context.Context, db *sql.DB, script string) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("open migration connection: %w", err)
+	}
+	defer conn.Close()
+	for _, statement := range splitSQLStatements(script) {
+		if _, err := conn.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("%s: %w", statementPreview(statement), err)
+		}
+	}
+	return nil
+}
+
+func statementPreview(statement string) string {
+	statement = strings.Join(strings.Fields(statement), " ")
+	if len(statement) > 180 {
+		return statement[:180] + "..."
+	}
+	return statement
+}
+
+func splitSQLStatements(script string) []string {
+	var statements []string
+	var builder []rune
+	var quote rune
+	escaped := false
+	for _, current := range []rune(script) {
+		if quote != 0 {
+			builder = append(builder, current)
+			if escaped {
+				escaped = false
+				continue
+			}
+			if current == '\\' {
+				escaped = true
+				continue
+			}
+			if current == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch current {
+		case '\'', '"', '`':
+			quote = current
+			builder = append(builder, current)
+		case ';':
+			statement := strings.TrimSpace(string(builder))
+			if statement != "" {
+				statements = append(statements, statement)
+			}
+			builder = builder[:0]
+		default:
+			builder = append(builder, current)
+		}
+	}
+	statement := strings.TrimSpace(string(builder))
+	if statement != "" {
+		statements = append(statements, statement)
+	}
+	return statements
 }
 
 func checksum(content []byte) string {

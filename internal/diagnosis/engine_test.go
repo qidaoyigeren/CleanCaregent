@@ -87,10 +87,32 @@ func TestDiagnosisInfersModelFromSpecificSymptoms(t *testing.T) {
 		"毛发清完了还异响，下一步检查啥":     "X20 Pro",
 		"传感器窗口擦过了数值还不变，能拆机看吗": "P500",
 		"H200续航变短，水箱正常":       "H200",
+		"掸套洗完松了，是不是要换":        "FD4",
+		"缝隙刷刷毛张开，进不去缝里":       "GB2",
 	}
 	for query, want := range tests {
 		if got := engine.InferModel(query); got != want {
 			t.Fatalf("%q inferred model = %q, want %q", query, got, want)
 		}
+	}
+}
+
+func TestNormalizeCleaningToolSymptoms(t *testing.T) {
+	tests := map[string]string{
+		"FD4 掸套洗完松了，是不是要换": "掸套滑落",
+		"GB2 刷毛张开后进不去缝里":   "刷毛变形",
+		"SB3 刷头不转了":        "刷头停转",
+	}
+	for query, want := range tests {
+		if got := normalizeSymptom(query); got != want {
+			t.Fatalf("%q symptom = %q, want %q", query, got, want)
+		}
+	}
+}
+
+func TestFD4LooseSleeveSkipsToReplaceNode(t *testing.T) {
+	engine := NewDefaultEngine()
+	if got := engine.advanceRootFromObservedSteps("fd4_sleeve_slips", "FD4 掸套洗完松了，是不是要换？"); got != "fd4_replace_sleeve" {
+		t.Fatalf("next node = %q, want fd4_replace_sleeve", got)
 	}
 }

@@ -1,9 +1,10 @@
-.PHONY: run run-mcp-server build build-mcp-server migrate seed-all test test-race coverage fmt vet lint tidy-check e2e-agentic-mcp e2e-agentic-mcp-eval eval-dataset eval-compare eval-regression eval-regression-report compose-up compose-down
+.PHONY: run run-mcp-server build build-mcp-server migrate seed-all kb-validate test test-race coverage fmt vet lint tidy-check e2e-agentic-mcp e2e-agentic-mcp-eval eval-dataset eval-compare eval-regression eval-regression-report compose-up compose-down
 
 BASE_URL ?= http://127.0.0.1:8080
 PYTHON ?= python3
 SYSTEM_VERSION ?= agentic-mcp-http
 EVAL_MAX_CASES ?= 200
+EVAL_SPLIT ?=
 EVAL_OUTPUT ?= docs/eval/mcp-regression-report.md
 
 run:
@@ -24,6 +25,9 @@ migrate:
 seed-all:
 	go run ./cmd/seed
 	go run ./cmd/kb-seed
+
+kb-validate:
+	go run ./cmd/kb-validate
 
 test:
 	go test ./...
@@ -61,19 +65,20 @@ eval-compare:
 	curl --fail --silent --show-error \
 		-X POST "$(BASE_URL)/api/v1/admin/eval/comparisons" \
 		-H "Content-Type: application/json" \
-		-d '{"dataset_version":"v2","max_cases":200}'
+		-d '{"dataset_version":"v2","split":"regression","max_cases":200}'
 
 eval-regression:
 	curl --fail --silent --show-error \
 		-X POST "$(BASE_URL)/api/v1/admin/eval/runs" \
 		-H "Content-Type: application/json" \
-		-d '{"dataset_version":"v2","system_version":"regression","max_cases":200}'
+		-d '{"dataset_version":"v2","system_version":"regression","split":"regression","max_cases":200}'
 
 eval-regression-report:
 	$(PYTHON) scripts/eval-regression-report.py \
 		--base-url "$(BASE_URL)" \
 		--system-version "$(SYSTEM_VERSION)" \
 		--max-cases "$(EVAL_MAX_CASES)" \
+		--split "$(EVAL_SPLIT)" \
 		--output "$(EVAL_OUTPUT)"
 
 compose-up:

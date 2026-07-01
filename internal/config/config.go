@@ -23,6 +23,7 @@ type Config struct {
 	Redis     RedisConfig     `mapstructure:"redis"`
 	Qdrant    QdrantConfig    `mapstructure:"qdrant"`
 	Readiness ReadinessConfig `mapstructure:"readiness"`
+	Knowledge KnowledgeConfig `mapstructure:"knowledge"`
 	Embedding EmbeddingConfig `mapstructure:"embedding"`
 	RAG       RAGConfig       `mapstructure:"rag"`
 	Reranker  RerankerConfig  `mapstructure:"reranker"`
@@ -131,6 +132,12 @@ type ReadinessConfig struct {
 	Timeout time.Duration `mapstructure:"timeout"`
 }
 
+type KnowledgeConfig struct {
+	SeedPaths        []string `mapstructure:"seed_paths"`
+	ProductPackPaths []string `mapstructure:"product_pack_paths"`
+	SeedBuiltInMock  bool     `mapstructure:"seed_builtin_mock"`
+}
+
 type EmbeddingConfig struct {
 	Provider         string                    `mapstructure:"provider"`
 	Endpoint         string                    `mapstructure:"endpoint"`
@@ -154,15 +161,17 @@ type EmbeddingFallbackConfig struct {
 }
 
 type RAGConfig struct {
-	DenseTopK         int                           `mapstructure:"dense_top_k"`
-	KeywordTopK       int                           `mapstructure:"keyword_top_k"`
-	RerankTopK        int                           `mapstructure:"rerank_top_k"`
-	MinDenseScore     float64                       `mapstructure:"min_dense_score"`
-	MaxChunkRunes     int                           `mapstructure:"max_chunk_runes"`
-	ChunkOverlap      int                           `mapstructure:"chunk_overlap"`
-	ChunkProfiles     map[string]ChunkProfileConfig `mapstructure:"chunk_profiles"`
-	MaxAnswerRunes    int                           `mapstructure:"max_answer_runes"`
-	RetrievalCacheTTL time.Duration                 `mapstructure:"retrieval_cache_ttl"`
+	DenseTopK             int                           `mapstructure:"dense_top_k"`
+	KeywordTopK           int                           `mapstructure:"keyword_top_k"`
+	RerankTopK            int                           `mapstructure:"rerank_top_k"`
+	MinDenseScore         float64                       `mapstructure:"min_dense_score"`
+	MaxChunkRunes         int                           `mapstructure:"max_chunk_runes"`
+	ChunkOverlap          int                           `mapstructure:"chunk_overlap"`
+	ChunkProfiles         map[string]ChunkProfileConfig `mapstructure:"chunk_profiles"`
+	MaxAnswerRunes        int                           `mapstructure:"max_answer_runes"`
+	RetrievalCacheTTL     time.Duration                 `mapstructure:"retrieval_cache_ttl"`
+	AnswerCacheTTL        time.Duration                 `mapstructure:"answer_cache_ttl"`
+	AnswerCacheMaxEntries int                           `mapstructure:"answer_cache_max_entries"`
 }
 
 type ChunkProfileConfig struct {
@@ -308,6 +317,7 @@ func Load(path string) (Config, error) {
 
 	v.SetEnvPrefix("CLEANCARE")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AllowEmptyEnv(true)
 	v.AutomaticEnv()
 	bindEnvOverrides(v)
 
@@ -350,6 +360,9 @@ func bindEnvOverrides(v *viper.Viper) {
 		"redis.address",
 		"redis.password",
 		"qdrant.api_key",
+		"knowledge.seed_paths",
+		"knowledge.product_pack_paths",
+		"knowledge.seed_builtin_mock",
 		"embedding.api_key",
 		"reranker.api_key",
 		"llm.api_key",
@@ -383,10 +396,20 @@ func sameEndpointHost(left, right string) bool {
 	return leftHost != "" && leftHost == rightHost
 }
 
+func isProductionEnv(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "production", "prod":
+		return true
+	default:
+		return false
+	}
+}
+
 func (c Config) Validate() error {
 	if c.App.Name == "" {
 		return errors.New("app.name is required")
 	}
+	production := isProductionEnv(c.App.Env)
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return errors.New("server.port must be between 1 and 65535")
 	}
@@ -401,6 +424,17 @@ func (c Config) Validate() error {
 	}
 	if c.RateLimit.Backend == "redis" && !c.Redis.Enabled {
 		return errors.New("redis must be enabled when rate_limit.backend=redis")
+	}
+	if production {
+		if c.Log.Development {
+			return errors.New("log.development must be false in production")
+		}
+		if !c.Auth.Enabled {
+			return errors.New("auth.enabled must be true in production")
+		}
+		if strings.TrimSpace(c.Auth.DevelopmentUserID) != "" {
+			return errors.New("auth.development_user_id must be empty in production")
+		}
 	}
 	if c.Auth.Enabled {
 		if len(strings.TrimSpace(c.Auth.JWTSecret)) < 32 {
@@ -426,6 +460,9 @@ func (c Config) Validate() error {
 	}
 	switch c.Agent.Mode {
 	case "bootstrap":
+		if production {
+			return errors.New("agent.mode bootstrap is not allowed in production")
+		}
 	case "naive_rag", "agentic":
 		if !c.MySQL.Enabled || !c.Qdrant.Enabled {
 			return errors.New("mysql and qdrant must be enabled for rag agent modes")
@@ -438,6 +475,9 @@ func (c Config) Validate() error {
 	}
 	switch c.Storage.ConversationRepository {
 	case "memory":
+		if production {
+			return errors.New("storage.conversation_repository memory is not allowed in production")
+		}
 	case "mysql":
 		if !c.MySQL.Enabled {
 			return errors.New("mysql must be enabled when storage.conversation_repository=mysql")
@@ -500,9 +540,12 @@ func (c Config) Validate() error {
 	if c.Readiness.Timeout <= 0 {
 		return errors.New("readiness.timeout must be positive")
 	}
+	if production && c.Knowledge.SeedBuiltInMock {
+		return errors.New("knowledge.seed_builtin_mock must be false in production")
+	}
 	switch c.Embedding.Provider {
 	case "local_hash":
-		if strings.EqualFold(strings.TrimSpace(c.App.Env), "production") {
+		if production {
 			return errors.New("embedding.provider local_hash is not allowed in production")
 		}
 	case "openai_compatible":
@@ -578,6 +621,9 @@ func (c Config) Validate() error {
 	}
 	switch c.LLM.Provider {
 	case "extractive":
+		if production {
+			return errors.New("llm.provider extractive is not allowed in production")
+		}
 	case "openai_compatible":
 		if len(c.LLM.Providers) == 0 &&
 			(strings.TrimSpace(c.LLM.Endpoint) == "" || strings.TrimSpace(c.LLM.Model) == "") {
@@ -624,6 +670,9 @@ func (c Config) Validate() error {
 	}
 	switch c.Tool.DataScope {
 	case "mock", "sandbox", "external":
+		if production && c.Tool.DataScope == "mock" {
+			return errors.New("tool.data_scope mock is not allowed in production")
+		}
 	default:
 		return errors.New("tool.data_scope must be mock, sandbox, or external")
 	}
@@ -829,6 +878,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("qdrant.request_timeout", "5s")
 	v.SetDefault("qdrant.ensure_collection", true)
 	v.SetDefault("readiness.timeout", "2s")
+	v.SetDefault("knowledge.seed_paths", []string{"docs/knowledge-base"})
+	v.SetDefault("knowledge.product_pack_paths", []string{"docs/product-packs"})
+	v.SetDefault("knowledge.seed_builtin_mock", true)
 	v.SetDefault("embedding.provider", "local_hash")
 	v.SetDefault("embedding.endpoint", "")
 	v.SetDefault("embedding.api_key", "")
@@ -867,6 +919,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("rag.chunk_profiles.faq.chunk_overlap", 0)
 	v.SetDefault("rag.max_answer_runes", 900)
 	v.SetDefault("rag.retrieval_cache_ttl", "5m")
+	v.SetDefault("rag.answer_cache_ttl", "10m")
+	v.SetDefault("rag.answer_cache_max_entries", 512)
 	v.SetDefault("reranker.provider", "local_lexical")
 	v.SetDefault("reranker.endpoint", "")
 	v.SetDefault("reranker.api_key", "")

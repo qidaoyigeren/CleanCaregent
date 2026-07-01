@@ -1,50 +1,28 @@
-const TOKEN_KEY = 'cleancare_auth_token';
-const ADMIN_KEY = 'cleancare_admin_api_key';
-const MOCK_TOKEN = 'Bearer mock-jwt-demo-token';
+let authToken = '';
+let adminAPIKey = '';
 
-/** Read the stored auth token, falling back to the mock demo token. */
+function normalizeBearerToken(token: string): string {
+  const trimmed = token.trim();
+  if (!trimmed) return '';
+  return trimmed.toLowerCase().startsWith('bearer ') ? trimmed : `Bearer ${trimmed}`;
+}
+
 export function getAuthToken(): string {
-  try {
-    const stored = localStorage.getItem(TOKEN_KEY);
-    if (stored) return stored;
-  } catch {
-    // localStorage unavailable (SSR, privacy mode) — use mock
-  }
-  return MOCK_TOKEN;
+  return authToken;
 }
 
-/** Persist an auth token (e.g. after login). */
 export function setAuthToken(token: string): void {
-  try {
-    localStorage.setItem(TOKEN_KEY, token);
-  } catch {
-    // Silently ignore — auth will fall back to the mock token
-  }
+  authToken = normalizeBearerToken(token);
 }
 
-/** Remove the stored token (logout). */
 export function clearAuthToken(): void {
-  try {
-    localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    // Silently ignore
-  }
+  authToken = '';
 }
 
-/** Read the administrator API key used only for /admin requests. */
 export function getAdminAPIKey(): string {
-  try {
-    return localStorage.getItem(ADMIN_KEY) || '';
-  } catch {
-    return '';
-  }
+  return adminAPIKey;
 }
 
-/** Persist the administrator API key for the current browser profile. */
 export function setAdminAPIKey(value: string): void {
-  try {
-    localStorage.setItem(ADMIN_KEY, value.trim());
-  } catch {
-    // The UI remains usable when authentication is disabled locally.
-  }
+  adminAPIKey = value.trim();
 }

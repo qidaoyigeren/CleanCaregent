@@ -11,11 +11,12 @@ import (
 var ErrNotConfigured = errors.New("agent pipeline is not configured")
 
 type Request struct {
-	TraceID        string
-	UserID         string
-	ConversationID string
-	Query          string
-	Context        memory.ConversationContext
+	TraceID         string
+	UserID          string
+	ConversationID  string
+	ClientMessageID string
+	Query           string
+	Context         memory.ConversationContext
 }
 
 type Evidence struct {

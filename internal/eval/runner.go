@@ -27,6 +27,7 @@ type RunRequest struct {
 	SystemVersion  string
 	MaxCases       int
 	CaseIDs        []string
+	Split          string
 }
 
 func NewRunner(
@@ -97,6 +98,10 @@ func (r *Runner) prepareRun(
 	if err != nil {
 		return Run{}, nil, request, err
 	}
+	cases, err = filterCasesBySplit(cases, request.Split)
+	if err != nil {
+		return Run{}, nil, request, err
+	}
 	if request.MaxCases > 0 && request.MaxCases < len(cases) {
 		cases = cases[:request.MaxCases]
 	}
@@ -153,6 +158,38 @@ func selectCases(cases []Case, caseIDs []string) ([]Case, error) {
 	return result, nil
 }
 
+func filterCasesBySplit(cases []Case, split string) ([]Case, error) {
+	split = strings.TrimSpace(strings.ToLower(split))
+	if split == "" || split == "all" {
+		return cases, nil
+	}
+	if split != "regression" && split != "tuning" && split != "holdout" {
+		return nil, fmt.Errorf("unsupported eval split %q", split)
+	}
+	result := make([]Case, 0, len(cases))
+	for _, evalCase := range cases {
+		if caseSplit(evalCase) == split {
+			result = append(result, evalCase)
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no eval cases found for split %q", split)
+	}
+	return result, nil
+}
+
+func caseSplit(evalCase Case) string {
+	for _, tag := range evalCase.Tags {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(tag), "split:"); ok {
+			value = strings.TrimSpace(strings.ToLower(value))
+			if value != "" {
+				return value
+			}
+		}
+	}
+	return "regression"
+}
+
 func (r *Runner) executeRun(
 	ctx context.Context,
 	request RunRequest,
@@ -165,6 +202,7 @@ func (r *Runner) executeRun(
 	intentGroups := map[string]*groupSummary{}
 	difficultyGroups := map[string]*groupSummary{}
 	pathGroups := map[string]*groupSummary{}
+	splitGroups := map[string]*groupSummary{}
 	var latencies []int64
 	totalTokens, totalSteps, passed := 0, 0, 0
 	for _, evalCase := range cases {
@@ -187,6 +225,7 @@ func (r *Runner) executeRun(
 		recordGroup(intentGroups, evalCase.Intent, caseResult.Passed)
 		recordGroup(difficultyGroups, evalCase.Difficulty, caseResult.Passed)
 		recordGroup(pathGroups, evaluationPath(evalCase.Tags), caseResult.Passed)
+		recordGroup(splitGroups, caseSplit(evalCase), caseResult.Passed)
 		latencies = append(latencies, caseResult.LatencyMS)
 		totalTokens += caseResult.TokenCount
 		if steps := metricValue(caseResult.Metrics, "react_steps"); steps >= 0 {
@@ -211,6 +250,7 @@ func (r *Runner) executeRun(
 		"by_intent":           renderGroups(intentGroups),
 		"by_difficulty":       renderGroups(difficultyGroups),
 		"by_path":             renderGroups(pathGroups),
+		"by_split":            renderGroups(splitGroups),
 	}
 	finishedAt := time.Now().UTC()
 	if err := r.store.FinishRun(ctx, run.RunNo, "completed", summary, finishedAt); err != nil {
@@ -270,7 +310,7 @@ func (r *Runner) runCase(ctx context.Context, userID string, evalCase Case) Case
 	}
 	var askResult service.AskResult
 	for _, turn := range evalCase.ConversationTurns() {
-		askResult, err = r.conversations.Ask(ctx, userID, conversation.ID, turn, nil)
+		askResult, err = r.conversations.Ask(ctx, userID, conversation.ID, turn, "", nil)
 		if err != nil {
 			return failedCase(evalCase, "", "agent_execution", startedAt, err)
 		}

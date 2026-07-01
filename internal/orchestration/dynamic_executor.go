@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"CleanCaregent/internal/agent"
+	"CleanCaregent/internal/compatibility"
 	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/model"
 	"CleanCaregent/internal/platform/id"
+	"CleanCaregent/internal/policy"
 	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/skill"
 	"CleanCaregent/internal/tool"
@@ -21,7 +23,7 @@ import (
 var (
 	ErrSkillNotFound = errors.New("skill not found")
 	orderPattern     = regexp.MustCompile(`(?i)\b(?:CC|ORDER)[0-9]{6,}\b`)
-	modelPattern     = regexp.MustCompile(`(?i)\b[A-Z]+[0-9]+(?:\s*Pro)?\b`)
+	modelPattern     = regexp.MustCompile(`(?i)\b[A-Z]+[0-9]+(?:\s*Pro)?(?:-[A-Z0-9]+)?\b`)
 )
 
 type DynamicExecutor struct {
@@ -29,6 +31,7 @@ type DynamicExecutor struct {
 	skills            *skill.Registry
 	argumentExtractor ArgumentExtractor
 	retriever         rag.Retriever
+	compatibility     *compatibility.Matrix
 }
 
 type Option func(*DynamicExecutor)
@@ -42,6 +45,12 @@ func WithArgumentExtractor(extractor ArgumentExtractor) Option {
 func WithKnowledgeRetriever(retriever rag.Retriever) Option {
 	return func(executor *DynamicExecutor) {
 		executor.retriever = retriever
+	}
+}
+
+func WithCompatibilityMatrix(matrix *compatibility.Matrix) Option {
+	return func(executor *DynamicExecutor) {
+		executor.compatibility = matrix
 	}
 }
 
@@ -79,6 +88,7 @@ func (e *DynamicExecutor) executeTool(
 	}
 	arguments := e.buildArguments(ctx, request)
 	logicalToolName := tool.LogicalName(request.Step.ToolName)
+	route := executionRoute(request)
 	call := tool.Call{
 		TraceID:        request.Request.TraceID,
 		CallID:         id.New("call"),
@@ -86,11 +96,20 @@ func (e *DynamicExecutor) executeTool(
 		ConversationID: request.Request.ConversationID,
 		Name:           request.Step.ToolName,
 		Arguments:      arguments,
-		IdempotencyKey: request.Request.TraceID + ":" + request.Step.ToolName,
+		IdempotencyKey: toolIdempotencyKey(logicalToolName, request.Request, arguments),
+	}
+	if validationErr := policy.ValidateToolExecution(
+		route,
+		request.Step.ToolName,
+		arguments,
+		request.Request.UserID,
+		request.Request.ClientMessageID,
+	); validationErr != nil {
+		return policyBlockedResult(call, logicalToolName, validationErr), nil
 	}
 	whitelist := request.AllowedTools
 	if len(whitelist) == 0 {
-		whitelist = allowedTools(intent.Type(request.Intent))
+		whitelist = policy.AllowedToolsForRoute(route)
 	}
 	result, err := e.tools.Execute(ctx, call, whitelist)
 	if err != nil {
@@ -145,6 +164,40 @@ func (e *DynamicExecutor) executeTool(
 	}, nil
 }
 
+func executionRoute(request agent.DynamicExecutionRequest) intent.Result {
+	route := intent.Result{Secondary: intent.Type(request.Intent)}
+	route.SecondaryIntents = make([]intent.Type, 0, len(request.SecondaryIntents))
+	for _, value := range request.SecondaryIntents {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			route.SecondaryIntents = append(route.SecondaryIntents, intent.Type(trimmed))
+		}
+	}
+	return route
+}
+
+func policyBlockedResult(call tool.Call, logicalToolName string, cause error) agent.DynamicExecutionResult {
+	return agent.DynamicExecutionResult{
+		Answer: "Tool execution was blocked by policy; provide the required confirmation or identifiers and retry.",
+		Evidences: []agent.Evidence{{
+			Kind:     "tool_error",
+			SourceID: call.CallID,
+			Title:    toolEvidenceTitle(logicalToolName),
+			Content:  cause.Error(),
+			Metadata: map[string]any{
+				"error_code":        "POLICY_PRECONDITION_FAILED",
+				"tool_name":         call.Name,
+				"logical_tool_name": logicalToolName,
+			},
+		}},
+		Metadata: map[string]any{
+			"degraded":          true,
+			"policy_blocked":    true,
+			"tool_name":         call.Name,
+			"logical_tool_name": logicalToolName,
+		},
+	}
+}
+
 func formatToolAnswer(name string, data any, dataScope ...string) string {
 	name = tool.LogicalName(name)
 	raw, err := json.Marshal(data)
@@ -165,8 +218,9 @@ func formatToolAnswer(name string, data any, dataScope ...string) string {
 		for _, item := range payload.Items {
 			fmt.Fprintf(
 				&builder,
-				"- %s（%s）：当前价 %s 元，优惠后预估 %s 元，库存 %d 件。\n",
+				"- %s %s（%s）：当前价 %s 元，优惠后预估 %s 元，库存 %d 件。\n",
 				item.ProductName,
+				item.Model,
 				item.SKUName,
 				formatCents(item.CurrentPriceCents),
 				formatCents(item.EstimatedFinalPriceCents),
@@ -186,8 +240,9 @@ func formatToolAnswer(name string, data any, dataScope ...string) string {
 		for _, item := range payload.Items {
 			fmt.Fprintf(
 				&builder,
-				"- %s（%s）：可售库存 %d 件，当前价 %s 元。\n",
+				"- %s %s（%s）：可售库存 %d 件，当前价 %s 元。\n",
 				item.ProductName,
+				item.Model,
 				item.SKUName,
 				item.AvailableStock,
 				formatCents(item.CurrentPriceCents),
@@ -543,17 +598,18 @@ func (e *DynamicExecutor) buildArguments(
 	arguments := cloneMap(request.Step.Params)
 	query := request.Request.Query
 	logicalToolName := tool.LogicalName(request.Step.ToolName)
-	models := modelPattern.FindAllString(query, -1)
+	models := stringSliceArgument(arguments["product_refs"], arguments["model"], arguments["models"])
+	models = append(models, modelPattern.FindAllString(query, -1)...)
 	orderNo := strings.ToUpper(orderPattern.FindString(query))
-	filteredModels := models[:0]
+	filteredModels := make([]string, 0, len(models))
 	for _, modelName := range models {
 		if !strings.EqualFold(modelName, orderNo) {
 			filteredModels = append(filteredModels, modelName)
 		}
 	}
-	models = filteredModels
+	models = compactArgumentStrings(filteredModels)
 	if len(models) > 0 {
-		models = productRefsForDynamicTool(logicalToolName, query, models)
+		models = e.productRefsForDynamicTool(logicalToolName, query, arguments, models)
 		arguments["product_refs"] = models
 		arguments["model"] = strings.Join(strings.Fields(models[0]), " ")
 	}
@@ -603,26 +659,104 @@ func (e *DynamicExecutor) buildArguments(
 	return normalizeToolArguments(arguments)
 }
 
-func productRefsForDynamicTool(toolName, query string, refs []string) []string {
+func (e *DynamicExecutor) productRefsForDynamicTool(toolName, query string, arguments map[string]any, refs []string) []string {
 	switch tool.LogicalName(toolName) {
 	case "price_query", "inventory_check":
 	default:
 		return refs
 	}
-	if !containsAny(query, "配件", "耗材", "滤芯", "滚刷", "尘袋", "边刷") {
+	requestText := query + " " + fmt.Sprint(arguments["accessory_refs"])
+	if !requestsAccessoryDynamicData(requestText) {
 		return refs
 	}
 	accessories := make([]string, 0, len(refs))
 	for _, ref := range refs {
 		normalized := normalizeProductRef(ref)
-		if accessoryPattern.MatchString(normalized) {
+		if accessoryPattern.MatchString(normalized) || strings.Contains(normalized, "-") {
 			accessories = append(accessories, normalized)
 		}
 	}
 	if len(accessories) > 0 {
+		if requestsHostAndAccessoryDynamicData(query, refs) {
+			return compactArgumentStrings(append(append([]string(nil), refs...), accessories...))
+		}
 		return accessories
 	}
+	if e != nil && e.compatibility != nil {
+		for _, ref := range refs {
+			for _, entry := range e.compatibility.Entries() {
+				if entry.Status != compatibility.Compatible ||
+					!strings.EqualFold(normalizeProductRef(ref), normalizeProductRef(entry.HostModel)) {
+					continue
+				}
+				if !accessoryRequestMatches(requestText, entry) {
+					continue
+				}
+				accessories = append(accessories, entry.AccessoryModel)
+			}
+		}
+		if len(accessories) > 0 {
+			if requestsHostAndAccessoryDynamicData(query, refs) {
+				return compactArgumentStrings(append(append([]string(nil), refs...), accessories...))
+			}
+			return compactArgumentStrings(accessories)
+		}
+	}
 	return refs
+}
+
+func requestsAccessoryDynamicData(text string) bool {
+	return containsAny(
+		strings.ToLower(text),
+		"配件", "耗材", "滤芯", "滤网", "滚刷", "尘袋", "边刷", "刷头", "替换", "喷头", "掸套",
+		"accessory", "brush", "nozzle", "pad", "sleeve", "refill",
+	)
+}
+
+func requestsHostAndAccessoryDynamicData(query string, refs []string) bool {
+	query = strings.ToLower(query)
+	if len(refs) == 0 || !requestsAccessoryDynamicData(query) {
+		return false
+	}
+	return containsAny(
+		query,
+		"分别", "各自", "各个", "各剩", "各有", "各多少钱",
+		"都查", "都看", "一起查", "一起大概", "加两片",
+		"主机和", "和替换", "以及替换", "跟替换", "与替换",
+	)
+}
+
+func accessoryRequestMatches(text string, entry compatibility.Entry) bool {
+	text = strings.ToLower(text)
+	kind := strings.ToLower(entry.AccessoryType + " " + entry.AccessoryModel)
+	switch {
+	case containsAny(text, "刷头", "刷", "brush", "refill"):
+		return strings.Contains(kind, "brush") || strings.Contains(kind, "refill")
+	case containsAny(text, "掸套", "套", "pad", "sleeve"):
+		return strings.Contains(kind, "pad") || strings.Contains(kind, "sleeve")
+	case containsAny(text, "喷头", "nozzle"):
+		return strings.Contains(kind, "nozzle")
+	default:
+		return true
+	}
+}
+
+func compactArgumentStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToUpper(strings.Join(strings.Fields(value), ""))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func ticketConfirmationPresent(query string) bool {
@@ -812,32 +946,89 @@ func toolEvidenceTitle(name string) string {
 }
 
 func allowedTools(intentType intent.Type) []string {
-	switch intentType {
-	case intent.PriceQuery:
-		return []string{"price_query"}
-	case intent.InventoryQuery:
-		return []string{"inventory_check"}
-	case intent.OrderQuery:
-		return []string{"user_purchase_history", "order_lookup"}
-	case intent.PurchaseRecommendation:
-		return []string{"price_query", "inventory_check"}
-	case intent.AccessoryCompatibility:
-		return []string{"user_purchase_history", "price_query"}
-	case intent.WarrantyQuery:
-		return []string{"order_lookup", "warranty_check"}
-	case intent.ReturnEligibility:
-		return []string{"order_lookup", "warranty_check", "return_request", "exchange_request", "refund_status"}
-	case intent.Troubleshooting:
-		return []string{"order_lookup", "warranty_check", "repair_status", "create_after_sales_ticket", "handoff_to_human"}
-	case intent.CreateAfterSalesTicket:
-		return []string{"order_lookup", "warranty_check", "create_after_sales_ticket"}
-	case intent.AfterSalesStatus:
-		return []string{"order_lookup", "refund_status", "repair_status"}
-	case intent.HumanHandoff:
-		return []string{"handoff_to_human"}
+	return policy.AllowedTools(intentType)
+}
+
+func toolIdempotencyKey(toolName string, request agent.Request, arguments map[string]any) string {
+	userID := idempotencyPart(request.UserID)
+	switch toolName {
+	case "create_after_sales_ticket":
+		return strings.Join([]string{
+			"tool",
+			toolName,
+			userID,
+			idempotencyPart(argumentString(arguments, "order_no")),
+			idempotencyPart(argumentIntString(arguments, "order_item_id")),
+			idempotencyPart(argumentString(arguments, "issue_type")),
+		}, ":")
+	case "return_request", "exchange_request":
+		return strings.Join([]string{
+			"tool",
+			toolName,
+			userID,
+			idempotencyPart(argumentString(arguments, "order_no")),
+			idempotencyPart(argumentIntString(arguments, "order_item_id")),
+			idempotencyPart(argumentString(arguments, "reason")),
+		}, ":")
+	case "handoff_to_human":
+		return strings.Join([]string{
+			"tool",
+			toolName,
+			userID,
+			idempotencyPart(request.ConversationID),
+			idempotencyPart(firstNonEmptyString(request.ClientMessageID, request.TraceID)),
+		}, ":")
 	default:
-		return nil
+		return strings.Join([]string{
+			"tool",
+			toolName,
+			userID,
+			idempotencyPart(request.ConversationID),
+			idempotencyPart(firstNonEmptyString(request.ClientMessageID, request.TraceID)),
+		}, ":")
 	}
+}
+
+func argumentString(arguments map[string]any, key string) string {
+	if arguments == nil {
+		return ""
+	}
+	switch value := arguments[key].(type) {
+	case string:
+		return strings.ToUpper(strings.TrimSpace(value))
+	case fmt.Stringer:
+		return strings.ToUpper(strings.TrimSpace(value.String()))
+	case nil:
+		return ""
+	default:
+		return strings.ToUpper(strings.TrimSpace(fmt.Sprint(value)))
+	}
+}
+
+func argumentIntString(arguments map[string]any, key string) string {
+	value := argumentString(arguments, key)
+	if value == "" || value == "0" {
+		return "default"
+	}
+	return value
+}
+
+func idempotencyPart(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "none"
+	}
+	replacer := strings.NewReplacer(":", "_", "|", "_", " ", "_", "\t", "_", "\n", "_")
+	return replacer.Replace(value)
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func cloneMap(source map[string]any) map[string]any {

@@ -24,11 +24,13 @@ type runEvalRequest struct {
 	SystemVersion  string   `json:"system_version"`
 	MaxCases       int      `json:"max_cases"`
 	CaseIDs        []string `json:"case_ids"`
+	Split          string   `json:"split"`
 }
 
 type compareEvalRequest struct {
 	DatasetVersion string `json:"dataset_version"`
 	MaxCases       int    `json:"max_cases"`
+	Split          string `json:"split"`
 }
 
 func NewEvalHandler(
@@ -51,12 +53,12 @@ func (h *EvalHandler) Run(c *gin.Context) {
 			return
 		}
 	}
-	if request.MaxCases < 0 || request.MaxCases > 200 {
-		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "max_cases must be between 0 and 200")
+	if request.MaxCases < 0 || request.MaxCases > 300 {
+		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "max_cases must be between 0 and 300")
 		return
 	}
-	if len(request.CaseIDs) > 200 {
-		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "case_ids must contain at most 200 items")
+	if len(request.CaseIDs) > 300 {
+		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "case_ids must contain at most 300 items")
 		return
 	}
 	run, err := h.runner.Start(c.Request.Context(), eval.RunRequest{
@@ -65,6 +67,7 @@ func (h *EvalHandler) Run(c *gin.Context) {
 		SystemVersion:  request.SystemVersion,
 		MaxCases:       request.MaxCases,
 		CaseIDs:        request.CaseIDs,
+		Split:          request.Split,
 	})
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "EVAL_RUN_FAILED", err.Error())
@@ -85,14 +88,15 @@ func (h *EvalHandler) Compare(c *gin.Context) {
 			return
 		}
 	}
-	if request.MaxCases < 0 || request.MaxCases > 200 {
-		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "max_cases must be between 0 and 200")
+	if request.MaxCases < 0 || request.MaxCases > 300 {
+		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", "max_cases must be between 0 and 300")
 		return
 	}
 	run, err := h.comparison.Start(c.Request.Context(), eval.ComparisonRequest{
 		UserID:         middleware.UserID(c),
 		DatasetVersion: request.DatasetVersion,
 		MaxCases:       request.MaxCases,
+		Split:          request.Split,
 	})
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "EVAL_COMPARISON_FAILED", err.Error())

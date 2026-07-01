@@ -61,7 +61,7 @@ func (p *RulePlanner) Plan(ctx context.Context, request PlanRequest) (*Plan, err
 		plan.Mode = "naive_rag"
 		plan.Steps = focusedRetrievalPlan(
 			request.RewrittenQueries,
-			[]string{"user_manual", "faq", "product_parameter"},
+			[]string{"user_manual", "faq", "product_parameter", "product_detail"},
 			4,
 		)
 	case intent.ProductComparison:
@@ -184,7 +184,7 @@ func focusedRetrievalPlan(
 
 func dynamicPlan(toolName, query string, entities map[string]string) []PlanStep {
 	steps := []PlanStep{
-		newPlanStep(1, ActionCallTool, toolName, "", query, stringMapToAny(entities), "dynamic_data_required"),
+		newPlanStep(1, ActionCallTool, toolName, "", query, dynamicToolParams(toolName, entities), "dynamic_data_required"),
 		newPlanStep(2, ActionReflect, "", "", "", nil, "check_tool_evidence"),
 		newPlanStep(3, ActionFinish, "", "", "", nil, "grounded_answer"),
 	}
@@ -323,9 +323,9 @@ func compoundSubStep(intentType intent.Type, request PlanRequest) (PlanStep, boo
 	case intent.HumanHandoff:
 		return newPlanStep(1, ActionCallTool, "handoff_to_human", "", request.Query, params, "compound_human_handoff"), true
 	case intent.PriceQuery:
-		return newPlanStep(1, ActionCallTool, "price_query", "", request.Query, params, "compound_price"), true
+		return newPlanStep(1, ActionCallTool, "price_query", "", request.Query, dynamicToolParams("price_query", request.Intent.Entities), "compound_price"), true
 	case intent.InventoryQuery:
-		return newPlanStep(1, ActionCallTool, "inventory_check", "", request.Query, params, "compound_inventory"), true
+		return newPlanStep(1, ActionCallTool, "inventory_check", "", request.Query, dynamicToolParams("inventory_check", request.Intent.Entities), "compound_inventory"), true
 	case intent.OrderQuery:
 		toolName := "order_lookup"
 		if request.Intent.Entities["order_no"] == "" {
@@ -374,6 +374,48 @@ func stringMapToAny(source map[string]string) map[string]any {
 	result := make(map[string]any, len(source))
 	for key, value := range source {
 		result[key] = value
+	}
+	return result
+}
+
+func dynamicToolParams(toolName string, entities map[string]string) map[string]any {
+	params := stringMapToAny(entities)
+	switch toolName {
+	case "price_query", "inventory_check":
+		refs := splitEntityValues(entities["models"])
+		if len(refs) == 0 {
+			refs = splitEntityValues(entities["model"])
+		}
+		if len(refs) > 0 {
+			delete(params, "model")
+			delete(params, "models")
+			params["product_refs"] = refs
+		}
+	}
+	return params
+}
+
+func splitEntityValues(value string) []string {
+	seen := make(map[string]struct{})
+	var result []string
+	for _, part := range strings.FieldsFunc(value, func(r rune) bool {
+		switch r {
+		case ',', '，', '、', '/', '|', ';', '；', '\n', '\t':
+			return true
+		default:
+			return false
+		}
+	}) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key := strings.ToUpper(strings.Join(strings.Fields(part), " "))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, part)
 	}
 	return result
 }

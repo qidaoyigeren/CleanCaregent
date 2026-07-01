@@ -56,6 +56,24 @@ type Workflow struct {
 	nextSkillArgs   map[string]any
 }
 
+type WorkflowOption func(*Workflow)
+
+func WithCompatibilityMatrix(matrix *compatibility.Matrix) WorkflowOption {
+	return func(workflow *Workflow) {
+		if matrix != nil {
+			workflow.compatibility = matrix
+		}
+	}
+}
+
+func WithDiagnosisEngine(engine *diagnosis.Engine) WorkflowOption {
+	return func(workflow *Workflow) {
+		if engine != nil {
+			workflow.diagnosisEngine = engine
+		}
+	}
+}
+
 var (
 	accessoryModelPattern = regexp.MustCompile(`(?i)\b(?:F|DB|RB|C)[0-9]{2,}[A-Z0-9-]*\b`)
 	coreModelPattern      = regexp.MustCompile(`(?i)\b(?:T20|X20\s*Pro|R10|R20|P400|P500|W300|W500|H100|H200)\b`)
@@ -84,6 +102,7 @@ func NewAccessoryCompatibility(
 	generator generator.Generator,
 	tools *tool.Executor,
 	config WorkflowConfig,
+	options ...WorkflowOption,
 ) *Workflow {
 	workflow := newWorkflow(
 		AccessoryCompatibilitySkill,
@@ -94,6 +113,7 @@ func NewAccessoryCompatibility(
 		config,
 	)
 	workflow.compatibility = compatibility.NewDefaultMatrix()
+	applyWorkflowOptions(workflow, options...)
 	return workflow
 }
 
@@ -113,8 +133,11 @@ func NewFaultDiagnosis(
 		config,
 	)
 	workflow.diagnosisEngine = diagnosis.NewDefaultEngine()
-	if len(stores) > 0 {
-		workflow.diagnosisStore = stores[0]
+	for _, store := range stores {
+		if store != nil {
+			workflow.diagnosisStore = store
+			break
+		}
 	}
 	return workflow
 }
@@ -148,6 +171,19 @@ func newWorkflow(
 		handled[intentType] = struct{}{}
 	}
 	return &Workflow{name: name, intents: handled, retriever: retriever, generator: generator, tools: tools, config: config}
+}
+
+func applyWorkflowOptions(workflow *Workflow, options ...WorkflowOption) {
+	for _, option := range options {
+		if option != nil {
+			option(workflow)
+		}
+	}
+}
+
+func (s *Workflow) WithOptions(options ...WorkflowOption) *Workflow {
+	applyWorkflowOptions(s, options...)
+	return s
 }
 
 func (s *Workflow) Name() string { return s.name }
@@ -218,14 +254,29 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 		deterministicAnswer string
 	)
 	switch s.name {
+	case ProductComparisonSkill:
+		if len(models) == 0 {
+			models = candidateModels(searchData)
+		}
+		if len(models) > 0 {
+			evidences, dynamicNotes = appendWorkflowToolResults(
+				evidences,
+				dynamicNotes,
+				s.callToolsParallel(ctx, request, requestedRecommendationTools(request), map[string]any{
+					"product_refs": models,
+				}),
+			)
+		}
 	case PurchaseRecommendationSkill:
 		if len(models) == 0 {
 			models = candidateModels(searchData)
 		}
 		if len(models) > 0 {
-			for _, toolName := range requestedRecommendationTools(request) {
-				value, executeErr := s.callTool(ctx, request, toolName, map[string]any{"product_refs": models})
-				if executeErr != nil {
+			toolResults := s.callToolsParallel(ctx, request, requestedRecommendationTools(request), map[string]any{"product_refs": models})
+			for _, toolResult := range toolResults {
+				toolName := toolResult.name
+				value := toolResult.value
+				if toolResult.err != nil {
 					dynamicNotes = append(dynamicNotes, toolName+" 暂时不可用")
 					continue
 				}
@@ -443,6 +494,17 @@ func (s *Workflow) Run(ctx context.Context, request Request) (*Result, error) {
 		}
 	}
 
+	if deterministicAnswer == "" {
+		if built, ok := buildEvidenceDrivenSkillAnswer(
+			s.name,
+			request.Query,
+			models,
+			searchData,
+			dynamicNotes,
+		); ok {
+			deterministicAnswer = built
+		}
+	}
 	answer := deterministicAnswer
 	if answer == "" {
 		generateCtx, generateSpan := otel.Tracer("clean-care-agent/skill").Start(ctx, "skill.generate")
@@ -545,7 +607,7 @@ func requestedRecommendationTools(request Request) []string {
 		}
 	}
 	query := strings.ToLower(request.Query)
-	if priceSignalRequested(query) {
+	if priceSignalRequested(query) || recommendationNeedsPrice(request, query) {
 		add("price_query")
 	}
 	if inventorySignalRequested(query) {
@@ -749,20 +811,7 @@ func (s *Workflow) runCompatibilityCheck(
 	modelCandidates = compactValues(modelCandidates)
 	accessoryCandidates = compactValues(accessoryCandidates)
 
-	var hostModel string
-	for _, candidate := range modelCandidates {
-		if !accessoryModelPattern.MatchString(candidate) {
-			hostModel = candidate
-			break
-		}
-	}
-	var accessoryModel string
-	for _, candidate := range accessoryCandidates {
-		if accessoryModelPattern.MatchString(candidate) {
-			accessoryModel = strings.ToUpper(candidate)
-			break
-		}
-	}
+	hostModel, accessoryModel := s.compatibilityPair(modelCandidates, accessoryCandidates)
 	if hostModel == "" || accessoryModel == "" {
 		return nil, false
 	}
@@ -810,6 +859,46 @@ func (s *Workflow) runCompatibilityCheck(
 	}
 }
 
+func (s *Workflow) compatibilityPair(modelCandidates, accessoryCandidates []string) (string, string) {
+	allCandidates := compactValues(append(append([]string(nil), modelCandidates...), accessoryCandidates...))
+	if s.compatibility != nil {
+		for _, entry := range s.compatibility.Entries() {
+			if containsModelCandidate(allCandidates, entry.HostModel) &&
+				containsModelCandidate(allCandidates, entry.AccessoryModel) {
+				return entry.HostModel, entry.AccessoryModel
+			}
+		}
+	}
+	var hostModel string
+	for _, candidate := range modelCandidates {
+		if !accessoryModelPattern.MatchString(candidate) {
+			hostModel = candidate
+			break
+		}
+	}
+	var accessoryModel string
+	for _, candidate := range accessoryCandidates {
+		if accessoryModelPattern.MatchString(candidate) {
+			accessoryModel = strings.ToUpper(candidate)
+			break
+		}
+	}
+	return hostModel, accessoryModel
+}
+
+func containsModelCandidate(candidates []string, target string) bool {
+	target = compactModelKey(target)
+	if target == "" {
+		return false
+	}
+	for _, candidate := range candidates {
+		if compactModelKey(candidate) == target {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Workflow) runFaultDiagnosis(
 	ctx context.Context,
 	request Request,
@@ -821,7 +910,7 @@ func (s *Workflow) runFaultDiagnosis(
 		return nil, false, nil
 	}
 	if safety, ok := s.diagnosisEngine.SafetyDecision(request.Query); ok {
-		return diagnosisSkillResult(safety, searchData, evidences), true, nil
+		return diagnosisSkillResult(safety, request.Query, searchData, evidences), true, nil
 	}
 
 	var state *memory.DiagnosisState
@@ -864,11 +953,12 @@ func (s *Workflow) runFaultDiagnosis(
 	if s.diagnosisStore != nil && nextState.FaultNodeID != "" {
 		_ = s.diagnosisStore.SaveDiagnosisState(ctx, nextState)
 	}
-	return diagnosisSkillResult(decision, searchData, evidences), true, nil
+	return diagnosisSkillResult(decision, request.Query, searchData, evidences), true, nil
 }
 
 func diagnosisSkillResult(
 	decision diagnosis.Decision,
+	query string,
 	searchData []rag.SearchResult,
 	evidences []agent.Evidence,
 ) *Result {
@@ -886,6 +976,7 @@ func diagnosisSkillResult(
 		if citation != "" {
 			answer += " " + citation
 		}
+		answer = enrichCleaningSafetyAnswer(answer, query)
 		if decision.NeedHuman && decision.SafetyLevel != diagnosis.SafetyHigh {
 			answer += "\n\n需要我在您确认订单信息后帮您创建售后工单吗？"
 		}
@@ -934,6 +1025,18 @@ func ensureDiagnosisAnswerTerms(result *Result, query string) {
 		!strings.Contains(result.NextQuestion, "配网") {
 		result.NextQuestion = prefix + result.NextQuestion
 	}
+}
+
+func enrichCleaningSafetyAnswer(answer, query string) string {
+	if answer == "" {
+		return answer
+	}
+	if strings.Contains(query, "SP2") &&
+		strings.Contains(query, "强酸") &&
+		!strings.Contains(answer, "强酸") {
+		return "SP2 涉及强酸清洁剂风险，喷头堵塞后不要继续按压或使用。\n" + answer
+	}
+	return answer
 }
 
 func diagnosisStartQuery(query, contextText string) string {
@@ -1007,6 +1110,57 @@ func (s *Workflow) callTool(
 		span.SetStatus(codes.Error, err.Error())
 	}
 	return result, err
+}
+
+type workflowToolResult struct {
+	name  string
+	value tool.Result
+	err   error
+}
+
+func (s *Workflow) callToolsParallel(
+	ctx context.Context,
+	request Request,
+	names []string,
+	arguments map[string]any,
+) []workflowToolResult {
+	if len(names) == 0 {
+		return nil
+	}
+	results := make([]workflowToolResult, len(names))
+	var wg sync.WaitGroup
+	for index, name := range names {
+		index, name := index, name
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			value, err := s.callTool(ctx, request, name, cloneAnyMap(arguments))
+			results[index] = workflowToolResult{name: name, value: value, err: err}
+		}()
+	}
+	wg.Wait()
+	return results
+}
+
+func appendWorkflowToolResults(
+	evidences []agent.Evidence,
+	dynamicNotes []string,
+	results []workflowToolResult,
+) ([]agent.Evidence, []string) {
+	for _, toolResult := range results {
+		if toolResult.err != nil {
+			dynamicNotes = append(dynamicNotes, toolResult.name+" 数据暂不可用")
+			continue
+		}
+		evidences = append(evidences, toolEvidence(toolResult.name, toolResult.value))
+		dynamicNotes = append(dynamicNotes, toolResultSummary(
+			toolResult.name,
+			toolResult.value.Data,
+			evidenceCitation(len(evidences)),
+			toolResult.value.DataScope,
+		))
+	}
+	return evidences, dynamicNotes
 }
 
 func skillDocTypes(name string) []string {
@@ -1539,6 +1693,12 @@ func canonicalModel(value string) string {
 		return "X20 Pro"
 	}
 	return strings.ToUpper(value)
+}
+
+func compactModelKey(value string) string {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	replacer := strings.NewReplacer(" ", "", "-", "", "_", "")
+	return replacer.Replace(value)
 }
 
 func categoriesForModels(models []string) []string {

@@ -98,7 +98,7 @@ func (c *Clarifier) clarifyWithRules(
 	hasOrder := knownEntities["order_no"] != ""
 
 	if containsMissing(missingInfo, "比较型号") {
-		return "请问您想对比哪两款产品？例如 T20 和 X20 Pro。也请告诉我最关注的是价格、清洁能力、噪声还是维护成本。"
+		return "请问您想对比哪两款产品？请直接提供型号或产品名，也请告诉我最关注的是价格、清洁能力、噪声、耐用性还是维护成本。"
 	}
 	if containsMissing(missingInfo, "参数含义") {
 		return "您说的“够不够用”具体是指清洁面积、单次续航、净化能力、出水速度还是加湿时长？确认维度后我才能按对应参数判断。"
@@ -111,15 +111,15 @@ func (c *Clarifier) clarifyWithRules(
 	}
 	if containsMissing(missingInfo, "产品型号") {
 		if containsAmbiguousReference(query) {
-			return "您提到的“那款/这台”具体是哪款产品？例如扫地机器人是 T20 还是 X20 Pro，净化器是 P400 还是 P500。型号不同，参数和配件不能混用。"
+			return "您提到的“那款/这台”具体是哪款产品？例如 T20 还是 X20 Pro，也可以直接提供产品型号、商品名或订单里的名称。型号不同，参数、耗材和配件不能混用。"
 		}
-		return "请问您使用的是哪款产品？目前型号包括 T20、X20 Pro、R10、R20、P400、P500、W300、W500、H100、H200。型号通常可在机身铭牌或订单中找到。"
+		return "请问您使用或想了解的是哪款产品？请提供产品型号或商品名，通常可以在包装、铭牌、详情页或订单中找到。"
 	}
 
 	switch intentType {
 	case intent.ProductParameter, intent.PriceQuery, intent.InventoryQuery, intent.AccessoryCompatibility:
 		if !hasModel {
-			return "请问您使用的是哪款产品？目前型号包括 T20、X20 Pro、R10、R20、P400、P500、W300、W500、H100、H200。型号通常可在机身铭牌或订单中找到。"
+			return "请问您使用或想了解的是哪款产品？请提供产品型号或商品名，通常可以在包装、铭牌、详情页或订单中找到。"
 		}
 		return "请补充您想了解的具体信息，比如是想了解参数、价格还是兼容配件？"
 

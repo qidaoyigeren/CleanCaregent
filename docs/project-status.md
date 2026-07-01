@@ -11,7 +11,7 @@
 - 故障树状态机、配件兼容三态矩阵、结构化参数优先查询和售后动态事实强制落地。
 - Evidence ID、LLM Reflection、确定性 Grounding Review、检索重试和转人工策略。
 - Prompt 模板注册、场景化生成、版本历史、切换和回滚。
-- 143 篇 mock 文档、200 条评估集、异步 Eval Runner、LLM Judge 和 bad case 分类。
+- 143 篇 mock 文档、300 条 v2 单轮评估集（200 regression / 75 tuning / 25 holdout）、异步 Eval Runner、LLM Judge 和 bad case 分类。
 - 已留档 2026-06-13 真实模型完整 200 条串行评测：严格通过率 71.5%，对比 82.4%，推荐 80.8%；当前 MCP HTTP 版本如需对外宣称指标，应以新运行记录为准。
 
 ## 进阶增强已完成

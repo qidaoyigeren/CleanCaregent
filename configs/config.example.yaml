@@ -87,6 +87,17 @@ qdrant:
 readiness:
   timeout: 2s
 
+knowledge:
+  # Directories or files consumed by `go run ./cmd/kb-seed`.
+  # Drop JSON knowledge packs or Markdown files with front matter here to add static KB documents.
+  seed_paths:
+    - docs/knowledge-base
+  # Product packs additionally seed product/SKU/inventory rows and runtime structured rules.
+  product_pack_paths:
+    - docs/product-packs
+  # Keep true for the interview/demo dataset. Set false to run only on your own documents.
+  seed_builtin_mock: true
+
 # Embedding provider configuration.
 # local_hash: deterministic, zero-dependency, for local dev only.
 # openai_compatible: any OpenAI-compatible embeddings endpoint.
@@ -132,6 +143,8 @@ rag:
     faq: {max_chunk_runes: 400, chunk_overlap: 0}
   max_answer_runes: 900
   retrieval_cache_ttl: 5m
+  answer_cache_ttl: 10m
+  answer_cache_max_entries: 512
 
 # Reranker provider configuration.
 # local_lexical: deterministic local fallback.

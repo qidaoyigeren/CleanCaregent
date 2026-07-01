@@ -26,6 +26,7 @@ func TestRuleRouterRoutesCoreScenarios(t *testing.T) {
 		{"w300是400G对吧？一分钟大概能出多少水", ProductParameter, "", "W300"},
 		{"R10新机怎么配网？我家只有5G WiFi", UsageInstruction, "", "R10"},
 		{"H200加纯净水还是自来水？家里水很硬", UsageInstruction, "", "H200"},
+		{"50 元以内买清洁布，MC6 值得买吗？", PurchaseRecommendation, "", "MC6"},
 		{"四口之家早晚集中用水，W300会不会不够", ProductComparison, "", "W300,W500"},
 		{"猫毛特别多又不想天天倒尘盒，五千怎么配", PurchaseRecommendation, "", ""},
 	}
@@ -45,6 +46,38 @@ func TestRuleRouterRoutesCoreScenarios(t *testing.T) {
 				t.Fatalf("models = %q, want %q", result.Entities["models"], test.wantModels)
 			}
 		})
+	}
+}
+
+func TestRuleRouterExtractsDocumentDrivenCleaningToolModels(t *testing.T) {
+	router := NewRuleRouter()
+	result, err := router.Route(context.Background(), RouteRequest{
+		Query: "BM-M1 拖把参数表发我，适合木地板吗",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Secondary != ProductParameter {
+		t.Fatalf("intent = %s, want %s; result = %#v", result.Secondary, ProductParameter, result)
+	}
+	if result.Entities["models"] != "BM-M1" {
+		t.Fatalf("models = %q, want BM-M1", result.Entities["models"])
+	}
+	if result.Entities["category"] != "floor_mop" {
+		t.Fatalf("category = %q, want floor_mop", result.Entities["category"])
+	}
+
+	result, err = router.Route(context.Background(), RouteRequest{
+		Query: "WS2 和 BM-M1 哪个更适合日常清洁",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Secondary != ProductComparison {
+		t.Fatalf("intent = %s, want %s; result = %#v", result.Secondary, ProductComparison, result)
+	}
+	if result.Entities["models"] != "WS2,BM-M1" {
+		t.Fatalf("models = %q, want WS2,BM-M1", result.Entities["models"])
 	}
 }
 
@@ -172,6 +205,7 @@ func TestRuleRouterExtractsAccessoryRefsForCompatibility(t *testing.T) {
 		{"rb20装x20 pro上合适吗", "X20 Pro", "RB20"},
 		{"W300下一次换芯该买哪根", "W300", "换芯"},
 		{"C300能直接装W300吗", "W300", "C300"},
+		{"配 GB2 替换刷头要不要一起买？", "GB2", "刷头"},
 	}
 	for _, test := range tests {
 		t.Run(test.query, func(t *testing.T) {
@@ -190,6 +224,25 @@ func TestRuleRouterExtractsAccessoryRefsForCompatibility(t *testing.T) {
 			}
 			if !strings.Contains(result.Entities["accessory_refs"], test.ref) {
 				t.Fatalf("accessory_refs = %q, want to contain %q", result.Entities["accessory_refs"], test.ref)
+			}
+		})
+	}
+}
+
+func TestRuleRouterTreatsCleaningAccessoryFailureAsTroubleshooting(t *testing.T) {
+	router := NewRuleRouter()
+	tests := []string{
+		"FD4 掸套洗完松了，是不是要换？",
+		"GB2 刷毛变形了，怎么处理？",
+	}
+	for _, query := range tests {
+		t.Run(query, func(t *testing.T) {
+			result, err := router.Route(context.Background(), RouteRequest{Query: query})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Secondary != Troubleshooting {
+				t.Fatalf("intent = %s, want %s; result = %#v", result.Secondary, Troubleshooting, result)
 			}
 		})
 	}
@@ -471,6 +524,34 @@ func TestRuleRouterOnlyResolvesReferenceWithConversationContext(t *testing.T) {
 	}
 	if withContext.NeedClarify {
 		t.Fatal("reference with prior model should not clarify")
+	}
+}
+
+func TestRuleRouterCarriesAccessoryFollowupModelAcrossTurns(t *testing.T) {
+	router := NewRuleRouter()
+	contextStatement, err := router.Route(context.Background(), RouteRequest{Query: "我买了 SB3。"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contextStatement.NeedClarify || contextStatement.Entities["models"] != "SB3" {
+		t.Fatalf("context statement result = %#v", contextStatement)
+	}
+
+	followup, err := router.Route(context.Background(), RouteRequest{
+		Query:          "替换刷头一起多少钱，还有货吗？",
+		RecentMessages: []model.Message{{Role: "user", Content: "我买了 SB3。"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if followup.NeedClarify {
+		t.Fatalf("follow-up should inherit SB3: %#v", followup)
+	}
+	if followup.Entities["models"] != "SB3" {
+		t.Fatalf("models = %q, want SB3; result = %#v", followup.Entities["models"], followup)
+	}
+	if followup.Secondary != PriceQuery || !containsIntent(followup.SecondaryIntents, InventoryQuery) {
+		t.Fatalf("intent = %s secondary=%#v, want price + inventory", followup.Secondary, followup.SecondaryIntents)
 	}
 }
 

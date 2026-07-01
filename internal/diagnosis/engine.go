@@ -385,12 +385,56 @@ func NewDefaultEngine() *Engine {
 	return engine
 }
 
+func NewEngine(nodes []Node, roots map[string]string, safety []string) *Engine {
+	engine := &Engine{
+		nodes:  map[string]Node{},
+		roots:  map[string]string{},
+		safety: append([]string(nil), safety...),
+	}
+	_ = engine.Merge(nodes, roots, nil)
+	return engine
+}
+
+func (e *Engine) Merge(nodes []Node, roots map[string]string, safety []string) error {
+	if e.nodes == nil {
+		e.nodes = map[string]Node{}
+	}
+	if e.roots == nil {
+		e.roots = map[string]string{}
+	}
+	e.safety = append(e.safety, safety...)
+	for _, node := range nodes {
+		node.ID = strings.TrimSpace(node.ID)
+		node.ProductModel = strings.TrimSpace(node.ProductModel)
+		node.Symptom = strings.TrimSpace(node.Symptom)
+		if node.ID == "" {
+			continue
+		}
+		e.nodes[node.ID] = node
+	}
+	for key, nodeID := range roots {
+		key = strings.TrimSpace(key)
+		nodeID = strings.TrimSpace(nodeID)
+		if key == "" || nodeID == "" {
+			continue
+		}
+		if _, ok := e.nodes[nodeID]; !ok {
+			return ErrNoMatchingTree
+		}
+		e.roots[key] = nodeID
+	}
+	return nil
+}
+
 func (e *Engine) Start(modelName, query string) (memory.DiagnosisState, Decision, error) {
 	if decision, ok := e.SafetyDecision(query); ok {
 		return memory.DiagnosisState{}, decision, nil
 	}
 	symptom := normalizeSymptom(query)
 	rootID := e.roots[rootKey(modelName, symptom)]
+	if rootID == "" {
+		rootID = e.matchRootByQuery(modelName, query)
+	}
 	if rootID == "" {
 		return memory.DiagnosisState{}, Decision{}, ErrNoMatchingTree
 	}
@@ -402,6 +446,28 @@ func (e *Engine) Start(modelName, query string) (memory.DiagnosisState, Decision
 		Answers:      map[string]string{},
 	}
 	return state, decisionFromNode(node, false), nil
+}
+
+func (e *Engine) matchRootByQuery(modelName, query string) string {
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	query = strings.ToLower(strings.TrimSpace(query))
+	if modelName == "" || query == "" {
+		return ""
+	}
+	for key, nodeID := range e.roots {
+		parts := strings.SplitN(key, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if strings.TrimSpace(parts[0]) != modelName {
+			continue
+		}
+		symptom := strings.ToLower(strings.TrimSpace(parts[1]))
+		if symptom != "" && strings.Contains(query, symptom) {
+			return nodeID
+		}
+	}
+	return ""
 }
 
 func (e *Engine) InferModel(query string) string {
@@ -423,6 +489,12 @@ func (e *Engine) InferModel(query string) string {
 		return "W300"
 	case containsAny(query, "续航", "水箱", "运行时长"):
 		return "H200"
+	case containsAny(query, "掸套", "除尘掸", "伸缩除尘", "伸缩杆"):
+		return "FD4"
+	case containsAny(query, "缝隙刷", "刷毛变形", "刷毛张开", "水槽底座缝"):
+		return "GB2"
+	case containsAny(query, "刷头停转", "刷头不转", "电动清洁刷"):
+		return "SB3"
 	default:
 		return ""
 	}
@@ -463,6 +535,10 @@ func (e *Engine) advanceRootFromObservedSteps(rootID, query string) string {
 		if containsAny(query, "清完", "清理") &&
 			containsAny(query, "金属摩擦", "还响", "仍然响") {
 			return "r20_noise_service"
+		}
+	case "fd4_sleeve_slips":
+		if containsAny(query, "松了", "松弛", "套不紧", "变形", "洗完", "老化", "要换", "是不是要换") {
+			return "fd4_replace_sleeve"
 		}
 	}
 	return rootID
@@ -552,6 +628,14 @@ func normalizeSymptom(query string) string {
 		return "漏水"
 	case containsAny(query, "续航", "运行时长", "水箱"):
 		return "续航下降"
+	case containsAny(query, "掸套", "套筒", "松紧口") &&
+		containsAny(query, "滑落", "松了", "松弛", "套不紧", "变形", "洗完", "老化"):
+		return "掸套滑落"
+	case containsAny(query, "刷毛", "刷头") &&
+		containsAny(query, "变形", "张开", "弯了", "进不去"):
+		return "刷毛变形"
+	case containsAny(query, "刷头停转", "刷头不转", "停转", "不转"):
+		return "刷头停转"
 	case containsAny(query, "异响", "嗡嗡", "响", "金属摩擦", "万向轮"):
 		return "异响"
 	default:

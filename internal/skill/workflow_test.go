@@ -150,12 +150,12 @@ func TestRequestedRecommendationTools(t *testing.T) {
 		want  []string
 	}{
 		{
-			name: "pure recommendation",
+			name: "budget recommendation needs price",
 			input: Request{
 				Query:  "120平两只猫，预算5000元推荐扫地机器人",
 				Intent: intent.Result{Secondary: intent.PurchaseRecommendation},
 			},
-			want: nil,
+			want: []string{"price_query"},
 		},
 		{
 			name: "secondary intents",

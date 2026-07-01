@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"CleanCaregent/internal/intent"
@@ -12,6 +13,8 @@ import (
 	"CleanCaregent/internal/prompt"
 	"CleanCaregent/internal/tool"
 )
+
+var plannedProductRefPattern = regexp.MustCompile(`(?i)^[A-Z]{1,8}[0-9]{1,5}(?:PRO)?(?:-[A-Z0-9]{1,12})?$`)
 
 // llmPlanAction is the JSON structure the LLM returns for a single ReAct step.
 type llmPlanAction struct {
@@ -342,7 +345,8 @@ func validateKnownProductRefs(params map[string]any) error {
 	}
 	for _, ref := range refs {
 		normalized := strings.ToUpper(strings.Join(strings.Fields(ref), " "))
-		if _, ok := known[normalized]; !ok {
+		compact := strings.ToUpper(strings.Join(strings.Fields(ref), ""))
+		if _, ok := known[normalized]; !ok && !plannedProductRefPattern.MatchString(compact) {
 			return fmt.Errorf("complete plan selected unknown product ref %q", ref)
 		}
 	}

@@ -67,11 +67,11 @@ func competitorAnswer(query string) (string, bool) {
 	}
 	switch {
 	case containsAnyText(query, "垃圾", "很差", "不行", "拉踩", "贬低"):
-		return "我不会贬低或攻击其他品牌。我可以基于可核验的参数说明 CleanCare 产品的适用场景、限制和选购条件。", true
+		return "我不会贬低或攻击其他品牌。我可以基于已入库资料说明本店产品的适用场景、限制和选购条件。", true
 	case containsAnyText(query, "对比", "比较", "哪个好", "哪个更", "区别"):
 		return "不同品牌产品各有特点，建议您根据实际需求选择。如果您想了解我们产品的优势，我可以为您详细介绍。", true
 	default:
-		return "我只能提供 CleanCare 产品信息，无法对其他品牌做评价。关于 CleanCare 产品，我可以查询参数、使用方法、兼容配件和售后政策。", true
+		return "我只能提供已入库产品信息，无法对未收录品牌做评价。关于已收录产品，我可以查询参数、使用方法、兼容配件和售后政策。", true
 	}
 }
 

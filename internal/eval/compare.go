@@ -24,6 +24,7 @@ type ComparisonRequest struct {
 	UserID         string
 	DatasetVersion string
 	MaxCases       int
+	Split          string
 }
 
 type ComparisonReport struct {
@@ -31,6 +32,7 @@ type ComparisonReport struct {
 	Baseline       Run                `json:"baseline"`
 	Candidate      Run                `json:"candidate"`
 	Deltas         map[string]float64 `json:"deltas"`
+	Split          string             `json:"split,omitempty"`
 }
 
 type ComparisonRun struct {
@@ -115,6 +117,7 @@ func (r *ComparisonRunner) Run(
 		DatasetVersion: request.DatasetVersion,
 		SystemVersion:  "naive-rag-baseline",
 		MaxCases:       request.MaxCases,
+		Split:          request.Split,
 	})
 	if err != nil {
 		return ComparisonReport{}, fmt.Errorf("run naive baseline: %w", err)
@@ -124,6 +127,7 @@ func (r *ComparisonRunner) Run(
 		DatasetVersion: request.DatasetVersion,
 		SystemVersion:  "agentic-rag-candidate",
 		MaxCases:       request.MaxCases,
+		Split:          request.Split,
 	})
 	if err != nil {
 		return ComparisonReport{}, fmt.Errorf("run agentic candidate: %w", err)
@@ -133,6 +137,7 @@ func (r *ComparisonRunner) Run(
 		Baseline:       baseline,
 		Candidate:      candidate,
 		Deltas:         comparisonDeltas(baseline.Summary, candidate.Summary),
+		Split:          request.Split,
 	}, nil
 }
 

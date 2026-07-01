@@ -1278,7 +1278,7 @@ data: {"message_id":"msg_102","finish_reason":"stop","trace_id":"tr_01JX"}
 ### 16.12 运行评估集
 
 - **Method/URL**：`POST /api/v1/admin/eval/runs`
-- **请求**：`{"dataset_version":"v1","system_version":"agent-v1","case_filter":{"tags":["tool"]}}`
+- **请求**：`{"dataset_version":"v2","system_version":"agent-v1","split":"holdout","max_cases":25}`；也可传 `case_ids` 定向运行。
 - **响应**：运行编号和状态。
 - **示例**：`{"code":"OK","data":{"run_no":"eval_20260611_001","status":"queued","selected_cases":20}}`
 - **鉴权**：是，管理员。
@@ -1297,17 +1297,16 @@ data: {"message_id":"msg_102","finish_reason":"stop","trace_id":"tr_01JX"}
 
 ### 17.1 评估集规模与分层
 
-初版采用 **100 条**，便于按百分比直接分配：
+v2 采用 **300 条** 单轮 case，其中原 200 条为 `regression`，新增 75 条为 `tuning`，新增 25 条为 `holdout`：
 
 | 路径类型 | 数量 | 示例 |
 |---|---:|---|
-| 纯 KB 查询 | 45 | 参数、说明书、FAQ、单条政策 |
-| KB 多文档检索 | 20 | 两款比较、兼容关系、场景化差异 |
-| KB + Tool 混合 | 20 | 推荐+价格、订单+政策、购买记录+兼容+价格 |
-| 故障诊断多轮 | 10 | 无法充电、异响、净化效果下降 |
-| 拒答/澄清 | 5 | 手机推荐、型号缺失、指代无法解析 |
+| 纯 KB 查询 | 150 | 参数、说明书、FAQ、单条政策、多文档比较 |
+| 纯 Tool | 60 | 价格、库存、订单、保修、工单 |
+| KB + Tool 混合 | 60 | 推荐+价格、订单+政策、购买记录+兼容+价格 |
+| 拒答/澄清/安全 | 30 | 越界品类、型号缺失、指代无法解析、Prompt 注入 |
 
-难度建议：简单 40 条、中等 40 条、困难 20 条。15 个二级意图都至少有 case，6 个核心业务意图占主要比例。
+难度分布：简单 120 条、中等 105 条、困难 75 条。15 个二级意图都至少有 case，6 个核心业务意图占主要比例。
 
 ```json
 {

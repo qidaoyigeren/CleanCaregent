@@ -107,6 +107,7 @@ func (h *ConversationHandler) Ask(c *gin.Context) {
 		middleware.UserID(c),
 		c.Param("conversation_id"),
 		req.Content,
+		req.ClientMessageID,
 		nil,
 	)
 	if err != nil {
@@ -143,6 +144,7 @@ func (h *ConversationHandler) Stream(c *gin.Context) {
 		middleware.UserID(c),
 		c.Param("conversation_id"),
 		req.Content,
+		req.ClientMessageID,
 		func(event agent.Event) error {
 			return stream.Send(event.Type, event.Data)
 		},
@@ -150,6 +152,9 @@ func (h *ConversationHandler) Stream(c *gin.Context) {
 	if err != nil {
 		_ = stream.Send("error", errorEvent(err))
 		return
+	}
+	if isIdempotentReplayMode(result.Result.Mode) && result.Result.Answer != "" {
+		_ = stream.Send("delta", gin.H{"content": result.Result.Answer})
 	}
 	_ = stream.Send("done", gin.H{
 		"message_id":    result.Message.ID,
@@ -165,6 +170,8 @@ func writeServiceError(c *gin.Context, err error) {
 		response.Error(c, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
 	case errors.Is(err, repository.ErrConversationNotFound), errors.Is(err, repository.ErrConversationForbidden):
 		response.Error(c, http.StatusNotFound, "CONVERSATION_NOT_FOUND", "conversation not found")
+	case errors.Is(err, repository.ErrMessageRequestFailed):
+		response.Error(c, http.StatusConflict, "MESSAGE_REQUEST_FAILED", "message request failed")
 	case errors.Is(err, agent.ErrNotConfigured):
 		response.Error(c, http.StatusServiceUnavailable, "AGENT_NOT_CONFIGURED", "agent pipeline is not configured")
 	default:
@@ -178,7 +185,13 @@ func errorEvent(err error) gin.H {
 		return gin.H{"code": "AGENT_NOT_CONFIGURED", "message": "agent pipeline is not configured"}
 	case errors.Is(err, repository.ErrConversationNotFound), errors.Is(err, repository.ErrConversationForbidden):
 		return gin.H{"code": "CONVERSATION_NOT_FOUND", "message": "conversation not found"}
+	case errors.Is(err, repository.ErrMessageRequestFailed):
+		return gin.H{"code": "MESSAGE_REQUEST_FAILED", "message": "message request failed"}
 	default:
 		return gin.H{"code": "AGENT_ERROR", "message": "agent request failed"}
 	}
+}
+
+func isIdempotentReplayMode(mode string) bool {
+	return mode == "idempotent_replay" || mode == "idempotent_wait"
 }

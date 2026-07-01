@@ -46,8 +46,9 @@ func TestRulePlannerPassesEntitiesToTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := plan.Steps[0].Params["models"]; got != "T20" {
-		t.Fatalf("models = %#v", got)
+	got, ok := plan.Steps[0].Params["product_refs"].([]string)
+	if !ok || len(got) != 1 || got[0] != "T20" {
+		t.Fatalf("product_refs = %#v", plan.Steps[0].Params["product_refs"])
 	}
 }
 
@@ -171,6 +172,9 @@ func TestRulePlannerUsageRetrievalIncludesProductParameters(t *testing.T) {
 	docTypes, _ := plan.Steps[0].Params["doc_types"].([]string)
 	if !containsString(docTypes, "product_parameter") {
 		t.Fatalf("doc_types = %#v, want product_parameter", docTypes)
+	}
+	if !containsString(docTypes, "product_detail") {
+		t.Fatalf("doc_types = %#v, want product_detail", docTypes)
 	}
 }
 

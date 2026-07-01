@@ -1,0 +1,122 @@
+[
+  {
+    "doc_id": "kb_spinscrub_sb3_detail",
+    "title": "BrightClean SpinScrub SB3 电动清洁刷详情",
+    "content": "# SpinScrub SB3 电动清洁刷\n\nSB3 是手持式电动清洁刷，适合清洁瓷砖、浴缸、水槽和龙头底座等局部顽固污渍。刷头转速约 320rpm，防水等级为 IPX5，单次续航约 80 分钟。标准套装包含主机、充电线和基础刷头，可替换刷头型号为 SB3-BH，采用四分之一旋入式卡口；GB2-BR 等手动缝隙刷补充装不兼容 SB3。\n\n## 选购建议\n\n如果用户主要清洁浴室、厨房水槽和地砖缝，SB3 比手动刷更省力。如果只处理很窄的缝隙或美缝线，GB2 更轻便。SB3 不建议浸入水中使用，也不建议搭配强酸、强碱清洁剂使用。",
+    "category": "scrub_brush",
+    "brand": "BrightClean",
+    "doc_type": "product_detail",
+    "version": "2026-06-30",
+    "intent_tags": ["product_parameter", "purchase_recommendation", "usage_instruction", "accessory_compatibility"],
+    "models": ["SB3", "SB3-BH"],
+    "metadata": {"model": "SB3", "accessory_model": "SB3-BH", "data_scope": "demo"}
+  },
+  {
+    "doc_id": "kb_spinscrub_sb3_troubleshooting",
+    "title": "SpinScrub SB3 刷头停转诊断",
+    "content": "# SB3 刷头停转诊断\n\n如果 SB3 刷头停转，先停止按键并取下刷头，检查电量指示灯和刷头卡口。电量低或指示灯闪烁时，建议先充电 2 小时后再试。电量正常但仍不转时，取下 SB3-BH，清洁卡口、密封圈和刷头内侧污垢，然后空载测试。若空载也停转，可能是电机保护或传动异常，应停止使用并联系售后。发现电机进水、异味或清洁剂进入眼睛时，应立即停止操作并转人工处理。",
+    "category": "scrub_brush",
+    "brand": "BrightClean",
+    "doc_type": "troubleshooting",
+    "version": "2026-06-30",
+    "intent_tags": ["troubleshooting", "usage_instruction"],
+    "models": ["SB3", "SB3-BH"],
+    "metadata": {"model": "SB3", "fault_node_id": "sb3_brush_stalls", "data_scope": "demo"}
+  },
+  {
+    "doc_id": "kb_flexduster_fd4_detail",
+    "title": "BrightClean FlexDuster FD4 伸缩除尘掸详情",
+    "content": "# FlexDuster FD4 伸缩除尘掸\n\nFD4 是可伸缩超细纤维除尘掸，最长约 145cm，适合柜顶、窗帘轨道、空调顶部和天花板角落。掸套材质为可水洗超细纤维，替换掸套型号为 FD4-PAD。FD4-PAD 需要套过尾端止滑槽，才能在高处清洁时保持稳定。FD4 不适合湿擦大量油污，遇到厨房厚油污时应先用中性清洁剂软化。",
+    "category": "dusting_tool",
+    "brand": "BrightClean",
+    "doc_type": "product_detail",
+    "version": "2026-06-30",
+    "intent_tags": ["product_parameter", "purchase_recommendation", "usage_instruction", "accessory_compatibility"],
+    "models": ["FD4", "FD4-PAD"],
+    "metadata": {"model": "FD4", "accessory_model": "FD4-PAD", "data_scope": "demo"}
+  },
+  {
+    "doc_id": "kb_flexduster_fd4_troubleshooting",
+    "title": "FlexDuster FD4 掸套滑落诊断",
+    "content": "# FD4 掸套滑落诊断\n\nFD4 掸套滑落通常是 FD4-PAD 没有套过止滑槽，或掸套松紧口老化。排查时先缩短伸缩杆，确认掸套尾端松紧口是否越过杆尾止滑槽。若安装正确但仍滑落，检查掸套是否变形、松紧口是否失去弹性。清洗后变松时，应先完全晾干再重新安装；如果仍套不紧、容易滑落，建议更换 FD4-PAD。轻微松动可重新晾干后安装，明显变形建议更换 FD4-PAD。",
+    "category": "dusting_tool",
+    "brand": "BrightClean",
+    "doc_type": "troubleshooting",
+    "version": "2026-06-30",
+    "intent_tags": ["troubleshooting", "usage_instruction"],
+    "models": ["FD4", "FD4-PAD"],
+    "metadata": {"model": "FD4", "fault_node_id": "fd4_sleeve_slips", "data_scope": "demo"}
+  },
+  {
+    "doc_id": "kb_groutmate_gb2_detail",
+    "title": "BrightClean GroutMate GB2 缝隙刷详情",
+    "content": "# GroutMate GB2 缝隙刷\n\nGB2 是窄头手动缝隙刷，刷头宽约 2.2cm，手柄角度约 35 度，适合瓷砖缝、窗轨、水龙头底座和台面边角。刷毛为尼龙材质，替换刷头为 GB2-BR。GB2-BR 适配 GB2 的导轨结构，不适配 SB3 电动清洁刷。GB2 适合短程往复清洁，不建议用来撬动水垢、固化胶或金属毛刺。",
+    "category": "scrub_brush",
+    "brand": "BrightClean",
+    "doc_type": "product_detail",
+    "version": "2026-06-30",
+    "intent_tags": ["product_parameter", "purchase_recommendation", "usage_instruction", "accessory_compatibility"],
+    "models": ["GB2", "GB2-BR"],
+    "metadata": {"model": "GB2", "accessory_model": "GB2-BR", "data_scope": "demo"}
+  },
+  {
+    "doc_id": "kb_groutmate_gb2_troubleshooting",
+    "title": "GroutMate GB2 刷毛变形诊断",
+    "content": "# GB2 刷毛变形诊断\n\nGB2 刷毛变形多见于长时间重压同一条缝，或刷洗固化胶、高温污垢后没有恢复。可用温水浸泡刷头 3 到 5 分钟，再轻轻顺毛整理并自然晾干。后续使用时降低下压力，采用短程往复，不要用手柄撬动。若刷毛张开导致无法进入缝隙，建议更换 GB2-BR 替换刷头。",
+    "category": "scrub_brush",
+    "brand": "BrightClean",
+    "doc_type": "troubleshooting",
+    "version": "2026-06-30",
+    "intent_tags": ["troubleshooting", "usage_instruction"],
+    "models": ["GB2", "GB2-BR"],
+    "metadata": {"model": "GB2", "fault_node_id": "gb2_bristle_bent", "data_scope": "demo"}
+  },
+  {
+    "doc_id": "kb_microfiberpro_mc6_detail",
+    "title": "BrightClean MicroFiberPro MC6 超细纤维布详情",
+    "content": "# MicroFiberPro MC6 超细纤维布\n\nMC6 是 6 片装超细纤维清洁布，克重约 320gsm，可机洗约 80 次。适合玻璃、不锈钢、台面、电器外壳和镜面。首次使用前建议单独清洗，不要和棉毛巾混洗。擦玻璃时可先湿擦去污，再用干布收水。MC6 不建议使用柔顺剂，因为柔顺剂会降低纤维吸水和抓尘能力。",
+    "category": "cleaning_cloth",
+    "brand": "BrightClean",
+    "doc_type": "product_detail",
+    "version": "2026-06-30",
+    "intent_tags": ["product_parameter", "purchase_recommendation", "usage_instruction"],
+    "models": ["MC6"],
+    "metadata": {"model": "MC6", "data_scope": "demo"}
+  },
+  {
+    "doc_id": "kb_microfiberpro_mc6_troubleshooting",
+    "title": "MicroFiberPro MC6 掉毛水痕排查",
+    "content": "# MC6 掉毛水痕排查\n\nMC6 出现浮毛或水痕时，先确认是否首次使用前已经单独清洗。如果没有清洗，建议单独清洗并自然晾干后再使用。如果已经清洗但仍有水痕，检查是否使用柔顺剂、高泡清洁剂或没有拧干。玻璃、镜面建议最后用干布和清水处理，避免表面残留清洁剂。",
+    "category": "cleaning_cloth",
+    "brand": "BrightClean",
+    "doc_type": "troubleshooting",
+    "version": "2026-06-30",
+    "intent_tags": ["troubleshooting", "usage_instruction"],
+    "models": ["MC6"],
+    "metadata": {"model": "MC6", "fault_node_id": "mc6_lint_streaks", "data_scope": "demo"}
+  },
+  {
+    "doc_id": "kb_spraymist_sp2_detail",
+    "title": "BrightClean SprayMist SP2 喷雾瓶详情",
+    "content": "# SprayMist SP2 喷雾瓶\n\nSP2 是 500ml 清洁喷雾瓶，支持 mist 雾化、stream 直喷和 off 关闭三档。瓶身材质为 PET，适合清水和中性清洁剂，不建议装强酸、强碱、漂白剂或高黏度液体。替换喷头型号为 SP2-NZ，使用相同螺纹瓶口和雾化阀芯。新瓶首次使用需要按压 5 到 8 次建立吸液压力。",
+    "category": "spray_bottle",
+    "brand": "BrightClean",
+    "doc_type": "product_detail",
+    "version": "2026-06-30",
+    "intent_tags": ["product_parameter", "purchase_recommendation", "usage_instruction", "accessory_compatibility"],
+    "models": ["SP2", "SP2-NZ"],
+    "metadata": {"model": "SP2", "accessory_model": "SP2-NZ", "data_scope": "demo"}
+  },
+  {
+    "doc_id": "kb_spraymist_sp2_troubleshooting",
+    "title": "SprayMist SP2 不出喷雾诊断",
+    "content": "# SP2 不出喷雾诊断\n\nSP2 不出喷雾时，先确认喷头旋钮不在 off 档，再切到 mist 或 stream 并连续按压几次。若仍不出液，检查吸管是否插到底、瓶内液体是否过少，以及 SP2-NZ 喷头是否被清洁剂残留堵塞。可用温水冲洗喷头和吸管，避免未稀释液体。如果使用过高黏度或强腐蚀液体，应停止使用并更换喷头。",
+    "category": "spray_bottle",
+    "brand": "BrightClean",
+    "doc_type": "troubleshooting",
+    "version": "2026-06-30",
+    "intent_tags": ["troubleshooting", "usage_instruction"],
+    "models": ["SP2", "SP2-NZ"],
+    "metadata": {"model": "SP2", "fault_node_id": "sp2_no_spray", "data_scope": "demo"}
+  }
+]

@@ -8,6 +8,8 @@ import (
 
 	"CleanCaregent/internal/model"
 	"CleanCaregent/internal/repository"
+
+	mysqlDriver "github.com/go-sql-driver/mysql"
 )
 
 type ConversationRepository struct {
@@ -128,15 +130,20 @@ func (r *ConversationRepository) AppendMessage(ctx context.Context, userID strin
 	// must never authorize a cross-user message write.
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO messages (
-			message_no, conversation_id, role, content, trace_id, created_at
+			message_no, conversation_id, role, content, trace_id, client_message_id, created_at
 		)
-		SELECT ?, c.id, ?, ?, ?, ?
+		SELECT ?, c.id, ?, ?, ?, ?, ?
 		FROM conversations c
 		JOIN users u ON u.id = c.user_id
 		WHERE c.conversation_no = ? AND u.user_no = ?
-	`, message.ID, message.Role, message.Content, nullableString(message.TraceID), message.CreatedAt,
+	`, message.ID, message.Role, message.Content, nullableString(message.TraceID),
+		nullableString(message.ClientMessageID), message.CreatedAt,
 		message.ConversationID, userID)
 	if err != nil {
+		var mysqlErr *mysqlDriver.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 && message.ClientMessageID != "" {
+			return nil
+		}
 		return fmt.Errorf("insert message: %w", err)
 	}
 	affected, err := result.RowsAffected()
@@ -173,9 +180,9 @@ func (r *ConversationRepository) ListMessages(
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT message_no, conversation_no, role, content, trace_id, created_at
+		SELECT message_no, conversation_no, role, content, trace_id, client_message_id, created_at
 		FROM (
-			SELECT m.id, m.message_no, c.conversation_no, m.role, m.content, m.trace_id, m.created_at
+			SELECT m.id, m.message_no, c.conversation_no, m.role, m.content, m.trace_id, m.client_message_id, m.created_at
 			FROM messages m
 			JOIN conversations c ON c.id = m.conversation_id
 			JOIN users u ON u.id = c.user_id
@@ -194,12 +201,14 @@ func (r *ConversationRepository) ListMessages(
 	for rows.Next() {
 		var message model.Message
 		var traceID sql.NullString
+		var clientMessageID sql.NullString
 		if err := rows.Scan(
 			&message.ID,
 			&message.ConversationID,
 			&message.Role,
 			&message.Content,
 			&traceID,
+			&clientMessageID,
 			&message.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan conversation message: %w", err)
@@ -207,12 +216,190 @@ func (r *ConversationRepository) ListMessages(
 		if traceID.Valid {
 			message.TraceID = traceID.String
 		}
+		if clientMessageID.Valid {
+			message.ClientMessageID = clientMessageID.String
+		}
 		messages = append(messages, message)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate conversation messages: %w", err)
 	}
 	return messages, nil
+}
+
+func (r *ConversationRepository) FindMessageByClientMessageID(
+	ctx context.Context,
+	userID string,
+	conversationID string,
+	role string,
+	clientMessageID string,
+) (model.Message, error) {
+	var message model.Message
+	var traceID sql.NullString
+	var storedClientMessageID sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+		SELECT m.message_no, c.conversation_no, m.role, m.content, m.trace_id, m.client_message_id, m.created_at
+		FROM messages m
+		JOIN conversations c ON c.id = m.conversation_id
+		JOIN users u ON u.id = c.user_id
+		WHERE c.conversation_no = ? AND u.user_no = ? AND m.role = ? AND m.client_message_id = ?
+		ORDER BY m.id DESC
+		LIMIT 1
+	`, conversationID, userID, role, clientMessageID).Scan(
+		&message.ID,
+		&message.ConversationID,
+		&message.Role,
+		&message.Content,
+		&traceID,
+		&storedClientMessageID,
+		&message.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Message{}, repository.ErrConversationNotFound
+	}
+	if err != nil {
+		return model.Message{}, fmt.Errorf("find message by client id: %w", err)
+	}
+	if traceID.Valid {
+		message.TraceID = traceID.String
+	}
+	if storedClientMessageID.Valid {
+		message.ClientMessageID = storedClientMessageID.String
+	}
+	return message, nil
+}
+
+func (r *ConversationRepository) StartMessageRequest(
+	ctx context.Context,
+	userID string,
+	conversationID string,
+	clientMessageID string,
+) (bool, error) {
+	conversationPK, err := r.conversationPK(ctx, userID, conversationID)
+	if err != nil {
+		return false, err
+	}
+	result, err := r.db.ExecContext(ctx, `
+		INSERT IGNORE INTO conversation_message_requests (
+			conversation_id, client_message_id, status, created_at, updated_at
+		) VALUES (?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+	`, conversationPK, clientMessageID, repository.MessageRequestRunning)
+	if err != nil {
+		return false, fmt.Errorf("start message request: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read started message request rows: %w", err)
+	}
+	return affected > 0, nil
+}
+
+func (r *ConversationRepository) GetMessageRequest(
+	ctx context.Context,
+	userID string,
+	conversationID string,
+	clientMessageID string,
+) (repository.MessageRequest, error) {
+	var request repository.MessageRequest
+	var assistantID, traceID, errorMessage sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+		SELECT c.conversation_no, cmr.client_message_id, cmr.status,
+		       cmr.assistant_message_no, cmr.trace_id, cmr.error_message,
+		       cmr.created_at, cmr.updated_at
+		FROM conversation_message_requests cmr
+		JOIN conversations c ON c.id = cmr.conversation_id
+		JOIN users u ON u.id = c.user_id
+		WHERE c.conversation_no = ? AND u.user_no = ? AND cmr.client_message_id = ?
+	`, conversationID, userID, clientMessageID).Scan(
+		&request.ConversationID,
+		&request.ClientMessageID,
+		&request.Status,
+		&assistantID,
+		&traceID,
+		&errorMessage,
+		&request.CreatedAt,
+		&request.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return repository.MessageRequest{}, repository.ErrConversationNotFound
+	}
+	if err != nil {
+		return repository.MessageRequest{}, fmt.Errorf("get message request: %w", err)
+	}
+	if assistantID.Valid {
+		request.AssistantID = assistantID.String
+	}
+	if traceID.Valid {
+		request.TraceID = traceID.String
+	}
+	if errorMessage.Valid {
+		request.ErrorMessage = errorMessage.String
+	}
+	return request, nil
+}
+
+func (r *ConversationRepository) CompleteMessageRequest(
+	ctx context.Context,
+	userID string,
+	conversationID string,
+	clientMessageID string,
+	assistant model.Message,
+) error {
+	conversationPK, err := r.conversationPK(ctx, userID, conversationID)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, `
+		UPDATE conversation_message_requests
+		SET status = ?, assistant_message_no = ?, trace_id = ?, error_message = NULL, updated_at = UTC_TIMESTAMP(6)
+		WHERE conversation_id = ? AND client_message_id = ?
+	`, repository.MessageRequestDone, assistant.ID, nullableString(assistant.TraceID), conversationPK, clientMessageID)
+	if err != nil {
+		return fmt.Errorf("complete message request: %w", err)
+	}
+	return nil
+}
+
+func (r *ConversationRepository) FailMessageRequest(
+	ctx context.Context,
+	userID string,
+	conversationID string,
+	clientMessageID string,
+	cause string,
+) error {
+	conversationPK, err := r.conversationPK(ctx, userID, conversationID)
+	if err != nil {
+		return err
+	}
+	if len(cause) > 1000 {
+		cause = cause[:1000]
+	}
+	_, err = r.db.ExecContext(ctx, `
+		UPDATE conversation_message_requests
+		SET status = ?, error_message = ?, updated_at = UTC_TIMESTAMP(6)
+		WHERE conversation_id = ? AND client_message_id = ?
+	`, repository.MessageRequestFailed, cause, conversationPK, clientMessageID)
+	if err != nil {
+		return fmt.Errorf("fail message request: %w", err)
+	}
+	return nil
+}
+
+func (r *ConversationRepository) conversationPK(ctx context.Context, userID, conversationID string) (int64, error) {
+	var conversationPK int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT c.id
+		FROM conversations c
+		JOIN users u ON u.id = c.user_id
+		WHERE c.conversation_no = ? AND u.user_no = ?
+	`, conversationID, userID).Scan(&conversationPK)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, repository.ErrConversationNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("resolve conversation: %w", err)
+	}
+	return conversationPK, nil
 }
 
 func nullableString(value string) any {

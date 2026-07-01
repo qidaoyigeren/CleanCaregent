@@ -114,21 +114,31 @@ func (r *BusinessRepository) QueryPrices(ctx context.Context, userID string, pro
 	quotes := make([]model.PriceQuote, 0, len(skus))
 	for _, sku := range skus {
 		finalPriceCents := sku.CurrentPriceCents
+		appliedCoupons := make([]model.CouponBenefit, 0, len(coupons))
 		for _, coupon := range coupons {
 			switch coupon.DiscountType {
 			case "amount":
+				if coupon.DiscountAmountCents <= 0 || coupon.DiscountAmountCents >= finalPriceCents {
+					continue
+				}
 				finalPriceCents -= coupon.DiscountAmountCents
+				appliedCoupons = append(appliedCoupons, coupon)
 			case "percent":
-				finalPriceCents = (finalPriceCents*coupon.DiscountBasisPoints + 5000) / 10000
+				if coupon.DiscountBasisPoints <= 0 || coupon.DiscountBasisPoints >= 10000 {
+					continue
+				}
+				nextPriceCents := (finalPriceCents*coupon.DiscountBasisPoints + 5000) / 10000
+				if nextPriceCents >= finalPriceCents {
+					continue
+				}
+				finalPriceCents = nextPriceCents
+				appliedCoupons = append(appliedCoupons, coupon)
 			}
-		}
-		if finalPriceCents < 0 {
-			finalPriceCents = 0
 		}
 		quotes = append(quotes, model.PriceQuote{
 			ProductSKU:               sku,
 			EstimatedFinalPriceCents: finalPriceCents,
-			AvailableCoupons:         coupons,
+			AvailableCoupons:         appliedCoupons,
 		})
 	}
 	return quotes, nil
@@ -369,7 +379,14 @@ func (r *BusinessRepository) CreateAfterSalesTicket(
 	if err != nil {
 		var mysqlErr *mysqlDriver.MySQLError
 		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
-			return model.AfterSalesTicket{}, repository.ErrTicketConflict
+			existing, findErr := findExistingAfterSalesTicket(ctx, tx, request, userPK, orderPK)
+			if findErr != nil {
+				return model.AfterSalesTicket{}, findErr
+			}
+			if commitErr := tx.Commit(); commitErr != nil {
+				return model.AfterSalesTicket{}, fmt.Errorf("commit existing after-sales ticket lookup: %w", commitErr)
+			}
+			return existing, nil
 		}
 		return model.AfterSalesTicket{}, fmt.Errorf("insert after-sales ticket: %w", err)
 	}
@@ -709,6 +726,39 @@ func estimatedQueuePosition(userID, orderNo, issueType string) int {
 	return sum%8 + 1
 }
 
+func findExistingAfterSalesTicket(
+	ctx context.Context,
+	tx *sql.Tx,
+	request repository.CreateTicketRequest,
+	userPK int64,
+	orderPK int64,
+) (model.AfterSalesTicket, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT ast.ticket_no, u.user_no, o.order_no, ast.order_item_id, ast.issue_type,
+		       ast.description, ast.diagnosis_summary, ast.evidence_ids_json,
+		       ast.status, ast.idempotency_key, ast.created_at
+		FROM after_sales_tickets ast
+		JOIN users u ON u.id = ast.user_id
+		JOIN orders o ON o.id = ast.order_id
+		WHERE ast.user_id = ?
+		  AND ast.order_id = ?
+		  AND (
+		       ast.idempotency_key = ?
+		       OR (ast.order_item_id = ? AND ast.issue_type = ?)
+		  )
+		ORDER BY ast.id DESC
+		LIMIT 1
+	`, userPK, orderPK, request.IdempotencyKey, request.OrderItemID, request.IssueType)
+	ticket, err := scanAfterSalesTicket(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.AfterSalesTicket{}, repository.ErrTicketConflict
+	}
+	if err != nil {
+		return model.AfterSalesTicket{}, fmt.Errorf("find existing after-sales ticket: %w", err)
+	}
+	return ticket, nil
+}
+
 func (r *BusinessRepository) querySKUs(ctx context.Context, refs []string) ([]model.ProductSKU, error) {
 	conditions := []string{"p.status = 'active'", "s.status = 'active'"}
 	args := make([]any, 0, len(refs)*3)
@@ -809,6 +859,34 @@ func (r *BusinessRepository) availableCoupons(
 
 type productScanner interface {
 	Scan(dest ...any) error
+}
+
+func scanAfterSalesTicket(scanner productScanner) (model.AfterSalesTicket, error) {
+	var ticket model.AfterSalesTicket
+	var diagnosis sql.NullString
+	var evidenceRaw []byte
+	if err := scanner.Scan(
+		&ticket.TicketNo,
+		&ticket.UserID,
+		&ticket.OrderNo,
+		&ticket.OrderItemID,
+		&ticket.IssueType,
+		&ticket.Description,
+		&diagnosis,
+		&evidenceRaw,
+		&ticket.Status,
+		&ticket.IdempotencyKey,
+		&ticket.CreatedAt,
+	); err != nil {
+		return model.AfterSalesTicket{}, err
+	}
+	if diagnosis.Valid {
+		ticket.DiagnosisSummary = diagnosis.String
+	}
+	if len(evidenceRaw) > 0 {
+		_ = json.Unmarshal(evidenceRaw, &ticket.EvidenceIDs)
+	}
+	return ticket, nil
 }
 
 func scanProduct(scanner productScanner) (model.Product, error) {

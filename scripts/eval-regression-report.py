@@ -272,6 +272,7 @@ def parse_args():
     )
     parser.add_argument("--run-no", default=os.environ.get("EVAL_RUN_NO", ""))
     parser.add_argument("--max-cases", type=int, default=int(os.environ.get("EVAL_MAX_CASES", "200")))
+    parser.add_argument("--split", default=os.environ.get("EVAL_SPLIT", ""))
     parser.add_argument("--case-id", action="append", default=[])
     parser.add_argument(
         "--case-id-range",
@@ -328,6 +329,8 @@ def main():
             "system_version": args.system_version,
             "max_cases": args.max_cases,
         }
+        if args.split:
+            payload["split"] = args.split
         if args.case_id:
             payload["case_ids"] = args.case_id
         status, envelope = request_json("POST", args.base_url, "/api/v1/admin/eval/runs", payload, timeout=60)

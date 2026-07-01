@@ -23,7 +23,7 @@
 - **售后闭环**：订单、保修、退货、换货、退款、维修进度和 `handoff_to_human` 工具可被统一编排；创建工单、退换货和人工接管等动作需要明确确认。
 - **可配置业务 Skill**：内置商品对比、选购推荐、配件查询、故障诊断和售后判断 5 类工作流。
 - **模型容错**：支持 OpenAI-compatible LLM、Embedding 和 Reranker，多供应商 fallback、三态熔断与本地降级。
-- **评测闭环**：内置 200 条 v2 单轮评测、50 条售后多轮评测和 20 条越权攻击评测，输出 pass rate、tool accuracy、false action rate 和 PII leak rate。
+- **评测闭环**：内置 300 条 v2 单轮评测（200 regression / 75 tuning / 25 holdout）、50 条售后多轮评测和 20 条越权攻击评测，输出 pass rate、tool accuracy、false action rate 和 PII leak rate。
 - **可视化演示**：React 前端提供流式对话、订单/保修/故障/人工接管卡片、执行流水线、Trace、知识库、评测和 Prompt 管理页面。
 
 ## 系统架构
@@ -62,10 +62,10 @@ HTTP/SSE -> Session -> Intent Router -> Query Rewrite
 | 项目 | 当前规模 |
 |---|---:|
 | Mock 知识文档 | 143 篇 |
-| v2 单轮评测案例 | 200 条 |
+| v2 单轮评测案例 | 300 条（200 regression / 75 tuning / 25 holdout） |
 | 售后多轮评测案例 | 50 条 |
 | 越权攻击评测案例 | 20 条 |
-| 评测难度分布 | simple 80 / medium 70 / hard 50 |
+| 评测难度分布 | simple 120 / medium 105 / hard 75 |
 | 动态工具 | 11 个 |
 | 业务 Skill | 5 个 |
 | Prompt 场景模板 | 12 类 v3 模板 |
@@ -202,6 +202,42 @@ docker compose --profile app up -d --build
 
 完整 `agentic` 模式仍需要外部 MySQL DSN，并需执行 `go run ./cmd/migrate`、`go run ./cmd/seed` 和 `go run ./cmd/kb-seed` 写入演示数据。前端当前作为独立 Vite 工程运行，不包含在 Compose 中。
 
+## 生产主链路
+
+生产环境必须设置 `CLEANCARE_APP_ENV=production`。后端会在生产模式下快速拒绝演示配置，包括关闭认证、`bootstrap` agent、`memory` 会话仓库、内置 mock 知识库、`local_hash` embedding、`extractive` LLM、`mock` 工具数据等。
+
+后端发布流程：
+
+```powershell
+go test ./...
+go run ./cmd/migrate
+docker compose --profile app up -d --build
+Invoke-RestMethod https://<api-host>/health/ready
+```
+
+生产中 `CLEANCARE_MYSQL_AUTO_MIGRATE` 应保持 `false`，迁移作为独立 job 在应用发布前执行。Schema 变更、知识库重建或向量迁移前必须备份 MySQL、Redis 和 Qdrant。回滚时应用镜像和前端静态资源可独立回退；数据库只能通过已评审的反向迁移或恢复点处理。
+
+前端不打进后端镜像，按静态资源独立发布：
+
+```powershell
+Set-Location clean-care-frontend
+npm ci
+npm run build
+```
+
+将 `clean-care-frontend/dist` 发布到 nginx 或 CDN，并通过 TLS 反向代理把 `/api/*` 转发到 Go API。前端使用相对 `/api/v1` 地址，生产 API base URL 由反向代理控制。私有 API 响应应使用 `Cache-Control: no-store`；service worker、CDN 和全局内存缓存都不能缓存 `/api` 私有会话或 admin 数据。CSP 只允许已部署的静态资源域名和 API 域名；admin API key 不得持久化到浏览器存储。
+
+上线质量门槛：
+
+```powershell
+go test ./...
+Set-Location clean-care-frontend
+npm ci
+npm run build
+```
+
+`clean-care-frontend` 带有独立 `go.mod`，因此仓库根目录执行 `go test ./...` 不会递归扫描前端 `node_modules`。
+
 ## 模型配置
 
 默认本地配置无需外部模型：
@@ -280,17 +316,24 @@ GET  /api/v1/admin/metrics/prometheus
 go run ./cmd/eval-dataset -output docs/eval/eval-cases-v2.json
 ```
 
-启动 200 条 Agentic 回归或 Naive RAG 对比：
+启动原 200 条 regression Agentic 回归或 Naive RAG 对比：
 
 ```powershell
 make eval-regression
 make eval-compare
 ```
 
-生成当前 MCP HTTP 链路的 200 条单轮回归报告：
+生成当前 MCP HTTP 链路的 200 条 regression 单轮回归报告：
 
 ```powershell
 make e2e-agentic-mcp-eval SYSTEM_VERSION=agentic-aftersales-loop-20260619
+```
+
+只跑新增调参集或留出集：
+
+```powershell
+make eval-regression-report EVAL_SPLIT=tuning EVAL_MAX_CASES=75 SYSTEM_VERSION=agentic-tuning
+make eval-regression-report EVAL_SPLIT=holdout EVAL_MAX_CASES=25 SYSTEM_VERSION=agentic-holdout-final
 ```
 
 生成售后多轮和越权攻击评测报告：
@@ -371,7 +414,7 @@ make e2e-agentic-mcp
 
 该链路会通过 Docker Compose 启动 Redis 和 Qdrant，并使用外部 MySQL DSN（CI 中由 GitHub Actions service 提供）启动独立 MCP HTTP server 与 API；脚本会断言 API 连接的是远程 MCP endpoint，并覆盖价格、库存、订单、售后建单、纯 KB 检索和澄清链路的 Trace 与工具调用。
 
-GitHub Actions 会执行模块文件检查、后端测试与构建、前端 lint 与构建、Docker 镜像构建，以及基于 Docker Compose 的 Agentic MCP 端到端链路测试；完整 200 条 MCP 回归由独立 `eval-regression` workflow 手动或定时执行。
+GitHub Actions 会执行模块文件检查、后端测试与构建、前端 lint 与构建、Docker 镜像构建，以及基于 Docker Compose 的 Agentic MCP 端到端链路测试；完整 200 条 regression MCP 回归由独立 `eval-regression` workflow 手动或定时执行。
 
 ## 项目边界
 
