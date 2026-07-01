@@ -2,6 +2,7 @@ package skill
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"CleanCaregent/internal/intent"
 	"CleanCaregent/internal/model"
 	"CleanCaregent/internal/rag"
+	"CleanCaregent/internal/tool"
 )
 
 type routeCapturingRetriever struct {
@@ -185,6 +187,85 @@ func TestRequestedRecommendationTools(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWorkflowCallToolUsesPolicyAndBusinessIdempotency(t *testing.T) {
+	client := &recordingToolClient{
+		definitions: []tool.Definition{{
+			Name: "return_request",
+			ParamsSchema: json.RawMessage(
+				`{"type":"object","required":["order_no","reason","confirmed"],"properties":{"order_no":{"type":"string"},"order_item_id":{"type":"integer"},"reason":{"type":"string"},"confirmed":{"type":"boolean"}}}`,
+			),
+			SideEffect: tool.SideEffectStateChange,
+		}},
+	}
+	workflow := newWorkflow(
+		AfterSalesJudgementSkill,
+		[]intent.Type{intent.ReturnEligibility},
+		nil,
+		nil,
+		tool.NewExecutor(client, nil, time.Second),
+		WorkflowConfig{},
+	)
+	request := Request{
+		TraceID:        "tr-1",
+		UserID:         "user-1",
+		ConversationID: "cv-1",
+		Intent:         intent.Result{Secondary: intent.ReturnEligibility},
+	}
+	arguments := map[string]any{
+		"order_no":      "CC20260603001",
+		"order_item_id": 7,
+		"reason":        "wrong size",
+		"confirmed":     true,
+	}
+
+	_, err := workflow.callTool(context.Background(), request, "return_request", arguments)
+	if err == nil || !strings.Contains(err.Error(), "client_message_id") {
+		t.Fatalf("error = %v, want client_message_id policy failure", err)
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("tool should not execute when policy blocks, calls = %#v", client.calls)
+	}
+
+	request.ClientMessageID = "cm-1"
+	_, err = workflow.callTool(context.Background(), request, "return_request", arguments)
+	if err != nil {
+		t.Fatalf("callTool() error = %v", err)
+	}
+	if len(client.calls) != 1 {
+		t.Fatalf("tool calls = %d, want 1", len(client.calls))
+	}
+	wantKey := "tool:return_request:user-1:CC20260603001:7:WRONG_SIZE"
+	if client.calls[0].IdempotencyKey != wantKey {
+		t.Fatalf("idempotency key = %q, want %q", client.calls[0].IdempotencyKey, wantKey)
+	}
+}
+
+type recordingToolClient struct {
+	definitions []tool.Definition
+	calls       []tool.Call
+}
+
+func (c *recordingToolClient) ListTools(context.Context) ([]tool.Definition, error) {
+	return c.definitions, nil
+}
+
+func (c *recordingToolClient) CallTool(_ context.Context, call tool.Call) (tool.Result, error) {
+	c.calls = append(c.calls, call)
+	return tool.Result{
+		CallID:  call.CallID,
+		Success: true,
+		Data: model.AfterSalesActionResult{
+			Action: "return",
+			Ticket: model.AfterSalesTicket{
+				TicketNo:       "AS_TEST",
+				OrderNo:        "CC20260603001",
+				Status:         "return_requested",
+				IdempotencyKey: call.IdempotencyKey,
+			},
+		},
+	}, nil
 }
 
 func TestRequestedRecommendationToolsRecognizesCommercePhrases(t *testing.T) {

@@ -17,6 +17,13 @@ type ToolPolicy struct {
 	EvidenceRequirements []string
 }
 
+type ToolInvocationContext struct {
+	UserID          string
+	ConversationID  string
+	TraceID         string
+	ClientMessageID string
+}
+
 var toolPolicies = map[intent.Type]ToolPolicy{
 	intent.PriceQuery: {
 		Intent: intent.PriceQuery,
@@ -169,6 +176,47 @@ func ValidateToolExecution(
 	return nil
 }
 
+func ToolIdempotencyKey(toolName string, context ToolInvocationContext, arguments map[string]any) string {
+	toolName = tool.LogicalName(toolName)
+	userID := idempotencyPart(context.UserID)
+	switch toolName {
+	case "create_after_sales_ticket":
+		return strings.Join([]string{
+			"tool",
+			toolName,
+			userID,
+			idempotencyPart(idempotencyArgumentString(arguments, "order_no")),
+			idempotencyPart(idempotencyArgumentIntString(arguments, "order_item_id")),
+			idempotencyPart(idempotencyArgumentString(arguments, "issue_type")),
+		}, ":")
+	case "return_request", "exchange_request":
+		return strings.Join([]string{
+			"tool",
+			toolName,
+			userID,
+			idempotencyPart(idempotencyArgumentString(arguments, "order_no")),
+			idempotencyPart(idempotencyArgumentIntString(arguments, "order_item_id")),
+			idempotencyPart(idempotencyArgumentString(arguments, "reason")),
+		}, ":")
+	case "handoff_to_human":
+		return strings.Join([]string{
+			"tool",
+			toolName,
+			userID,
+			idempotencyPart(context.ConversationID),
+			idempotencyPart(firstNonEmptyString(context.ClientMessageID, context.TraceID)),
+		}, ":")
+	default:
+		return strings.Join([]string{
+			"tool",
+			toolName,
+			userID,
+			idempotencyPart(context.ConversationID),
+			idempotencyPart(firstNonEmptyString(context.ClientMessageID, context.TraceID)),
+		}, ":")
+	}
+}
+
 func All() []ToolPolicy {
 	result := make([]ToolPolicy, 0, len(toolPolicies))
 	for _, rule := range toolPolicies {
@@ -318,4 +366,34 @@ func boolArgument(arguments map[string]any, key string) bool {
 	default:
 		return false
 	}
+}
+
+func idempotencyArgumentString(arguments map[string]any, key string) string {
+	return strings.ToUpper(stringArgument(arguments, key))
+}
+
+func idempotencyArgumentIntString(arguments map[string]any, key string) string {
+	value := idempotencyArgumentString(arguments, key)
+	if value == "" || value == "0" {
+		return "default"
+	}
+	return value
+}
+
+func idempotencyPart(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "none"
+	}
+	replacer := strings.NewReplacer(":", "_", "|", "_", " ", "_", "\t", "_", "\n", "_")
+	return replacer.Replace(value)
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

@@ -18,6 +18,7 @@ import (
 	"CleanCaregent/internal/memory"
 	"CleanCaregent/internal/model"
 	"CleanCaregent/internal/platform/id"
+	"CleanCaregent/internal/policy"
 	"CleanCaregent/internal/prompt"
 	"CleanCaregent/internal/rag"
 	"CleanCaregent/internal/tool"
@@ -1096,15 +1097,32 @@ func (s *Workflow) callTool(
 		attribute.String("tool.name", name),
 	)
 	defer span.End()
-	result, err := s.tools.Execute(ctx, tool.Call{
+	call := tool.Call{
 		TraceID:        request.TraceID,
 		CallID:         id.New("call"),
 		UserID:         request.UserID,
 		ConversationID: request.ConversationID,
 		Name:           name,
 		Arguments:      arguments,
-		IdempotencyKey: request.TraceID + ":" + name,
-	}, []string{name})
+		IdempotencyKey: policy.ToolIdempotencyKey(name, policy.ToolInvocationContext{
+			UserID:          request.UserID,
+			ConversationID:  request.ConversationID,
+			TraceID:         request.TraceID,
+			ClientMessageID: request.ClientMessageID,
+		}, arguments),
+	}
+	if err := policy.ValidateToolExecution(
+		request.Intent,
+		name,
+		arguments,
+		request.UserID,
+		request.ClientMessageID,
+	); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return tool.Result{CallID: call.CallID, ErrorCode: "POLICY_PRECONDITION_FAILED", Message: err.Error()}, err
+	}
+	result, err := s.tools.Execute(ctx, call, policy.AllowedToolsForRoute(request.Intent))
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())

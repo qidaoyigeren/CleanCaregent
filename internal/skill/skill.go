@@ -8,13 +8,14 @@ import (
 )
 
 type Request struct {
-	TraceID        string
-	UserID         string
-	ConversationID string
-	Query          string
-	ContextText    string
-	Intent         intent.Result
-	Entities       map[string]any
+	TraceID         string
+	UserID          string
+	ConversationID  string
+	ClientMessageID string
+	Query           string
+	ContextText     string
+	Intent          intent.Result
+	Entities        map[string]any
 }
 
 type Result struct {

@@ -96,7 +96,12 @@ func (e *DynamicExecutor) executeTool(
 		ConversationID: request.Request.ConversationID,
 		Name:           request.Step.ToolName,
 		Arguments:      arguments,
-		IdempotencyKey: toolIdempotencyKey(logicalToolName, request.Request, arguments),
+		IdempotencyKey: policy.ToolIdempotencyKey(logicalToolName, policy.ToolInvocationContext{
+			UserID:          request.Request.UserID,
+			ConversationID:  request.Request.ConversationID,
+			TraceID:         request.Request.TraceID,
+			ClientMessageID: request.Request.ClientMessageID,
+		}, arguments),
 	}
 	if validationErr := policy.ValidateToolExecution(
 		route,
@@ -533,13 +538,14 @@ func (e *DynamicExecutor) executeSkill(
 			Entities:         entities,
 		}
 		result, err := value.Run(ctx, skill.Request{
-			TraceID:        request.Request.TraceID,
-			UserID:         request.Request.UserID,
-			ConversationID: request.Request.ConversationID,
-			Query:          request.Step.Query,
-			ContextText:    skillContextText(request.Request),
-			Intent:         intentResult,
-			Entities:       nextArgs,
+			TraceID:         request.Request.TraceID,
+			UserID:          request.Request.UserID,
+			ConversationID:  request.Request.ConversationID,
+			ClientMessageID: request.Request.ClientMessageID,
+			Query:           request.Step.Query,
+			ContextText:     skillContextText(request.Request),
+			Intent:          intentResult,
+			Entities:        nextArgs,
 		})
 		if err != nil {
 			return agent.DynamicExecutionResult{}, err
@@ -947,88 +953,6 @@ func toolEvidenceTitle(name string) string {
 
 func allowedTools(intentType intent.Type) []string {
 	return policy.AllowedTools(intentType)
-}
-
-func toolIdempotencyKey(toolName string, request agent.Request, arguments map[string]any) string {
-	userID := idempotencyPart(request.UserID)
-	switch toolName {
-	case "create_after_sales_ticket":
-		return strings.Join([]string{
-			"tool",
-			toolName,
-			userID,
-			idempotencyPart(argumentString(arguments, "order_no")),
-			idempotencyPart(argumentIntString(arguments, "order_item_id")),
-			idempotencyPart(argumentString(arguments, "issue_type")),
-		}, ":")
-	case "return_request", "exchange_request":
-		return strings.Join([]string{
-			"tool",
-			toolName,
-			userID,
-			idempotencyPart(argumentString(arguments, "order_no")),
-			idempotencyPart(argumentIntString(arguments, "order_item_id")),
-			idempotencyPart(argumentString(arguments, "reason")),
-		}, ":")
-	case "handoff_to_human":
-		return strings.Join([]string{
-			"tool",
-			toolName,
-			userID,
-			idempotencyPart(request.ConversationID),
-			idempotencyPart(firstNonEmptyString(request.ClientMessageID, request.TraceID)),
-		}, ":")
-	default:
-		return strings.Join([]string{
-			"tool",
-			toolName,
-			userID,
-			idempotencyPart(request.ConversationID),
-			idempotencyPart(firstNonEmptyString(request.ClientMessageID, request.TraceID)),
-		}, ":")
-	}
-}
-
-func argumentString(arguments map[string]any, key string) string {
-	if arguments == nil {
-		return ""
-	}
-	switch value := arguments[key].(type) {
-	case string:
-		return strings.ToUpper(strings.TrimSpace(value))
-	case fmt.Stringer:
-		return strings.ToUpper(strings.TrimSpace(value.String()))
-	case nil:
-		return ""
-	default:
-		return strings.ToUpper(strings.TrimSpace(fmt.Sprint(value)))
-	}
-}
-
-func argumentIntString(arguments map[string]any, key string) string {
-	value := argumentString(arguments, key)
-	if value == "" || value == "0" {
-		return "default"
-	}
-	return value
-}
-
-func idempotencyPart(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "none"
-	}
-	replacer := strings.NewReplacer(":", "_", "|", "_", " ", "_", "\t", "_", "\n", "_")
-	return replacer.Replace(value)
-}
-
-func firstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func cloneMap(source map[string]any) map[string]any {
