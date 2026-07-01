@@ -58,13 +58,13 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t cleancare-agent:ci .
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@v0.24.0
         with:
           image: cleancare-agent:ci
           format: spdx-json
           output-file: cleancare-agent.spdx.json
       - name: Scan container image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: cleancare-agent:ci
           format: sarif
