@@ -56,6 +56,21 @@ MYSQL_DSN="${E2E_MYSQL_DSN:-cleancare:cleancare@tcp($MYSQL_HOST:$CLEANCARE_MYSQL
 mkdir -p "$LOG_DIR"
 rm -f "$LOG_DIR"/*.log "$LOG_DIR"/*.json
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-cleancare_e2e}"
+COMPOSE_ENV_FILE="${E2E_COMPOSE_ENV_FILE:-$LOG_DIR/compose.env}"
+cat >"$COMPOSE_ENV_FILE" <<EOF
+CLEANCARE_MYSQL_DATABASE=cleancare
+CLEANCARE_MYSQL_USER=cleancare
+CLEANCARE_MYSQL_PASSWORD=cleancare
+CLEANCARE_MYSQL_ROOT_PASSWORD=root-cleancare
+CLEANCARE_AUTH_JWT_SECRET=e2e-jwt-secret-not-for-production
+CLEANCARE_AUTH_ADMIN_API_KEY=e2e-admin-key-not-for-production
+CLEANCARE_EMBEDDING_ENDPOINT=http://127.0.0.1:9/v1/embeddings
+CLEANCARE_EMBEDDING_API_KEY=e2e-embedding-key
+CLEANCARE_EMBEDDING_MODEL=e2e-embedding-model
+CLEANCARE_LLM_ENDPOINT=http://127.0.0.1:9/v1/chat/completions
+CLEANCARE_LLM_API_KEY=e2e-llm-key
+CLEANCARE_LLM_MODEL=e2e-llm-model
+EOF
 GO_CMD="${GO_CMD:-go}"
 if ! command -v "$GO_CMD" >/dev/null 2>&1; then
   if command -v go.exe >/dev/null 2>&1; then
@@ -159,10 +174,14 @@ cleanup() {
     wait "$MCP_SECONDARY_PID" 2>/dev/null || true
   fi
   if [[ "$START_COMPOSE" == "true" ]]; then
-    (cd "$ROOT_DIR" && docker compose down -v) >"$LOG_DIR/compose-down.log" 2>&1 || true
+    (cd "$ROOT_DIR" && docker compose --env-file "$COMPOSE_ENV_FILE" down -v) >"$LOG_DIR/compose-down.log" 2>&1 || true
   fi
 }
 trap cleanup EXIT
+
+docker_compose() {
+  docker compose --env-file "$COMPOSE_ENV_FILE" "$@"
+}
 
 wait_http() {
   local url="$1"
@@ -206,7 +225,7 @@ wait_compose_health() {
   local deadline=$((SECONDS + timeout_seconds))
   local container_id=""
   until [[ -n "$container_id" ]]; do
-    container_id="$(docker compose ps -q "$service")"
+    container_id="$(docker_compose ps -q "$service")"
     if (( SECONDS >= deadline )); then
       echo "timed out waiting for $service container" >&2
       return 1
@@ -511,6 +530,7 @@ export BASE_URL LOG_DIR MCP_URL MCP_SECONDARY_URL MCP_MODE
   echo "REAL_LLM=$REAL_LLM"
   echo "FRONTEND_E2E=$FRONTEND_E2E"
   echo "FRONTEND_URL=$FRONTEND_URL"
+  echo "COMPOSE_ENV_FILE=$COMPOSE_ENV_FILE"
   echo "LLM_API_KEY_SET=$([[ -n "${CLEANCARE_LLM_API_KEY:-}" ]] && echo true || echo false)"
   echo "EMBEDDING_API_KEY_SET=$([[ -n "${CLEANCARE_EMBEDDING_API_KEY:-}" ]] && echo true || echo false)"
   echo "MCP_SECONDARY_CONFIG_FILE=$MCP_SECONDARY_CONFIG_FILE"
@@ -523,7 +543,7 @@ export BASE_URL LOG_DIR MCP_URL MCP_SECONDARY_URL MCP_MODE
 } >"$LOG_DIR/env.log"
 
 if [[ "$START_COMPOSE" == "true" ]]; then
-  if ! docker compose up -d redis qdrant >"$LOG_DIR/compose-up.log" 2>&1; then
+  if ! docker_compose up -d redis qdrant >"$LOG_DIR/compose-up.log" 2>&1; then
     cat "$LOG_DIR/compose-up.log" >&2 || true
     echo "docker compose up failed; if local ports are already occupied, run with E2E_START_COMPOSE=false against existing redis/qdrant services" >&2
     exit 1
@@ -631,6 +651,10 @@ def logical_name(name):
     text = str(name or "")
     return text.rsplit("/", 1)[-1]
 
+def client_message_id(case):
+    safe_name = "".join(ch if ch.isalnum() else "-" for ch in case["name"]).strip("-")
+    return f"e2e-{mcp_mode}-{safe_name}"
+
 def run_case(case):
     status, created = request("POST", "/api/v1/conversations", {"title": "e2e " + case["name"]})
     if status != 201 or created.get("code") != "OK":
@@ -638,7 +662,8 @@ def run_case(case):
     conversation_id = created["data"]["conversation_id"]
 
     status, asked = request("POST", f"/api/v1/conversations/{conversation_id}/messages", {
-        "content": case["content"]
+        "content": case["content"],
+        "client_message_id": client_message_id(case),
     })
     if status != 200 or asked.get("code") != "OK":
         raise RuntimeError(f"{case['name']} ask failed: {asked}")
