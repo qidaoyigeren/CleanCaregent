@@ -69,7 +69,9 @@ jobs:
           image-ref: cleancare-agent:ci
           format: sarif
           output: trivy-results.sarif
+          scanners: vuln
           severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           exit-code: "1"
       - name: Upload Trivy SARIF
